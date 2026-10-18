@@ -4,9 +4,17 @@ A terminal text editor built for speed of movement, not for managing windows.
 
 > **Status:** early days. Nothing usable yet, this crate currently reserves the name while the editor takes shape.
 
+## Heavily opinionated, on purpose
+
+wend is not trying to be an editor for everyone. It makes strong choices about how you should work and doesn't offer escape hatches to undo them. If those choices fit the way you think, it should feel like it disappears. If they don't, that's fine: wend is not for you, and there are great alternatives listed at the bottom.
+
 ## One buffer, no splits
 
 You always work in a single view. Instead of arranging panes, you jump between files so fast that a second pane is never needed.
+
+## A centered buffer, sized by the language
+
+By default the text buffer sits centered in the terminal, and its width is the max line width set by the language you're writing. A Rust file is as wide as rustfmt allows, and other languages follow their own conventions. No ragged edges stretching across a wide monitor, just the code, at the width it was meant to be read.
 
 ## Waypoints instead of tabs and splits
 
