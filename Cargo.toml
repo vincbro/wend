@@ -1,0 +1,12 @@
+[package]
+name = "wend"
+version = "0.0.1"
+edition = "2024"
+description = "A terminal text editor built for speed of movement: one buffer, no splits, waypoints instead of tabs."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vincbro/wend"
+readme = "README.md"
+keywords = ["editor", "text-editor", "terminal", "tui", "modal"]
+categories = ["text-editors", "command-line-utilities"]
+
+[dependencies]
