@@ -16,9 +16,11 @@ build:
 dist:
     cargo build -p wend --profile dist --locked
 
-# Format every Rust file
+# Format every Rust and TOML file, and sort Cargo.toml dependency tables
 fmt:
     cargo fmt --all
+    cargo sort --workspace --no-format
+    taplo fmt
 
 # Apply clippy's automatic fixes, then format
 fix:
@@ -31,6 +33,8 @@ check: fmt-check clippy doc test deps
 # Fail on any file `just fmt` would change
 fmt-check:
     cargo fmt --all -- --check
+    cargo sort --workspace --no-format --check
+    taplo fmt --check
 
 # Fail on any lint
 clippy:
@@ -67,4 +71,4 @@ toolchain:
 
 # Each tool only if it's missing: command:crate
 _tools:
-    for tool in cargo-set-version:cargo-edit cargo-machete:cargo-machete cargo-deny:cargo-deny; do command -v "${tool%%:*}" >/dev/null || cargo install --locked "${tool#*:}"; done
+    for tool in cargo-set-version:cargo-edit cargo-machete:cargo-machete cargo-deny:cargo-deny cargo-sort:cargo-sort taplo:taplo-cli; do command -v "${tool%%:*}" >/dev/null || cargo install --locked "${tool#*:}"; done

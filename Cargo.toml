@@ -15,6 +15,8 @@ readme = "README.md"
 # mixes with another release's wend-core. Cargo can't inherit a version here, so
 # `just bump` rewrites these with [workspace.package]; a mismatch fails to build.
 [workspace.dependencies]
+lexopt = { version = "0.3.2" }
+crossterm = { version = "0.29.0" }
 wend-core = { path = "crates/wend-core", version = "=0.0.1" }
 
 # Lint policy: CONTRIBUTING.md#lints. A new lint from a toolchain bump is
@@ -88,7 +90,7 @@ allow_attributes_without_reason = "warn"
 # Clarity.
 clone_on_ref_ptr = "warn"
 lossy_float_literal = "warn"
-mod_module_files = "warn" # foo.rs + foo/, never foo/mod.rs
+mod_module_files = "warn"                # foo.rs + foo/, never foo/mod.rs
 rc_buffer = "warn"
 rc_mutex = "warn"
 rest_pat_in_fully_bound_structs = "warn"

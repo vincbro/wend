@@ -7,7 +7,7 @@ Thanks for taking an interest. wend is heavily opinionated (see the [README](REA
 You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just).
 
 ```sh
-just toolchain   # installs the pinned Rust, plus cargo-edit, cargo-machete and cargo-deny
+just toolchain   # installs the pinned Rust and the cargo tools the recipes use
 just run         # runs wend from source
 just check       # what CI runs: fmt, clippy, docs, tests
 ```
@@ -51,7 +51,11 @@ The toolchain is pinned in `rust-toolchain.toml`, so everyone sees the same lint
 
 ## Formatting
 
-`cargo fmt` with the stable options in `rustfmt.toml`, so any toolchain formats the same way.
+`just fmt` formats everything, and `just check` fails on anything it would change:
+
+- Rust: `cargo fmt` with the stable options in `rustfmt.toml`, so any toolchain formats the same way.
+- `Cargo.toml` dependency tables: sorted alphabetically by `cargo sort`.
+- Every TOML file: formatted by `taplo` (`taplo.toml`). It never reorders keys, so hand-grouped tables such as the lints keep their order.
 
 ## Releases
 

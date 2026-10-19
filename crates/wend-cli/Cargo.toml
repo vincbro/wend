@@ -12,6 +12,7 @@ categories = ["text-editors", "command-line-utilities"]
 
 [dependencies]
 wend-core.workspace = true
+lexopt.workspace = true
 
 [lints]
 workspace = true
