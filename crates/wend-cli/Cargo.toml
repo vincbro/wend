@@ -1,0 +1,17 @@
+[package]
+name = "wend"
+description = "A terminal text editor built for speed of movement: one buffer, no splits, waypoints instead of tabs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["editor", "text-editor", "terminal", "tui", "modal"]
+categories = ["text-editors", "command-line-utilities"]
+
+[dependencies]
+wend-core.workspace = true
+
+[lints]
+workspace = true

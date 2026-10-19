@@ -1,0 +1,16 @@
+[package]
+name = "wend-core"
+description = "The core of the wend text editor: buffers, editing and state, with no terminal attached."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["editor", "text-editor", "rope", "modal"]
+categories = ["text-editors"]
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,12 +1,105 @@
-[package]
-name = "wend"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.0.1"
 edition = "2024"
-description = "A terminal text editor built for speed of movement: one buffer, no splits, waypoints instead of tabs."
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vincbro/wend"
 readme = "README.md"
-keywords = ["editor", "text-editor", "terminal", "tui", "modal"]
-categories = ["text-editors", "command-line-utilities"]
 
-[dependencies]
+[workspace.dependencies]
+wend-core = { path = "crates/wend-core", version = "0.0.1" }
+
+# Lint policy: CONTRIBUTING.md#lints. A new lint from a toolchain bump is
+# fixed, or allowed here with a reason, in the same change.
+[workspace.lints.rust]
+# Off-by-default rustc lints we want on.
+elided_lifetimes_in_paths = "warn"
+explicit_outlives_requirements = "warn"
+future_incompatible = "warn"
+impl_trait_redundant_captures = "warn"
+let_underscore_drop = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+redundant_lifetimes = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unnameable_types = "warn"
+unreachable_pub = "warn"
+# Each unsafe site opts in with #[expect(unsafe_code, reason = "...")].
+unsafe_code = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.rustdoc]
+all = { level = "warn", priority = -1 }
+missing_crate_level_docs = "allow"
+
+# all, pedantic and cargo are on. restriction is opted into lint by lint
+# instead of as a group: the group holds lints that contradict each other and
+# grows with every toolchain.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Allowed from the groups above.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow" # we don't control our dependencies' trees
+
+# Opted in from restriction.
+# Leftovers that shouldn't ship.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# The terminal is the UI: a stray print corrupts the screen.
+print_stderr = "warn"
+print_stdout = "warn"
+# Skips Drop, so the terminal is never restored. Return from main instead.
+exit = "warn"
+mem_forget = "warn"
+# A panic loses the user's unsaved work. expect() with a message is allowed
+# where the invariant is real; unwrap() is fine in tests (clippy.toml).
+get_unwrap = "warn"
+unwrap_used = "warn"
+# Unsafe stays rare and explained.
+multiple_unsafe_ops_per_block = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+# Lint escapes say why, and fail once they're no longer needed.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# Clarity.
+clone_on_ref_ptr = "warn"
+lossy_float_literal = "warn"
+mod_module_files = "warn" # foo.rs + foo/, never foo/mod.rs
+rc_buffer = "warn"
+rc_mutex = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+str_to_string = "warn"
+unused_result_ok = "warn"
+verbose_file_reads = "warn"
+
+[profile.dev.package."*"]
+# Dependencies optimised in dev builds: an editor is unusable at opt-level 0.
+opt-level = 2
+
+# What we ship: `cargo build --profile dist`. Kept out of `release` so
+# contributors' --release builds stay quick.
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+strip = true

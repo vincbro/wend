@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "wend"
 version = "0.0.1"
+dependencies = [
+ "wend-core",
+]
+
+[[package]]
+name = "wend-core"
+version = "0.0.1"

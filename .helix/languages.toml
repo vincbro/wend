@@ -1,0 +1,6 @@
+# rust-analyzer runs clippy instead of `cargo check` on save, so the editor shows
+# every lint `just clippy` fails on. Lint levels come from [workspace.lints] and
+# clippy.toml, which clippy reads itself: no flags needed here.
+[language-server.rust-analyzer.config]
+cargo = { features = "all" }
+check = { command = "clippy", allTargets = true }

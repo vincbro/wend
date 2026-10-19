@@ -1,0 +1,81 @@
+name: CI
+
+# `just check`, one step per check so a failure names what failed, plus a build
+# on rust-version so the minimum we claim stays true. Pushes to main run it too,
+# which keeps main's caches warm for the PRs that branch off it.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up just
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: just
+
+      # The toolchain pinned in rust-toolchain.toml, as on a laptop.
+      - name: Set up Rust
+        run: just toolchain
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # A PR's first push often fails; its fix shouldn't start cold again.
+          cache-on-failure: true
+
+      - name: Format
+        run: just fmt-check
+
+      - name: Clippy
+        run: just clippy
+
+      - name: Docs
+        run: just doc
+
+      - name: Test
+        run: just test
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # rust-version from the workspace manifest, overriding rust-toolchain.toml.
+      - name: Set up Rust
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$msrv" >> "$GITHUB_ENV"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: msrv
+
+      - name: Build
+        run: cargo build --workspace --all-targets --locked

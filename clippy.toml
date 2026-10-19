@@ -1,0 +1,13 @@
+allow-dbg-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+allow-unwrap-in-tests = true
+
+# Perf: warn on big moves and copies long before clippy's defaults do.
+array-size-threshold = 4096      # default 16384: large_stack_arrays, large_const_arrays
+enum-variant-size-threshold = 64 # default 200: large_enum_variant
+future-size-threshold = 8192     # default 16384: large_futures
+pass-by-value-size-limit = 64    # default 256: large_types_passed_by_value
+stack-size-threshold = 65536     # default 512000: large_stack_frames
+too-large-for-stack = 100        # default 200: boxed_local, useless_vec
+vec-box-size-threshold = 1024    # default 4096: vec_box
