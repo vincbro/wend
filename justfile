@@ -26,7 +26,7 @@ fix:
     cargo fmt --all
 
 # The CI gate: run it before you push
-check: fmt-check clippy doc test
+check: fmt-check clippy doc test deps
 
 # Fail on any file `just fmt` would change
 fmt-check:
@@ -44,11 +44,27 @@ doc:
 test:
     cargo test --workspace --locked
 
+# Fail on unused dependencies, or on any cargo-deny check in deny.toml:
+# advisories, licenses, dependencies not shared through the workspace, sources
+deps:
+    cargo machete
+    cargo deny --locked check
+
 # Build the docs, private items included, and open a crate's page: just docs [crate]
 docs crate="wend_core":
     cargo doc --workspace --no-deps --document-private-items
     open target/doc/{{ crate }}/index.html
 
-# Install the pinned toolchain from rust-toolchain.toml
+# Set every crate's version, internal requirements included: just bump 0.1.0
+bump version:
+    cargo set-version --workspace {{ quote(version) }}
+
+# Install the pinned toolchain from rust-toolchain.toml, and off CI the cargo
+# tools other recipes call (CI installs those prebuilt)
 toolchain:
     rustup toolchain install
+    @[ -n "${CI:-}" ] || just _tools
+
+# Each tool only if it's missing: command:crate
+_tools:
+    for tool in cargo-set-version:cargo-edit cargo-machete:cargo-machete cargo-deny:cargo-deny; do command -v "${tool%%:*}" >/dev/null || cargo install --locked "${tool#*:}"; done

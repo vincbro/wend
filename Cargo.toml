@@ -2,6 +2,7 @@
 resolver = "3"
 members = ["crates/*"]
 
+# Every crate is versioned in lockstep from here: `just bump <version>`.
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
@@ -10,8 +11,11 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/vincbro/wend"
 readme = "README.md"
 
+# Internal crates require their exact sibling version, so a published wend never
+# mixes with another release's wend-core. Cargo can't inherit a version here, so
+# `just bump` rewrites these with [workspace.package]; a mismatch fails to build.
 [workspace.dependencies]
-wend-core = { path = "crates/wend-core", version = "0.0.1" }
+wend-core = { path = "crates/wend-core", version = "=0.0.1" }
 
 # Lint policy: CONTRIBUTING.md#lints. A new lint from a toolchain bump is
 # fixed, or allowed here with a reason, in the same change.

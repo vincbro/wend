@@ -7,7 +7,7 @@ Thanks for taking an interest. wend is heavily opinionated (see the [README](REA
 You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just).
 
 ```sh
-just toolchain   # installs the Rust pinned in rust-toolchain.toml
+just toolchain   # installs the pinned Rust, plus cargo-edit, cargo-machete and cargo-deny
 just run         # runs wend from source
 just check       # what CI runs: fmt, clippy, docs, tests
 ```
@@ -25,7 +25,14 @@ Every other crate is named after its folder, with the `wend-` prefix. Every crat
 
 ## Before you push
 
-`just check` has to pass. It fails on any formatting difference, any clippy or rustdoc warning, and any failing test.
+`just check` has to pass. It fails on any formatting difference, any clippy or rustdoc warning, any failing test, and any dependency problem (below).
+
+## Dependencies
+
+Declare every dependency once, in `[workspace.dependencies]` in the root `Cargo.toml`, and pull it into a crate with `name.workspace = true`. That way two crates can never sit on different versions of the same dependency. `just deps` enforces it:
+
+- `cargo machete` fails on dependencies a crate declares but never uses.
+- `cargo deny` (configured in `deny.toml`) fails on crates with known vulnerabilities, licenses that don't fit MIT OR Apache-2.0, dependencies used by more than one crate but not shared through the workspace, and sources other than crates.io. It also reports duplicate versions in the tree, without failing.
 
 `just fix` applies clippy's automatic fixes and formats, which clears most lints on its own. If you're stuck on a lint, push anyway and say so in the PR: a maintainer can fix it up, and a lint should never be the reason a good change doesn't land.
 
@@ -47,6 +54,8 @@ The toolchain is pinned in `rust-toolchain.toml`, so everyone sees the same lint
 `cargo fmt` with the stable options in `rustfmt.toml`, so any toolchain formats the same way.
 
 ## Releases
+
+Every crate shares one version, set in `[workspace.package]` in the root `Cargo.toml`. Change it with `just bump <version>` (`cargo set-version`), never by hand: that also updates the exact `=` requirements between internal crates. Publish `wend-core` before `wend`.
 
 The shipped binary is built with `just dist` (the `dist` profile: fat LTO, one codegen unit, stripped). `cargo build --release` stays quick for day-to-day profiling.
 

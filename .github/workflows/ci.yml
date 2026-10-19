@@ -56,6 +56,28 @@ jobs:
       - name: Test
         run: just test
 
+  # Separate from check: a new advisory can fail this without the PR touching
+  # dependencies, and that shouldn't hide whether the code itself passes.
+  deps:
+    name: deps
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up tools
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: just,cargo-machete,cargo-deny
+
+      - name: Set up Rust
+        run: just toolchain
+
+      - name: Dependencies
+        run: just deps
+
   msrv:
     name: msrv
     runs-on: ubuntu-24.04
