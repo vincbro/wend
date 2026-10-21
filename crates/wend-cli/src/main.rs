@@ -1,10 +1,23 @@
 //! The `wend` binary: the terminal frontend for `wend-core`.
 
+use std::io::{self, Write};
+
+use anyhow::{Result, bail};
+use crossterm::{
+    QueueableCommand, cursor,
+    event::{self, Event},
+    style::{self, Attribute},
+    terminal::{self},
+};
+use wend_core::{area::Area, buffer::Buffer, editor::Editor, frame::Frame};
+
+const HELP: &str = "Usage: wend [file/to/open]";
+
 struct Args {
     file: String,
 }
 
-fn parse_args() -> Result<Args, lexopt::Error> {
+fn parse_args() -> Result<Args> {
     use lexopt::prelude::*;
 
     let mut file = None;
@@ -15,26 +28,77 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                 file = Some(val.string()?);
             }
             Long("help") => {
-                println!("Usage: hello [-n|--number=NUM] [--shout] THING");
-                std::process::exit(0);
+                bail!(HELP);
             }
-            _ => return Err(arg.unexpected()),
+            _ => return Err(arg.unexpected().into()),
         }
     }
 
-    Ok(Args {
-        file: file.unwrap(),
-    })
+    let Some(file) = file else { bail!(HELP) };
+
+    Ok(Args { file })
 }
 
-#[expect(
-    clippy::print_stdout,
-    reason = "placeholder until the terminal frontend exists"
-)]
-fn main() -> Result<(), lexopt::Error> {
+fn main() -> Result<()> {
     let args = parse_args()?;
 
+    let mut stdout = io::stdout();
+    terminal::enable_raw_mode()?;
+    stdout
+        .queue(terminal::EnterAlternateScreen)?
+        .queue(cursor::Hide)?
+        .flush()?;
 
+    let window = terminal::window_size()?;
+    let area = Area::new(window.columns, window.rows);
+    let mut editor = Editor::new(area);
+    editor.open_file(args.file.as_str())?;
+    let frame = editor.frame();
+    render_frame(&frame, &mut stdout)?;
 
+    loop {
+        let event = event::read()?;
+        if let Event::Key(key) = event {
+            if key.code.is_char('h') {
+                editor.page.buffer.iter_mut().for_each(Buffer::left);
+            } else if key.code.is_char('j') {
+                editor.page.buffer.iter_mut().for_each(Buffer::down);
+            } else if key.code.is_char('k') {
+                editor.page.buffer.iter_mut().for_each(Buffer::up);
+            } else if key.code.is_char('l') {
+                editor.page.buffer.iter_mut().for_each(Buffer::right);
+            } else if key.code.is_enter() || key.code.is_char('q') {
+                break;
+            }
+        }
+
+        let frame = editor.frame();
+        render_frame(&frame, &mut stdout)?;
+    }
+    stdout
+        .queue(cursor::Show)?
+        .queue(terminal::LeaveAlternateScreen)?
+        .flush()?;
+    terminal::disable_raw_mode()?;
+    Ok(())
+}
+
+fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
+    writer.queue(cursor::MoveTo(0, 0))?;
+
+    for row in 0..frame.area.rows {
+        let cells = frame.get_row(row);
+        for (col, cell) in cells.iter().enumerate() {
+            if cell.cursor {
+                writer.queue(style::SetAttribute(Attribute::Underlined))?;
+            }
+
+            writer
+                .queue(cursor::MoveTo(col as u16, row))?
+                .queue(style::Print(cell.content))?
+                .queue(style::SetAttribute(Attribute::Reset))?;
+        }
+    }
+    writer.flush()?;
     Ok(())
 }

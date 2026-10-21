@@ -11,8 +11,10 @@ keywords = ["editor", "text-editor", "terminal", "tui", "modal"]
 categories = ["text-editors", "command-line-utilities"]
 
 [dependencies]
-wend-core.workspace = true
+anyhow.workspace = true
+crossterm.workspace = true
 lexopt.workspace = true
+wend-core.workspace = true
 
 [lints]
 workspace = true

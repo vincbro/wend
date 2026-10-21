@@ -1,45 +1,28 @@
 # wend
 
-A terminal text editor built for speed of movement, not for managing windows.
+A terminal text editor written in Rust. It's very early, and most of what's described here doesn't exist yet.
 
-> **Status:** early days. Nothing usable yet, this crate currently reserves the name while the editor takes shape.
+I want two things from an editor. I want to write my config once and use it on any machine I SSH into without installing anything on that machine. And I want the editor to do less. I don't think an editor needs a built-in terminal, splits or tabs when my terminal already has them. The goal is an editor I don't have to think about.
 
-## Heavily opinionated, on purpose
+## Planned features
 
-wend is not trying to be an editor for everyone. It makes strong choices about how you should work and doesn't offer escape hatches to undo them. If those choices fit the way you think, it should feel like it disappears. If they don't, that's fine: wend is not for you, and there are great alternatives listed at the bottom.
+- One buffer. No splits, no tabs.
+- The buffer is centered and as wide as the language's max line width (rustfmt's for Rust, and so on), so on a wide monitor the code sits where you're already looking.
+- Waypoints instead of tabs. Mark a spot in a file and bind it to a key, like `leader w c` for `Cargo.toml`. Waypoints are saved per project instead of per path, so they work wherever the repo is checked out, including other worktrees. They should still land in the right place after the code around them changes. You can also make waypoints that work across projects.
+- Remote editing over SSH with nothing installed on the remote.
+- Strong defaults. Some choices can't be turned off. If they don't fit how you work, one of the editors at the bottom probably will.
 
-## One buffer, no splits
+## Remote editing
 
-You always work in a single view. Instead of arranging panes, you jump between files so fast that a second pane is never needed.
+wend runs on your machine and keeps a local copy of the remote project, synced both ways in the background. You type into the local copy, so the network never slows down editing, and your own tools run against it. That's how you get rust-analyzer on a VM that doesn't have it installed. Ignored and large files stay on the remote unless you ask for them (`.env`, for example).
 
-## A centered buffer, sized by the language
+Yes, this means keeping a full copy of the project locally. I think that's worth it.
 
-By default the text buffer sits centered in the terminal, and its width is the max line width set by the language you're writing. A Rust file is as wide as rustfmt allows, and other languages follow their own conventions. No ragged edges stretching across a wide monitor, just the code, at the width it was meant to be read.
+## Design
 
-## Waypoints instead of tabs and splits
+This part is experimental and will probably change.
 
-You open a file with the finder. When you're working across several files, you drop a waypoint in each one and bind it to a key: `Cargo.toml` might live on `leader w c`, for cargo. One keystroke teleports you back to exactly that spot.
-
-- **They survive shutdown.** Come back a week later, press your waypoint keys, and you're right where you left off.
-- **They belong to the project, not the machine or the path.** A project is identified by its repo, so the same waypoints work wherever that repo is checked out.
-- **They work across git worktrees.** A waypoint resolves inside whichever worktree you're in, and can jump to the same spot in another one.
-- **Cross-project waypoints** for the files you keep coming back to, whatever you're working on.
-- **Anchors that hold up.** A waypoint remembers more than a line number, so it still lands in the right place after the code around it has changed.
-
-## Any machine, as if it were local
-
-Over SSH, wend runs on your machine and only the files live on the remote. Typing never waits on the network, and the remote doesn't need anything installed: you can SSH into a box that has never heard of rust-analyzer and still have full tooling, because it runs locally against a synced copy of the project. Your waypoints stay on your machine too, so you can jump into any computer, work, and jump out.
-
-## Built for performance, all the way down
-
-- Fast file reads (mmap where it fits)
-- A rope-based buffer
-- Rendering that only redraws what changed
-- Full keyboard input through the kitty keyboard protocol, so single-key bindings can be dense and mnemonic
-
-## The point
-
-Work fast, move between files without thinking, and never be locked into a window layout or a single machine.
+The editor core never blocks. It takes in events (keys, file changes, sync updates, language server messages), updates its state and produces a snapshot of what the screen should look like. It doesn't know what a terminal is. The frontend sends input in and draws the latest snapshot. Anything slow, like disk, network or language servers, runs somewhere else and reports back as another event.
 
 ## License
 
@@ -50,10 +33,6 @@ Licensed under either of
 
 at your option.
 
-## Inspirations & alternatives
+## Alternatives
 
-wend stands on the shoulders of these editors. If wend isn't for you, they're well worth a look:
-
-- [Helix](https://helix-editor.com)
-- [Neovim](https://neovim.io)
-- [Zed](https://zed.dev)
+wend borrows a lot from [Helix](https://helix-editor.com), [Neovim](https://neovim.io) and [Zed](https://zed.dev). If wend isn't for you, try one of those.

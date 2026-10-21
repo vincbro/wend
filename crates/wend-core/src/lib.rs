@@ -2,5 +2,11 @@
 //! terminal attached. The terminal frontend is the `wend` crate, in
 //! `crates/wend-cli`.
 
+pub mod area;
+pub mod buffer;
+pub mod editor;
+pub mod frame;
+pub mod page;
+
 /// The version of wend, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

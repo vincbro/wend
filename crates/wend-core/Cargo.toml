@@ -11,6 +11,7 @@ keywords = ["editor", "text-editor", "rope", "modal"]
 categories = ["text-editors"]
 
 [dependencies]
+crop.workspace = true
 
 [lints]
 workspace = true
