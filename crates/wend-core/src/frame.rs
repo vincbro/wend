@@ -8,6 +8,7 @@ pub struct Cell {
 }
 
 impl Cell {
+    #[must_use]
     pub fn new(content: char, cursor: bool, z_index: u8) -> Self {
         Self {
             content,
@@ -27,38 +28,49 @@ impl Default for Cell {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Frame {
     pub area: Area,
-    pub buffer: Box<[Cell]>,
+    pub cells: Box<[Cell]>,
 }
 
 impl Frame {
+    #[must_use]
     pub fn new(area: Area) -> Self {
         Frame {
             area,
-            buffer: vec![Cell::default(); area.len() as usize].into_boxed_slice(),
+            cells: vec![Cell::default(); area.len() as usize].into_boxed_slice(),
         }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = ((u16, u16), &Cell)> {
+        let Area { cols, rows } = self.area;
+        (0..rows)
+            .flat_map(move |row| (0..cols).map(move |col| (col, row)))
+            .zip(self.cells.iter())
+    }
+
+    #[must_use]
     pub fn get(&self, x: u16, y: u16) -> &Cell {
         let idx = u32::from(x) + u32::from(y) * u32::from(self.area.cols);
-        &self.buffer[idx as usize]
+        &self.cells[idx as usize]
     }
 
     pub fn get_mut(&mut self, x: u16, y: u16) -> &mut Cell {
         let idx = u32::from(x) + u32::from(y) * u32::from(self.area.cols);
-        &mut self.buffer[idx as usize]
+        &mut self.cells[idx as usize]
     }
 
     pub fn write(&mut self, x: u16, y: u16, cell: Cell) {
         let idx = u32::from(x) + u32::from(y) * u32::from(self.area.cols);
-        self.buffer[idx as usize] = cell;
+        self.cells[idx as usize] = cell;
     }
 
-    pub fn get_row<'a>(&'a self, row: u16) -> &'a [Cell] {
+    #[must_use]
+    pub fn get_row(&self, row: u16) -> &[Cell] {
         let start = u32::from(row) * u32::from(self.area.cols);
         let end = start + u32::from(self.area.cols);
         let range = start as usize..end as usize;
-        &self.buffer[range]
+        &self.cells[range]
     }
 }

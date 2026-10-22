@@ -1,20 +1,27 @@
 use std::{
-    fs, io,
+    fs, io, ops,
     path::{Path, PathBuf},
-    str::from_utf8,
 };
 
+#[derive(Debug, Clone, Copy)]
 pub struct Cursor {
-    pub char: u16,
-    pub line: u16,
+    pub from_byte: usize,
+    pub to_byte: usize,
 }
 
 impl Cursor {
-    pub fn new(char: u16, line: u16) -> Self {
-        Self { char, line }
+    #[must_use]
+    pub fn new(from_byte: usize, to_byte: usize) -> Self {
+        Self { from_byte, to_byte }
+    }
+
+    #[must_use]
+    pub fn overlaps(&self, range: ops::Range<usize>) -> bool {
+        self.from_byte < range.end && range.start < self.to_byte
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Buffer {
     pub file: PathBuf,
     pub cursor: Cursor,
@@ -33,24 +40,8 @@ impl Buffer {
 
         Ok(Self {
             file: path.as_ref().to_path_buf(),
-            cursor: Cursor::new(0, 0),
+            cursor: Cursor::new(0, 1),
             rope: rope_builder.build(),
         })
-    }
-
-    pub fn up(&mut self) {
-        self.cursor.line = self.cursor.line.saturating_sub(1)
-    }
-
-    pub fn down(&mut self) {
-        self.cursor.line = self.cursor.line.saturating_add(1);
-    }
-
-    pub fn left(&mut self) {
-        self.cursor.char = self.cursor.char.saturating_sub(1);
-    }
-
-    pub fn right(&mut self) {
-        self.cursor.char = self.cursor.char.saturating_add(1);
     }
 }

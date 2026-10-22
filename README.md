@@ -1,8 +1,15 @@
-# wend
+# 🗻 wend
 
 A terminal text editor written in Rust. It's very early, and most of what's described here doesn't exist yet.
 
 I want two things from an editor. I want to write my config once and use it on any machine I SSH into without installing anything on that machine. And I want the editor to do less. I don't think an editor needs a built-in terminal, splits or tabs when my terminal already has them. The goal is an editor I don't have to think about.
+
+
+## Namespaces
+
+Actions are bound to namespaces, `waypoints` occupie the `leader + w` namespace, `buffers` occupie the `leader + b`, `edits` occupie the `e` key, with that we can chain moves like editing the waypoints with `leader + e + w` and buffers would be `leader + e + b`
+
+The vision here is to be able to build a strong consistant mental model of what things will do by layering constant setups.
 
 ## Planned features
 

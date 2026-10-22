@@ -9,7 +9,7 @@ use crossterm::{
     style::{self, Attribute},
     terminal::{self},
 };
-use wend_core::{area::Area, buffer::Buffer, editor::Editor, frame::Frame};
+use wend_core::{area::Area, editor::Editor, frame::Frame};
 
 const HELP: &str = "Usage: wend [file/to/open]";
 
@@ -60,13 +60,13 @@ fn main() -> Result<()> {
         let event = event::read()?;
         if let Event::Key(key) = event {
             if key.code.is_char('h') {
-                editor.page.buffer.iter_mut().for_each(Buffer::left);
+                // editor.page.buffer.iter_mut().for_each(Buffer::left);
             } else if key.code.is_char('j') {
-                editor.page.buffer.iter_mut().for_each(Buffer::down);
+                editor.page.down();
             } else if key.code.is_char('k') {
-                editor.page.buffer.iter_mut().for_each(Buffer::up);
+                // editor.page.buffer.iter_mut().for_each(Buffer::up);
             } else if key.code.is_char('l') {
-                editor.page.buffer.iter_mut().for_each(Buffer::right);
+                // editor.page.buffer.iter_mut().for_each(Buffer::right);
             } else if key.code.is_enter() || key.code.is_char('q') {
                 break;
             }
@@ -85,19 +85,14 @@ fn main() -> Result<()> {
 
 fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
     writer.queue(cursor::MoveTo(0, 0))?;
-
-    for row in 0..frame.area.rows {
-        let cells = frame.get_row(row);
-        for (col, cell) in cells.iter().enumerate() {
-            if cell.cursor {
-                writer.queue(style::SetAttribute(Attribute::Underlined))?;
-            }
-
-            writer
-                .queue(cursor::MoveTo(col as u16, row))?
-                .queue(style::Print(cell.content))?
-                .queue(style::SetAttribute(Attribute::Reset))?;
+    for ((col, row), cell) in frame.iter() {
+        if cell.cursor {
+            writer.queue(style::SetAttribute(Attribute::Reverse))?;
         }
+        writer
+            .queue(cursor::MoveTo(col, row))?
+            .queue(style::Print(cell.content))?
+            .queue(style::SetAttribute(Attribute::Reset))?;
     }
     writer.flush()?;
     Ok(())

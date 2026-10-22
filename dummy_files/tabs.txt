@@ -1,4 +1,6 @@
 This is a test of tabs
 	tabs
     spaces
-	tabs
+  	2 spaces then tab
+   	3 spaces then a tab
+    	4 spaces then a tab

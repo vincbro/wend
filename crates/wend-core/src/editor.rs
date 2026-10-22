@@ -1,26 +1,35 @@
-use std::{fs, io, path::Path};
+use std::{io, path::Path};
 
 use crate::{
     area::{Area, Rect},
     buffer::Buffer,
     frame::Frame,
-    page::Page,
+    layout::Layout,
+    view::View,
 };
 
+#[derive(Debug, Clone)]
 pub struct Editor {
     pub area: Area,
     pub buffers: Vec<Buffer>,
-    pub page: Page,
+    pub page: View,
 }
 
 impl Editor {
+    #[must_use]
     pub fn new(area: Area) -> Self {
         Self {
             area,
             buffers: vec![],
-            page: Page {
+            page: View {
                 buffer: None,
                 scroll_offset: 0,
+                rect: Rect {
+                    col: 0,
+                    row: 0,
+                    area,
+                },
+                layout: Layout::new(),
             },
         }
     }
@@ -47,10 +56,9 @@ impl Editor {
         Ok(())
     }
 
-    pub fn frame(&self) -> Frame {
+    pub fn frame(&mut self) -> Frame {
         let mut frame = Frame::new(self.area);
-        let page_rect = Rect::new(0, 0, self.area);
-        self.page.render(page_rect, &mut frame);
+        self.page.render(&mut frame);
         frame
     }
 }
