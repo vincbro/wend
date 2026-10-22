@@ -4,3 +4,8 @@ This is a test of tabs
   	2 spaces then tab
    	3 spaces then a tab
     	4 spaces then a tab
+
+
+This is a really super duper juper tuper long line that should always be wrapping unless you have some crazy wide monitor then unlucky dude but for the rest of us this should wrap and we should see it wrap, unless the code isn't working
+
+Some lines under the long one

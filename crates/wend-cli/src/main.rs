@@ -64,7 +64,7 @@ fn main() -> Result<()> {
             } else if key.code.is_char('j') {
                 editor.page.down();
             } else if key.code.is_char('k') {
-                // editor.page.buffer.iter_mut().for_each(Buffer::up);
+                editor.page.up();
             } else if key.code.is_char('l') {
                 // editor.page.buffer.iter_mut().for_each(Buffer::right);
             } else if key.code.is_enter() || key.code.is_char('q') {
