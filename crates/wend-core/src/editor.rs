@@ -4,7 +4,6 @@ use crate::{
     area::{Area, Rect},
     buffer::Buffer,
     frame::Frame,
-    layout::Layout,
     view::View,
 };
 
@@ -12,7 +11,7 @@ use crate::{
 pub struct Editor {
     pub area: Area,
     pub buffers: Vec<Buffer>,
-    pub page: View,
+    pub view: View,
 }
 
 impl Editor {
@@ -21,44 +20,29 @@ impl Editor {
         Self {
             area,
             buffers: vec![],
-            page: View {
-                buffer: None,
-                scroll_offset: 0,
-                rect: Rect {
-                    col: 0,
-                    row: 0,
-                    area,
-                },
-                layout: Layout::new(),
-            },
+            view: View::new(Rect::new(0, 0, area)),
         }
-    }
-
-    pub fn set_buffer(&mut self, buffer: Buffer) {
-        if let Some(other_buffer) = self.page.buffer.take() {
-            self.buffers.push(other_buffer);
-        }
-        self.page.buffer = Some(buffer);
     }
 
     pub fn open_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let path = path.as_ref();
 
-        let buffer = if let Some(index) = self.buffers.iter().position(|buffer| buffer.file == path)
+        let buffer = if let Some(index) = self
+            .buffers
+            .iter()
+            .position(|buffer| buffer.path.iter().any(|p| p == path))
         {
             self.buffers.swap_remove(index)
         } else {
-            Buffer::new(path)?
+            Buffer::from_path(path)?
         };
-
-        self.set_buffer(buffer);
-
+        self.buffers.push(self.view.open_buffer(buffer));
         Ok(())
     }
 
     pub fn frame(&mut self) -> Frame {
         let mut frame = Frame::new(self.area);
-        self.page.render(&mut frame);
+        self.view.render(&mut frame);
         frame
     }
 }

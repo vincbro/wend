@@ -60,13 +60,13 @@ fn main() -> Result<()> {
         let event = event::read()?;
         if let Event::Key(key) = event {
             if key.code.is_char('h') {
-                // editor.page.buffer.iter_mut().for_each(Buffer::left);
+                editor.view.left();
             } else if key.code.is_char('j') {
-                editor.page.down();
+                editor.view.down();
             } else if key.code.is_char('k') {
-                editor.page.up();
+                editor.view.up();
             } else if key.code.is_char('l') {
-                // editor.page.buffer.iter_mut().for_each(Buffer::right);
+                editor.view.right();
             } else if key.code.is_enter() || key.code.is_char('q') {
                 break;
             }
@@ -91,7 +91,7 @@ fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
         }
         writer
             .queue(cursor::MoveTo(col, row))?
-            .queue(style::Print(cell.content))?
+            .queue(style::Print(cell.grapheme.as_str_sanitize()))?
             .queue(style::SetAttribute(Attribute::Reset))?;
     }
     writer.flush()?;

@@ -1,17 +1,17 @@
-use crate::area::Area;
+use crate::{area::Area, grapheme::Grapheme};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy)]
 pub struct Cell {
-    pub content: char,
+    pub grapheme: Grapheme,
     pub cursor: bool,
     pub z_index: u8,
 }
 
 impl Cell {
     #[must_use]
-    pub fn new(content: char, cursor: bool, z_index: u8) -> Self {
+    pub fn new(grapheme: Grapheme, cursor: bool, z_index: u8) -> Self {
         Self {
-            content,
+            grapheme,
             cursor,
             z_index,
         }
@@ -21,7 +21,7 @@ impl Cell {
 impl Default for Cell {
     fn default() -> Self {
         Self {
-            content: ' ',
+            grapheme: Grapheme::default(),
             cursor: false,
             z_index: 0,
         }
@@ -39,7 +39,7 @@ impl Frame {
     pub fn new(area: Area) -> Self {
         Frame {
             area,
-            cells: vec![Cell::default(); area.len() as usize].into_boxed_slice(),
+            cells: vec![Cell::default(); area.len_u32() as usize].into_boxed_slice(),
         }
     }
 

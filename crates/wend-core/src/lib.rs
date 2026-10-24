@@ -6,8 +6,8 @@ pub mod area;
 pub mod buffer;
 pub mod editor;
 pub mod frame;
-pub mod layout;
 pub mod view;
+pub mod grapheme;
 
 /// The version of wend, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

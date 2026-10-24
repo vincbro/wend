@@ -1,42 +1,51 @@
+use std::mem;
+
 use crate::{
     area::Rect,
     buffer::Buffer,
     frame::{Cell, Frame},
-    layout::{Layout, Slot},
+    grapheme::Grapheme,
+    view::layout::Glyph,
 };
+
+pub mod layout;
+use layout::{Layout, Slot};
 
 #[derive(Debug, Clone)]
 pub struct View {
-    pub buffer: Option<Buffer>,
-    pub scroll_offset: usize,
-    pub rect: Rect,
-    pub layout: Layout,
+    buffer: Buffer,
+    scroll_offset: usize,
+    scroll_marign: usize,
+    desired_col: usize,
+    rect: Rect,
+    layout: Layout,
 }
 
 impl View {
-    pub fn up(&mut self) {
-        // If we don't have a buffer we don't have anything to render
-        let Some(buffer) = &mut self.buffer else {
-            return;
-        };
-
-        let width = usize::from(self.rect.area.cols);
-        let lines = usize::from(self.rect.area.rows);
-        if !self.layout.fits(width, lines, self.scroll_offset) {
-            self.layout.model(buffer, width, lines, self.scroll_offset);
+    pub fn new(rect: Rect) -> Self {
+        Self {
+            buffer: Buffer::new(),
+            scroll_offset: 0,
+            scroll_marign: 10,
+            desired_col: 0,
+            rect,
+            layout: Layout::new(rect.area, 0),
         }
+    }
 
+    fn find_cursor(&self) -> Option<(usize, usize)> {
         for (row_idx, row) in self.layout.rows().enumerate() {
-            let Some(meta) = row.meta else {
-                continue;
-            };
-            if !buffer.cursor.overlaps(meta.from_byte..meta.to_byte) {
+            if !self
+                .buffer
+                .cursor
+                .overlaps(row.meta.from_byte..row.meta.to_byte)
+            {
                 continue;
             }
 
-            let Some(col) = row.slots.iter().copied().position(|slot| {
+            let Some(col_idx) = row.slots.iter().copied().position(|slot| {
                 if let Some(glyph) = self.layout.glyph(slot) {
-                    buffer.cursor.overlaps(glyph.as_range())
+                    self.buffer.cursor.overlaps(glyph.as_range())
                 } else {
                     false
                 }
@@ -44,79 +53,186 @@ impl View {
                 continue;
             };
 
-            let Some(prev_row) = self.layout.row(row_idx.saturating_sub(1)) else {
-                break;
-            };
+            return Some((col_idx, row_idx));
+        }
+        None
+    }
 
-            for i in (0..=col).rev() {
-                if let Some(glyph) = self.layout.glyph(prev_row.slots[i]) {
-                    buffer.cursor.from_byte = glyph.from_byte;
-                    buffer.cursor.to_byte = glyph.to_byte;
-                    break;
-                }
+    fn glyph(&self, col_idx: usize, row_idx: usize) -> Option<Glyph> {
+        let row = self.layout.row(row_idx)?;
+        let slot = row.slots.get(col_idx).copied()?;
+        self.layout.glyph(slot)
+    }
+
+    // Finds the next glyph from a given slot
+    fn next_glyph(&self, col_idx: usize, row_idx: usize) -> Option<Glyph> {
+        let row = self.layout.row(row_idx)?;
+
+        let base_glyph = self.glyph(col_idx, row_idx);
+
+        for idx in col_idx.saturating_add(1)..row.meta.len {
+            let Some(next_glyph) = self.glyph(idx, row_idx) else {
+                continue;
+            };
+            if let Some(base_glyph) = base_glyph
+                && base_glyph.from_byte == next_glyph.from_byte
+            {
+                continue;
             }
-            break;
+            return Some(next_glyph);
+        }
+
+        None
+    }
+
+    // Finds the previous glyph from a given slot
+    fn prev_glyph(&self, col_idx: usize, row_idx: usize) -> Option<Glyph> {
+        let base_glyph = self.glyph(col_idx, row_idx);
+
+        for idx in (0..col_idx).rev() {
+            let Some(prev_glyph) = self.glyph(idx, row_idx) else {
+                continue;
+            };
+            if let Some(base_glyph) = base_glyph
+                && base_glyph.from_byte == prev_glyph.from_byte
+            {
+                continue;
+            }
+            return Some(prev_glyph);
+        }
+
+        None
+    }
+
+    pub fn up(&mut self) {
+        let Some((_, row_idx)) = self.find_cursor() else {
+            return;
+        };
+
+        if row_idx == 0 {
+            return;
+        }
+
+        let prev_row = row_idx.saturating_sub(1);
+        let glyph = self
+            .glyph(self.desired_col, prev_row)
+            .or_else(|| self.prev_glyph(self.desired_col, prev_row))
+            .or_else(|| self.next_glyph(self.desired_col, prev_row));
+
+        if let Some(glyph) = glyph {
+            self.buffer.cursor.set_glyph(glyph);
+            self.ensure_cursor_visible();
         }
     }
 
     pub fn down(&mut self) {
-        // If we don't have a buffer we don't have anything to render
-        let Some(buffer) = &mut self.buffer else {
+        let Some((_, row_idx)) = self.find_cursor() else {
             return;
         };
+        let next_row = row_idx.saturating_add(1);
+        let glyph = self
+            .glyph(self.desired_col, next_row)
+            .or_else(|| self.prev_glyph(self.desired_col, next_row))
+            .or_else(|| self.next_glyph(self.desired_col, next_row));
 
-        let width = usize::from(self.rect.area.cols);
-        let lines = usize::from(self.rect.area.rows);
-        if !self.layout.fits(width, lines, self.scroll_offset) {
-            self.layout.model(buffer, width, lines, self.scroll_offset);
+        if let Some(glyph) = glyph {
+            self.buffer.cursor.set_glyph(glyph);
+            self.ensure_cursor_visible();
+        }
+    }
+
+    pub fn right(&mut self) {
+        let Some((col_idx, row_idx)) = self.find_cursor() else {
+            return;
+        };
+        let Some(row) = self.layout.row(row_idx) else {
+            return;
+        };
+        for i in col_idx.saturating_add(1)..row.meta.len {
+            if let Some(glyph) = self.layout.glyph(row.slots[i])
+                && self.buffer.cursor.from_byte != glyph.from_byte
+            {
+                self.buffer.cursor.set_glyph(glyph);
+                self.desired_col = i;
+                self.ensure_cursor_visible();
+                return;
+            }
         }
 
-        for (row_idx, row) in self.layout.rows().enumerate() {
-            let Some(meta) = row.meta else {
-                continue;
-            };
-            if !buffer.cursor.overlaps(meta.from_byte..meta.to_byte) {
-                continue;
+        if let Some(next_row) = self.layout.row(row_idx.saturating_add(1))
+            && row.meta.line == next_row.meta.line
+        {
+            self.desired_col = 0;
+            self.down();
+        }
+    }
+
+    pub fn left(&mut self) {
+        let Some((col_idx, row_idx)) = self.find_cursor() else {
+            return;
+        };
+        // If we don't have a buffer we don't have anything to render
+        let Some(row) = self.layout.row(row_idx) else {
+            return;
+        };
+        for i in (0..col_idx).rev() {
+            if let Some(glyph) = self.layout.glyph(row.slots[i])
+                && self.buffer.cursor.from_byte != glyph.from_byte
+            {
+                self.buffer.cursor.set_glyph(glyph);
+                self.ensure_cursor_visible();
+                return;
             }
+        }
 
-            let Some(col) = row.slots.iter().copied().position(|slot| {
-                if let Some(glyph) = self.layout.glyph(slot) {
-                    buffer.cursor.overlaps(glyph.as_range())
-                } else {
-                    false
-                }
-            }) else {
-                continue;
-            };
+        if let Some(prev_row) = self.layout.row(row_idx.saturating_sub(1))
+            && row.meta.line == prev_row.meta.line
+        {
+            self.desired_col = prev_row.meta.len;
+            self.up();
+        }
+    }
 
-            let Some(next_row) = self.layout.row(row_idx.saturating_add(1)) else {
+    fn ensure_cursor_visible(&mut self) {
+        let height = self.rect.area.height();
+        let margin = self.scroll_marign.min(height.saturating_sub(1) / 2);
+
+        if self.find_cursor().is_none() {
+            let line = self.buffer.rope.line_of_byte(self.buffer.cursor.from_byte);
+            self.scroll_offset = line.saturating_sub(margin);
+            self.rebuild();
+        }
+
+        while let Some((_, row)) = self.find_cursor() {
+            if row < margin && self.scroll_offset > 0 {
+                self.scroll_offset -= 1;
+            } else if row + margin >= height {
+                self.scroll_offset += 1;
+            } else {
                 break;
-            };
-
-            for i in (0..=col).rev() {
-                if let Some(glyph) = self.layout.glyph(next_row.slots[i]) {
-                    buffer.cursor.from_byte = glyph.from_byte;
-                    buffer.cursor.to_byte = glyph.to_byte;
-                    break;
-                }
             }
-            break;
+            self.rebuild();
         }
+    }
+
+    pub fn rebuild(&mut self) {
+        self.layout
+            .rebuild(&self.buffer, self.rect.area, self.scroll_offset);
+    }
+
+    pub fn resize(&mut self, rect: Rect) {
+        self.rect = rect;
+        self.rebuild();
+    }
+
+    pub fn open_buffer(&mut self, mut new_buffer: Buffer) -> Buffer {
+        mem::swap(&mut new_buffer, &mut self.buffer);
+        self.rebuild();
+        new_buffer
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
         // If we don't have a buffer we don't have anything to render
-        let Some(buffer) = &self.buffer else {
-            return;
-        };
-
-        let width = usize::from(self.rect.area.cols);
-        let lines = usize::from(self.rect.area.rows);
-
-        if !self.layout.fits(width, lines, self.scroll_offset) {
-            self.layout.model(buffer, width, lines, self.scroll_offset);
-        }
-
         for (row, line) in self.layout.rows().enumerate() {
             let row = u16::try_from(row)
                 .unwrap_or(u16::MAX)
@@ -128,28 +244,22 @@ impl View {
                     .saturating_add(self.rect.col);
 
                 let cell = if let Some(glyph) = self.layout.glyph(slot) {
-                    let content = buffer.rope.byte_slice(glyph.as_range());
-                    let content = content.chars().next().unwrap_or('?');
-
-                    let content = match content {
-                        '\n' | '\t' | '\r' => ' ',
-                        _ => content,
-                    };
+                    let grapheme = self.buffer.get_grapheme(glyph.as_range());
 
                     Cell {
-                        content,
-                        cursor: buffer.cursor.overlaps(glyph.as_range()),
+                        grapheme,
+                        cursor: self.buffer.cursor.overlaps(glyph.as_range()),
                         z_index: 0,
                     }
                 } else if let Slot::Misc(char) = slot {
                     Cell {
-                        content: char,
+                        grapheme: Grapheme::from_char(char),
                         cursor: false,
                         z_index: 0,
                     }
                 } else {
                     Cell {
-                        content: ' ',
+                        grapheme: Grapheme::from_char(' '),
                         cursor: false,
                         z_index: 0,
                     }
