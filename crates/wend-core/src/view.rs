@@ -58,49 +58,50 @@ impl View {
         None
     }
 
-    fn glyph(&self, col_idx: usize, row_idx: usize) -> Option<Glyph> {
-        let row = self.layout.row(row_idx)?;
-        let slot = row.slots.get(col_idx).copied()?;
+    fn glyph(&self, col: usize, row: usize) -> Option<Glyph> {
+        let idx = self.layout.slot_index(col, row);
+        let slot = self.layout.slot(idx)?;
         self.layout.glyph(slot)
     }
 
     // Finds the next glyph from a given slot
-    fn next_glyph(&self, col_idx: usize, row_idx: usize) -> Option<Glyph> {
-        let row = self.layout.row(row_idx)?;
+    fn next_glyph(&self, col: usize, row: usize) -> Option<Glyph> {
+        let base_glyph = self.glyph(col, row);
+        let next_col = col.saturating_add(1);
+        let row = self.layout.row(row)?;
 
-        let base_glyph = self.glyph(col_idx, row_idx);
-
-        for idx in col_idx.saturating_add(1)..row.meta.len {
-            let Some(next_glyph) = self.glyph(idx, row_idx) else {
+        for slot in &row.slots[next_col..row.meta.len] {
+            let Some(next_glyph) = self.layout.glyph(*slot) else {
                 continue;
             };
-            if let Some(base_glyph) = base_glyph
-                && base_glyph.from_byte == next_glyph.from_byte
-            {
+            // This is a check so we don't land on the tail of the glyph we started on
+            if base_glyph.is_some_and(|base_glyph| base_glyph == next_glyph) {
                 continue;
             }
             return Some(next_glyph);
         }
-
         None
     }
 
     // Finds the previous glyph from a given slot
-    fn prev_glyph(&self, col_idx: usize, row_idx: usize) -> Option<Glyph> {
-        let base_glyph = self.glyph(col_idx, row_idx);
+    fn prev_glyph(&self, col: usize, row: usize) -> Option<Glyph> {
+        if col == 0 {
+            return None;
+        }
+        let base_glyph = self.glyph(col, row);
+        let prev_col = col.saturating_add(1);
+        let row = self.layout.row(row)?;
 
-        for idx in (0..col_idx).rev() {
-            let Some(prev_glyph) = self.glyph(idx, row_idx) else {
+        for slot in row.slots[0..prev_col].iter().rev() {
+            let Some(prev_glyph) = self.layout.glyph(*slot) else {
                 continue;
             };
-            if let Some(base_glyph) = base_glyph
-                && base_glyph.from_byte == prev_glyph.from_byte
-            {
+            // This is a check so we don't land on the tail of the glyph we started on
+            if base_glyph.is_some_and(|base_glyph| base_glyph == prev_glyph) {
                 continue;
             }
             return Some(prev_glyph);
         }
-
         None
     }
 

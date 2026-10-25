@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 const TAB_WIDTH: usize = 4;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Glyph {
     pub from_byte: usize,
     pub to_byte: usize,
