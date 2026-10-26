@@ -150,6 +150,11 @@ impl Layout {
 
     /// Seals the current row, appends row meta data.
     fn seal(&mut self) {
+        // Past the last row, there is nothing left to seal
+        if self.row_ptr >= self.area.height() {
+            return;
+        }
+
         self.row_meta[self.row_ptr] = Some(RowMeta {
             line: self.line_ptr,
             from_byte: self.row_byte_ptr,
@@ -197,7 +202,18 @@ impl Layout {
 
     /// Writes a single slot, handles auto sealing and overflow protection.
     fn write(&mut self, slot: Slot) {
-        if self.row_ptr >= self.area.height() || self.col_ptr >= self.area.width() {
+        // Wrap lazily, only once something actually needs the next row. Wrapping right
+        // after filling a row would give a newline in the last column an empty ↩ row.
+        if self.col_ptr >= self.area.width() {
+            self.seal();
+            // The markers need room or they would wrap forever
+            if self.area.width() > 2 {
+                self.write(Slot::Misc('↩'));
+                self.write(Slot::Blank);
+            }
+        }
+
+        if self.row_ptr >= self.area.height() {
             return;
         }
 
@@ -214,12 +230,6 @@ impl Layout {
             for _ in 0..glyph.tails {
                 self.write(Slot::Tail(idx));
             }
-        }
-
-        if self.col_ptr >= self.area.width() {
-            self.seal();
-            self.write(Slot::Misc('↩'));
-            self.write(Slot::Blank);
         }
     }
 
@@ -244,14 +254,23 @@ impl Layout {
         self.byte_ptr = start;
         self.row_byte_ptr = start;
 
+        let mut reached_end = true;
         for grapheme in buffer.rope.byte_slice(start..).graphemes() {
             if self.row_ptr >= self.area.height() {
+                reached_end = false;
                 break;
             }
 
             self.write_grapheme(&grapheme);
 
             // Here we will add linking logic for multiline slots
+        }
+
+        // A virtual glyph one past the last byte, so the cursor always has somewhere to be,
+        // even in an empty buffer, and text can be appended at the end
+        if reached_end {
+            let end = buffer.rope.byte_len();
+            self.write(Slot::Glyph(Glyph::new(end, end.saturating_add(1), 0)));
         }
 
         if self.col_ptr > 0 {

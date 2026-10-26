@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem, ptr::read};
+use std::{fmt::Debug, mem};
 
 use crate::{
     area::Rect,
@@ -69,9 +69,37 @@ impl View {
     }
 
     fn glyph(&self, col: usize, row: usize) -> Option<Glyph> {
-        let idx = self.layout.slot_index(col, row);
-        let slot = self.layout.slot(idx)?;
+        // Go through the row so a col past the edge can't read the next row
+        let slot = self.layout.row(row)?.slots.get(col).copied()?;
         self.layout.glyph(slot)
+    }
+
+    /// Puts the cursor on the grapheme starting at `byte`, or on the end of buffer slot.
+    fn set_cursor_at(&mut self, byte: usize) {
+        let rope = &self.buffer.rope;
+        let byte = byte.min(rope.byte_len());
+        // The end of buffer slot is one byte wide, see `Layout::rebuild`
+        let len = rope
+            .byte_slice(byte..)
+            .graphemes()
+            .next()
+            .map_or(1, |grapheme| grapheme.len());
+        self.cursor = Cursor::new(byte, byte.saturating_add(len));
+    }
+
+    fn last_visible_glyph(&self) -> Option<Glyph> {
+        let rows: Vec<_> = self.layout.rows().collect();
+        rows.iter()
+            .rev()
+            .flat_map(|row| row.slots.iter().rev())
+            .find_map(|slot| self.layout.glyph(*slot))
+    }
+
+    /// Makes the column the cursor is on the one up and down aim for.
+    fn sync_desired_col(&mut self) {
+        if let Some((col, _)) = self.locate_cursor() {
+            self.desired_col = col;
+        }
     }
 
     // Finds the next glyph from a given slot
@@ -80,7 +108,7 @@ impl View {
         let next_col = col.saturating_add(1);
         let row = self.layout.row(row)?;
 
-        for slot in &row.slots[next_col..row.meta.len] {
+        for slot in row.slots.get(next_col..row.meta.len).unwrap_or_default() {
             let Some(next_glyph) = self.layout.glyph(*slot) else {
                 continue;
             };
@@ -99,8 +127,8 @@ impl View {
             return None;
         }
         let base_glyph = self.glyph(col, row);
-        let prev_col = col.saturating_add(1);
         let row = self.layout.row(row)?;
+        let prev_col = col.saturating_add(1).min(row.slots.len());
 
         for slot in row.slots[0..prev_col].iter().rev() {
             let Some(prev_glyph) = self.layout.glyph(*slot) else {
@@ -127,25 +155,43 @@ impl View {
         self.desired_col = col;
     }
 
+    /// Deletes the grapheme before the cursor, joins lines when at the start of one.
     pub fn delete(&mut self) {
-        let (col, row) = self.get_cursor();
-        let Some(glyph) = self.prev_glyph(col, row) else {
+        // Done on the buffer, not the layout, so it works across wrapped rows and lines
+        let to_byte = self.cursor.from_byte;
+        let Some(len) = self
+            .buffer
+            .rope
+            .byte_slice(..to_byte)
+            .graphemes()
+            .next_back()
+            .map(|grapheme| grapheme.len())
+        else {
             return;
         };
-        self.buffer.delete(glyph.from_byte, glyph.to_byte);
-        self.cursor.set_glyph(glyph);
-        self.rebuild();
+        let from_byte = to_byte.saturating_sub(len);
+        self.buffer.delete(from_byte, to_byte);
+        self.set_cursor_at(from_byte);
+        self.ensure_cursor_visible();
+        self.sync_desired_col();
     }
 
+    /// Opens a new line below the cursor's line and puts the cursor on it.
     pub fn new_line(&mut self) {
-        let (_, row) = self.get_cursor();
-
-        let Some(glyph) = self.glyph(0, row.saturating_add(1)) else {
-            return;
+        let rope = &self.buffer.rope;
+        let line = rope.line_of_byte(self.cursor.from_byte);
+        // The end of the line's text, before its line break
+        let line_end = if line < rope.line_len() {
+            rope.byte_of_line(line)
+                .saturating_add(rope.line(line).byte_len())
+        } else {
+            rope.byte_len()
         };
-        self.cursor.set_glyph(glyph);
-        self.insert('\n');
-        self.cursor.set_glyph(glyph);
+
+        self.buffer.write(line_end, "\n");
+        self.set_cursor_at(line_end.saturating_add(1));
+        self.ensure_cursor_visible();
+        self.sync_desired_col();
     }
 
     pub fn up(&mut self) {
@@ -219,6 +265,8 @@ impl View {
             {
                 self.cursor.set_glyph(glyph);
                 self.ensure_cursor_visible();
+                // Scanning backwards lands on a glyph's last tail, sync to where it starts
+                self.sync_desired_col();
                 return;
             }
         }
@@ -226,7 +274,8 @@ impl View {
         if let Some(prev_row) = self.layout.row(row_idx.saturating_sub(1))
             && row.meta.line == prev_row.meta.line
         {
-            self.desired_col = prev_row.meta.len;
+            // len is a count, the last slot of the row is one before it
+            self.desired_col = prev_row.meta.len.saturating_sub(1);
             self.up();
         }
     }
@@ -247,6 +296,14 @@ impl View {
             if self.locate_cursor().is_none() {
                 self.scroll_offset = line;
                 self.rebuild();
+            }
+
+            // Our line wraps into more rows than fit on screen and we scroll by whole
+            // lines, so the view can't reach the cursor, bring the cursor to the view
+            if self.locate_cursor().is_none()
+                && let Some(glyph) = self.last_visible_glyph()
+            {
+                self.cursor.set_glyph(glyph);
             }
         }
 
@@ -291,6 +348,10 @@ impl View {
 
     pub fn open_buffer(&mut self, mut new_buffer: Buffer) -> Buffer {
         mem::swap(&mut new_buffer, &mut self.buffer);
+        // The old cursor and scroll are byte and line offsets into the old buffer
+        self.scroll_offset = 0;
+        self.desired_col = 0;
+        self.set_cursor_at(0);
         self.rebuild();
         new_buffer
     }
@@ -308,7 +369,12 @@ impl View {
                     .saturating_add(self.rect.col);
 
                 let cell = if let Some(glyph) = self.layout.glyph(slot) {
-                    let grapheme = self.buffer.get_grapheme(glyph.as_range());
+                    // The end of buffer slot points past the rope, it has nothing to show
+                    let grapheme = if glyph.from_byte >= self.buffer.rope.byte_len() {
+                        Grapheme::from_char(' ')
+                    } else {
+                        self.buffer.get_grapheme(glyph.as_range())
+                    };
 
                     Cell {
                         grapheme,

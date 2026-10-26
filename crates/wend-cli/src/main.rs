@@ -1,6 +1,9 @@
 //! The `wend` binary: the terminal frontend for `wend-core`.
 
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    panic,
+};
 
 use anyhow::{Result, bail};
 use crossterm::{
@@ -43,15 +46,55 @@ fn parse_args() -> Result<Args> {
     Ok(Args { file })
 }
 
+/// Puts the terminal in raw mode on the alternate screen, and restores it when dropped,
+/// so an early `?` return can't leave the user's shell broken.
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> Result<Self> {
+        terminal::enable_raw_mode()?;
+        // Created before anything else can fail, so a failure below still restores
+        let guard = Self;
+        io::stdout()
+            .queue(terminal::EnterAlternateScreen)?
+            .queue(cursor::Hide)?
+            .flush()?;
+        Ok(guard)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
+/// Best effort, it runs while we are already failing so errors are ignored. Safe to
+/// call more than once.
+fn restore_terminal() {
+    let mut stdout = io::stdout();
+    drop(
+        stdout
+            .queue(cursor::Show)
+            .and_then(|stdout| stdout.queue(terminal::LeaveAlternateScreen))
+            .and_then(Write::flush),
+    );
+    drop(terminal::disable_raw_mode());
+}
+
 fn main() -> Result<()> {
     let args = parse_args()?;
 
+    // Restore before the default hook prints, or the message is lost on the
+    // alternate screen and the shell is left in raw mode
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        default_hook(info);
+    }));
+
+    let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
-    terminal::enable_raw_mode()?;
-    stdout
-        .queue(terminal::EnterAlternateScreen)?
-        .queue(cursor::Hide)?
-        .flush()?;
 
     let window = terminal::window_size()?;
     let area = Area::new(window.columns, window.rows);
@@ -62,7 +105,9 @@ fn main() -> Result<()> {
 
     loop {
         let event = event::read()?;
-        if let Event::Key(key) = event {
+        if let Event::Resize(cols, rows) = event {
+            editor.resize(Area::new(cols, rows));
+        } else if let Event::Key(key) = event {
             if editor.is_normal() {
                 if key.code.is_char('h') {
                     editor.view.left();
@@ -96,11 +141,6 @@ fn main() -> Result<()> {
         let frame = editor.frame();
         render_frame(&frame, &mut stdout)?;
     }
-    stdout
-        .queue(cursor::Show)?
-        .queue(terminal::LeaveAlternateScreen)?
-        .flush()?;
-    terminal::disable_raw_mode()?;
     Ok(())
 }
 

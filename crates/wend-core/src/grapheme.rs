@@ -1,9 +1,12 @@
 use unicode_width::UnicodeWidthStr;
 
+/// How many bytes a grapheme can hold inline, longer ones become U+FFFD.
+const CAPACITY: u8 = 31;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Grapheme {
     len: u8,
-    bytes: [u8; 31],
+    bytes: [u8; CAPACITY as usize],
 }
 
 impl Grapheme {
@@ -14,19 +17,24 @@ impl Grapheme {
         Self::from_bytes_iter(bytes)
     }
 
+    /// Copies a grapheme in, anything too long or not valid UTF-8 becomes U+FFFD.
     pub fn from_bytes_iter(iter: impl Iterator<Item = u8>) -> Self {
-        let mut ptr = 0;
-        let mut bytes = [0; 31];
+        let mut len = 0;
+        let mut bytes = [0; CAPACITY as usize];
 
         for byte in iter {
-            if ptr >= 15 {
-                break;
+            if len >= CAPACITY {
+                return Self::from_char(char::REPLACEMENT_CHARACTER);
             }
-            bytes[usize::from(ptr)] = byte;
-            ptr += 1;
+            bytes[usize::from(len)] = byte;
+            len += 1;
         }
 
-        Self { len: ptr, bytes }
+        if str::from_utf8(&bytes[..usize::from(len)]).is_err() {
+            return Self::from_char(char::REPLACEMENT_CHARACTER);
+        }
+
+        Self { len, bytes }
     }
 
     #[must_use]
@@ -35,12 +43,11 @@ impl Grapheme {
     }
 
     #[must_use]
+    #[expect(unsafe_code, reason = "called on every cell of every frame")]
     pub fn as_str(&self) -> &str {
-        unsafe {
-            // SAFETY:
-            // We know that a grapheme has to be a safe
-            str::from_utf8_unchecked(&self.bytes[0..usize::from(self.len)])
-        }
+        // SAFETY: `from_bytes_iter` is the only constructor that sets the bytes and it
+        // only keeps them if they are valid UTF-8, `Default` is the empty string.
+        unsafe { str::from_utf8_unchecked(&self.bytes[0..usize::from(self.len)]) }
     }
 
     /// Returns the grapheme in a form that is safe to print to a terminal.

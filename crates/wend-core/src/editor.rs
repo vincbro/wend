@@ -50,10 +50,16 @@ impl Editor {
 
     pub fn frame(&mut self) -> Frame {
         let mut frame = Frame::new(self.area);
+        // Scroll to the cursor before rendering, so the frame shows where the cursor is
+        frame.cursor = self.view.get_cursor();
         self.view.render(&mut frame);
         frame.mode = self.mode;
-        frame.cursor = self.view.get_cursor();
         frame
+    }
+
+    pub fn resize(&mut self, area: Area) {
+        self.area = area;
+        self.view.resize(Rect::new(0, 0, area));
     }
 
     pub fn switch_mode(&mut self, mode: Mode) {
