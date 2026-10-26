@@ -1,4 +1,4 @@
-use crate::{area::Area, grapheme::Grapheme};
+use crate::{area::Area, editor::Mode, grapheme::Grapheme};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cell {
@@ -32,6 +32,8 @@ impl Default for Cell {
 pub struct Frame {
     pub area: Area,
     pub cells: Box<[Cell]>,
+    pub mode: Mode,
+    pub cursor: (usize, usize),
 }
 
 impl Frame {
@@ -40,6 +42,8 @@ impl Frame {
         Frame {
             area,
             cells: vec![Cell::default(); area.len_u32() as usize].into_boxed_slice(),
+            mode: Mode::Normal,
+            cursor: (0, 0),
         }
     }
 

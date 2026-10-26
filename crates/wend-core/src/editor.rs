@@ -7,11 +7,18 @@ use crate::{
     view::View,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum Mode {
+    Normal,
+    Insert,
+}
+
 #[derive(Debug, Clone)]
 pub struct Editor {
     pub area: Area,
     pub buffers: Vec<Buffer>,
     pub view: View,
+    pub mode: Mode,
 }
 
 impl Editor {
@@ -21,6 +28,7 @@ impl Editor {
             area,
             buffers: vec![],
             view: View::new(Rect::new(0, 0, area)),
+            mode: Mode::Normal,
         }
     }
 
@@ -43,6 +51,20 @@ impl Editor {
     pub fn frame(&mut self) -> Frame {
         let mut frame = Frame::new(self.area);
         self.view.render(&mut frame);
+        frame.mode = self.mode;
+        frame.cursor = self.view.get_cursor();
         frame
+    }
+
+    pub fn switch_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self.mode, Mode::Normal)
+    }
+
+    pub fn is_insert(&self) -> bool {
+        matches!(self.mode, Mode::Insert)
     }
 }

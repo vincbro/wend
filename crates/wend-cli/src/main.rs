@@ -9,7 +9,11 @@ use crossterm::{
     style::{self, Attribute},
     terminal::{self},
 };
-use wend_core::{area::Area, editor::Editor, frame::Frame};
+use wend_core::{
+    area::Area,
+    editor::{Editor, Mode},
+    frame::Frame,
+};
 
 const HELP: &str = "Usage: wend [file/to/open]";
 
@@ -59,16 +63,33 @@ fn main() -> Result<()> {
     loop {
         let event = event::read()?;
         if let Event::Key(key) = event {
-            if key.code.is_char('h') {
-                editor.view.left();
-            } else if key.code.is_char('j') {
-                editor.view.down();
-            } else if key.code.is_char('k') {
-                editor.view.up();
-            } else if key.code.is_char('l') {
-                editor.view.right();
-            } else if key.code.is_enter() || key.code.is_char('q') {
-                break;
+            if editor.is_normal() {
+                if key.code.is_char('h') {
+                    editor.view.left();
+                } else if key.code.is_char('j') {
+                    editor.view.down();
+                } else if key.code.is_char('k') {
+                    editor.view.up();
+                } else if key.code.is_char('l') {
+                    editor.view.right();
+                } else if key.code.is_char('i') {
+                    editor.switch_mode(Mode::Insert);
+                } else if key.code.is_char('o') {
+                    editor.view.new_line();
+                    editor.switch_mode(Mode::Insert);
+                } else if key.code.is_char('q') {
+                    break;
+                }
+            } else if editor.is_insert() {
+                if key.code.is_esc() {
+                    editor.switch_mode(Mode::Normal);
+                } else if key.code.is_backspace() {
+                    editor.view.delete();
+                } else if key.code.is_tab() {
+                    editor.view.insert('\t');
+                } else if let Some(char) = key.code.as_char() {
+                    editor.view.insert(char);
+                }
             }
         }
 
