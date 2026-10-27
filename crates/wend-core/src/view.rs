@@ -1,14 +1,14 @@
 use std::{io, mem, ops};
 
 use crate::{
-    area::Rect,
+    area::{Rect, saturating_u16},
     buffer::{Buffer, Change},
-    frame::{Cell, Frame},
+    frame::{Cell, CellPosition, Frame},
     grapheme::Grapheme,
 };
 
 pub mod layout;
-use layout::{Layout, Slot};
+use layout::{Layout, Slot, SlotPosition};
 mod motion;
 pub use motion::{Direction, Motion};
 mod selection;
@@ -51,12 +51,22 @@ impl View {
         }
     }
 
-    /// Where the head is on screen, scrolling first so it always is.
-    pub fn cursor_position(&mut self) -> (usize, usize) {
+    /// Where the head is in the frame, scrolling first so it always is on screen.
+    pub fn cursor_position(&mut self) -> CellPosition {
         self.ensure_cursor_visible();
-        self.layout
+        let pos = self
+            .layout
             .find_byte(self.selection.head())
-            .expect("The cursor is always visible after ensure_cursor_visible")
+            .expect("The cursor is always visible after ensure_cursor_visible");
+        self.cell_position(pos)
+    }
+
+    /// Where a slot of the layout ends up in the frame.
+    fn cell_position(&self, pos: SlotPosition) -> CellPosition {
+        CellPosition::new(
+            self.rect.col.saturating_add(saturating_u16(pos.col)),
+            self.rect.row.saturating_add(saturating_u16(pos.row)),
+        )
     }
 
     /// Where the grapheme holding `byte` starts, the end of the buffer for anything past it.
@@ -114,8 +124,8 @@ impl View {
 
     /// Makes the column the head is on the one up and down aim for.
     fn sync_desired_col(&mut self) {
-        if let Some((col, _)) = self.layout.find_byte(self.selection.head()) {
-            self.desired_col = col;
+        if let Some(pos) = self.layout.find_byte(self.selection.head()) {
+            self.desired_col = pos.col;
         }
     }
 
@@ -226,7 +236,7 @@ impl View {
             }
         }
 
-        let Some((_, row)) = self.layout.find_byte(self.selection.head()) else {
+        let Some(SlotPosition { row, .. }) = self.layout.find_byte(self.selection.head()) else {
             return;
         };
 
@@ -235,7 +245,7 @@ impl View {
         let scroll_up = row < margin;
         let scroll_down = row + margin >= height;
 
-        while let Some((_, row)) = self.layout.find_byte(self.selection.head()) {
+        while let Some(SlotPosition { row, .. }) = self.layout.find_byte(self.selection.head()) {
             let prev_offset = self.scroll_offset;
             if scroll_up && row < margin && self.scroll_offset > 0 {
                 self.scroll_offset -= 1;
@@ -320,15 +330,7 @@ impl View {
         let selected = self.selection_range();
 
         for (row, line) in self.layout.rows().enumerate() {
-            let row = u16::try_from(row)
-                .unwrap_or(u16::MAX)
-                .saturating_add(self.rect.row);
-
             for (col, slot) in line.slots.iter().copied().enumerate() {
-                let col = u16::try_from(col)
-                    .unwrap_or(u16::MAX)
-                    .saturating_add(self.rect.col);
-
                 let cell = if let Some(glyph) = self.layout.glyph(slot) {
                     // The end of buffer slot points past the rope, it has nothing to show
                     let grapheme = if glyph.from_byte >= self.buffer.rope().byte_len() {
@@ -358,7 +360,7 @@ impl View {
                         z_index: 0,
                     }
                 };
-                frame.write(col, row, cell);
+                frame.write(self.cell_position(SlotPosition::new(col, row)), cell);
             }
         }
     }

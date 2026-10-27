@@ -1,7 +1,7 @@
 use std::{io, path::Path};
 
 use crate::{
-    area::{Area, Rect},
+    area::{Area, Rect, saturating_u16},
     buffer::Buffer,
     frame::Frame,
     view::View,
@@ -27,8 +27,8 @@ impl Editor {
     #[must_use]
     pub fn new(area: Area) -> Self {
         let width = area.width().min(50);
-        let overflow = u16::try_from(area.width().saturating_sub(width) / 2).unwrap_or(u16::MAX);
-        let view = Area::new(u16::try_from(width).unwrap_or(u16::MAX), area.rows);
+        let overflow = saturating_u16(area.width().saturating_sub(width) / 2);
+        let view = Area::new(saturating_u16(width), area.rows);
         Self {
             area,
             buffers: vec![],

@@ -1,4 +1,6 @@
-use super::{ColumnPolicy, Selection, View};
+use std::iter::Peekable;
+
+use super::{ColumnPolicy, Selection, View, layout::SlotPosition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -69,45 +71,37 @@ impl View {
 
     /// Where a motion would put the selection, without moving it.
     fn motion(&self, motion: Motion, extend: bool) -> Option<Selection> {
-        let target = match motion {
-            Motion::Horizontal(direction) => self.horizontal(direction)?,
-            Motion::Vertical(direction) => self.vertical(direction)?,
-            Motion::Line(direction) => self.line_edge(direction),
-            Motion::File(direction) => self.file_edge(direction),
+        let moved = match motion {
+            Motion::Horizontal(direction) => Selection::point(self.horizontal(direction)?),
+            Motion::Vertical(direction) => Selection::point(self.vertical(direction)?),
+            Motion::Line(direction) => Selection::point(self.line_edge(direction)),
+            Motion::File(direction) => Selection::point(self.file_edge(direction)),
+            Motion::Word(Direction::Forward) => self.word_forward()?,
+            Motion::Word(Direction::Backward) => self.word_backward()?,
             // Moves one row at a time through `move_selection`
             Motion::Page(_) => return None,
-            Motion::Word(direction) => {
-                let word = match direction {
-                    Direction::Forward => self.word_forward()?,
-                    Direction::Backward => self.word_backward()?,
-                };
-                return Some(if extend {
-                    Selection::new(self.selection.anchor(), word.head())
-                } else {
-                    word
-                });
-            }
         };
 
+        // Extending keeps the anchor, only the head follows the motion
         Some(if extend {
-            Selection::new(self.selection.anchor(), target)
+            Selection::new(self.selection.anchor(), moved.head())
         } else {
-            Selection::point(target)
+            moved
         })
     }
 
     fn horizontal(&self, direction: Direction) -> Option<usize> {
-        let (col, row) = self.layout.find_byte(self.selection.head())?;
-        if let Some((_, glyph)) = self.layout.step(col, row, direction) {
+        let pos = self.layout.find_byte(self.selection.head())?;
+        if let Some(glyph) = self.layout.step(pos, direction) {
             return Some(glyph.from_byte);
         }
 
         // At the edge of the row, only continue if the line wrapped onto the next row
         let neighbour = match direction {
-            Direction::Forward => row.checked_add(1)?,
-            Direction::Backward => row.checked_sub(1)?,
+            Direction::Forward => pos.row.checked_add(1)?,
+            Direction::Backward => pos.row.checked_sub(1)?,
         };
-        if self.layout.row(neighbour)?.meta.line != self.layout.row(row)?.meta.line {
+        if self.layout.row(neighbour)?.meta.line != self.layout.row(pos.row)?.meta.line {
             return None;
         }
         // Forward lands on the neighbour's first glyph, backward on its last
@@ -117,20 +111,19 @@ impl View {
     }
 
     fn vertical(&self, direction: Direction) -> Option<usize> {
-        let (_, row) = self.layout.find_byte(self.selection.head())?;
-        let target = match direction {
-            Direction::Forward => row.checked_add(1)?,
-            Direction::Backward => row.checked_sub(1)?,
+        let pos = self.layout.find_byte(self.selection.head())?;
+        let row = match direction {
+            Direction::Forward => pos.row.checked_add(1)?,
+            Direction::Backward => pos.row.checked_sub(1)?,
         };
-        let col = self.desired_col;
+        let target = SlotPosition::new(self.desired_col, row);
 
         // The column we aim for, or the closest glyph to it on a shorter row
-        let glyph = self.layout.glyph_at(col, target).or_else(|| {
-            self.layout
-                .step(col, target, Direction::Backward)
-                .or_else(|| self.layout.step(col, target, Direction::Forward))
-                .map(|(_, glyph)| glyph)
-        })?;
+        let glyph = self
+            .layout
+            .glyph_at(target)
+            .or_else(|| self.layout.step(target, Direction::Backward))
+            .or_else(|| self.layout.step(target, Direction::Forward))?;
         Some(glyph.from_byte)
     }
 
@@ -139,22 +132,20 @@ impl View {
         let rope = self.buffer.rope();
         let line = rope.line_of_byte(self.selection.head());
         let start = rope.byte_of_line(line);
-        match direction {
-            Direction::Backward => start,
-            Direction::Forward => {
-                let content_end = if line < rope.line_len() {
-                    start.saturating_add(rope.line(line).byte_len())
-                } else {
-                    rope.byte_len()
-                };
-                if content_end > start {
-                    self.grapheme_start(content_end - 1)
-                } else {
-                    // An empty line, stay on its line break
-                    start
-                }
-            }
+        if direction == Direction::Backward {
+            return start;
         }
+
+        let end = if line < rope.line_len() {
+            start.saturating_add(rope.line(line).byte_len())
+        } else {
+            rope.byte_len()
+        };
+        // An empty line, stay on its line break
+        if end == start {
+            return start;
+        }
+        self.grapheme_start(end - 1)
     }
 
     fn file_edge(&self, direction: Direction) -> usize {
@@ -175,95 +166,77 @@ impl View {
             .rope()
             .byte_slice(head..)
             .graphemes()
-            .scan(head, |pos, grapheme| {
-                let start = *pos;
-                *pos = pos.saturating_add(grapheme.len());
+            .scan(head, |byte, grapheme| {
+                let start = *byte;
+                *byte = byte.saturating_add(grapheme.len());
                 Some((start, word_class(&grapheme)))
             })
             .peekable();
 
-        let (first_pos, first_class) = graphemes.next()?;
-        // On the last grapheme of a run start on the next one, so repeating the motion
-        // walks word by word instead of staying put
-        let (mut anchor, mut class) = match graphemes.peek() {
-            Some(&(pos, class)) if class != first_class => {
-                graphemes.next();
-                (pos, class)
-            }
-            _ => (first_pos, first_class),
-        };
-        // A word never starts on a line break, move on to the next line
-        while class == WordClass::LineBreak {
-            (anchor, class) = graphemes.next()?;
-        }
-
-        let mut head = anchor;
-        let mut in_run = true;
-        for (pos, grapheme_class) in graphemes {
-            if in_run && grapheme_class == class {
-                head = pos;
-                continue;
-            }
-            in_run = false;
-            if grapheme_class != WordClass::Separator {
-                break;
-            }
-            head = pos;
-        }
+        let (anchor, class) = word_start(&mut graphemes)?;
+        let head = take_run(&mut graphemes, class, anchor);
+        let head = take_run(&mut graphemes, WordClass::Separator, head);
         Some(Selection::new(anchor, head))
     }
 
     /// Selects from the head back through any separators and the word before them.
     fn word_backward(&self) -> Option<Selection> {
         let rope = self.buffer.rope();
-        let selection_head = self.selection.head();
-        let end = self.grapheme_end(selection_head).min(rope.byte_len());
+        let end = self
+            .grapheme_end(self.selection.head())
+            .min(rope.byte_len());
         let mut graphemes = rope
             .byte_slice(..end)
             .graphemes()
             .rev()
-            .scan(end, |pos, grapheme| {
-                *pos = pos.saturating_sub(grapheme.len());
-                Some((*pos, word_class(&grapheme)))
+            .scan(end, |byte, grapheme| {
+                *byte = byte.saturating_sub(grapheme.len());
+                Some((*byte, word_class(&grapheme)))
             })
             .peekable();
 
-        let (first_pos, first_class) = graphemes.next()?;
-        let (mut anchor, mut class) = match graphemes.peek() {
-            Some(&(pos, class)) if class != first_class => {
-                graphemes.next();
-                (pos, class)
-            }
-            _ => (first_pos, first_class),
-        };
-        // A word never starts on a line break, move on to the previous line
-        while class == WordClass::LineBreak {
-            (anchor, class) = graphemes.next()?;
-        }
-
-        let mut head = anchor;
-        let mut skipping = class == WordClass::Separator;
-        for (pos, grapheme_class) in graphemes {
-            if skipping {
-                match grapheme_class {
-                    WordClass::Separator => head = pos,
-                    // Separators at the start of a line don't pull in the line above
-                    WordClass::LineBreak => break,
-                    _ => {
-                        skipping = false;
-                        class = grapheme_class;
-                        head = pos;
-                    }
-                }
-                continue;
-            }
-            if grapheme_class != class {
-                break;
-            }
-            head = pos;
+        let (anchor, class) = word_start(&mut graphemes)?;
+        let mut head = take_run(&mut graphemes, class, anchor);
+        // Separators alone aren't a word, take the word before them too, unless the
+        // separators start the line
+        if class == WordClass::Separator
+            && let Some((byte, word)) = graphemes.next_if(|&(_, next)| next != WordClass::LineBreak)
+        {
+            head = take_run(&mut graphemes, word, byte);
         }
         Some(Selection::new(anchor, head))
     }
+}
+
+/// Where a word motion starts, as the byte and class of its first grapheme.
+fn word_start<I>(graphemes: &mut Peekable<I>) -> Option<(usize, WordClass)>
+where
+    I: Iterator<Item = (usize, WordClass)>,
+{
+    let first = graphemes.next()?;
+    // On the last grapheme of a run start on the next one, so repeating the motion walks
+    // word by word instead of staying put
+    let (mut byte, mut class) = graphemes
+        .next_if(|&(_, next)| next != first.1)
+        .unwrap_or(first);
+    // A word never starts on a line break, move past it
+    while class == WordClass::LineBreak {
+        (byte, class) = graphemes.next()?;
+    }
+    Some((byte, class))
+}
+
+/// Takes graphemes while they are of `class`. Returns the byte of the last one taken,
+/// `from` if none were.
+fn take_run<I>(graphemes: &mut Peekable<I>, class: WordClass, from: usize) -> usize
+where
+    I: Iterator<Item = (usize, WordClass)>,
+{
+    let mut last = from;
+    while let Some((byte, _)) = graphemes.next_if(|&(_, next)| next == class) {
+        last = byte;
+    }
+    last
 }
 
 #[cfg(test)]

@@ -29,6 +29,20 @@ impl Glyph {
     }
 }
 
+/// A slot in a view's layout grid. Relative to the view, not the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SlotPosition {
+    pub col: usize,
+    pub row: usize,
+}
+
+impl SlotPosition {
+    #[must_use]
+    pub(super) fn new(col: usize, row: usize) -> Self {
+        Self { col, row }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Slot {
     Glyph(Glyph),
@@ -125,8 +139,8 @@ impl Layout {
     }
 
     #[must_use]
-    pub(super) fn slot_index(&self, col: usize, row: usize) -> usize {
-        col + row * self.area.width()
+    pub(super) fn slot_index(&self, pos: SlotPosition) -> usize {
+        pos.col + pos.row * self.area.width()
     }
 
     #[must_use]
@@ -146,14 +160,14 @@ impl Layout {
     /// The glyph in a slot, reading only within the row so a col past the edge can't
     /// reach into the next one.
     #[must_use]
-    pub(super) fn glyph_at(&self, col: usize, row: usize) -> Option<Glyph> {
-        let slot = self.row(row)?.slots.get(col).copied()?;
+    pub(super) fn glyph_at(&self, pos: SlotPosition) -> Option<Glyph> {
+        let slot = self.row(pos.row)?.slots.get(pos.col).copied()?;
         self.glyph(slot)
     }
 
     /// Where the glyph holding `byte` starts, none if it is off screen.
     #[must_use]
-    pub(super) fn find_byte(&self, byte: usize) -> Option<(usize, usize)> {
+    pub(super) fn find_byte(&self, byte: usize) -> Option<SlotPosition> {
         self.rows().enumerate().find_map(|(row_idx, row)| {
             if !(row.meta.from_byte..row.meta.to_byte).contains(&byte) {
                 return None;
@@ -163,39 +177,23 @@ impl Layout {
                 self.glyph(*slot)
                     .is_some_and(|glyph| glyph.as_range().contains(&byte))
             })?;
-            Some((col_idx, row_idx))
+            Some(SlotPosition::new(col_idx, row_idx))
         })
     }
 
-    /// The next glyph from `col` in a direction within the row, skipping the tails of the
-    /// glyph at `col`. Returns the col the found glyph starts at.
+    /// The next glyph from `pos` in a direction within the row, skipping the tails of the
+    /// glyph at `pos`.
     #[must_use]
-    pub(super) fn step(
-        &self,
-        col: usize,
-        row: usize,
-        direction: Direction,
-    ) -> Option<(usize, Glyph)> {
-        let Row { meta, slots } = self.row(row)?;
-        let col = col.min(slots.len());
-        let base = self.glyph_at(col, row);
-        let differs = |idx: usize| {
-            self.glyph_at(idx, row)
-                .filter(|glyph| Some(*glyph) != base)
-                .map(|glyph| (idx, glyph))
-        };
+    pub(super) fn step(&self, pos: SlotPosition, direction: Direction) -> Option<Glyph> {
+        let Row { meta, slots } = self.row(pos.row)?;
+        let glyph = |col: usize| self.glyph(*slots.get(col)?);
+        let base = glyph(pos.col);
+        let differs = |col: usize| glyph(col).filter(|found| Some(*found) != base);
 
         match direction {
             // Only up to the last used slot, the rest of the row is blank
-            Direction::Forward => (col.saturating_add(1)..meta.len).find_map(differs),
-            Direction::Backward => {
-                let (mut idx, glyph) = (0..col).rev().find_map(differs)?;
-                // Scanning backwards lands on the last tail, walk back to the head
-                while idx > 0 && self.glyph_at(idx - 1, row) == Some(glyph) {
-                    idx -= 1;
-                }
-                Some((idx, glyph))
-            }
+            Direction::Forward => (pos.col.saturating_add(1)..meta.len).find_map(differs),
+            Direction::Backward => (0..pos.col.min(slots.len())).rev().find_map(differs),
         }
     }
 
@@ -203,13 +201,15 @@ impl Layout {
     #[must_use]
     pub(super) fn edge_glyph(&self, row: usize, direction: Direction) -> Option<Glyph> {
         match direction {
-            Direction::Forward => self.glyph_at(0, row).or_else(|| {
-                self.step(0, row, Direction::Forward)
-                    .map(|(_, glyph)| glyph)
-            }),
-            Direction::Backward => self
-                .step(self.area.width(), row, Direction::Backward)
-                .map(|(_, glyph)| glyph),
+            Direction::Forward => {
+                let first = SlotPosition::new(0, row);
+                self.glyph_at(first)
+                    .or_else(|| self.step(first, Direction::Forward))
+            }
+            Direction::Backward => self.step(
+                SlotPosition::new(self.area.width(), row),
+                Direction::Backward,
+            ),
         }
     }
 
@@ -295,7 +295,7 @@ impl Layout {
             return;
         }
 
-        let idx = self.slot_index(self.col_ptr, self.row_ptr);
+        let idx = self.slot_index(SlotPosition::new(self.col_ptr, self.row_ptr));
         let Some(slot_mut) = self.slots.get_mut(idx) else {
             panic!("Should not be able to overflow");
         };
@@ -372,31 +372,20 @@ mod tests {
     fn step_skips_tails() {
         // The tab spans cols 0..4, 漢 spans 5..7
         let layout = layout("\ta漢b", 20, 2);
-        let byte = |found: Option<(usize, Glyph)>| found.map(|(col, glyph)| (col, glyph.from_byte));
+        let byte = |col: usize, direction: Direction| {
+            layout
+                .step(SlotPosition::new(col, 0), direction)
+                .map(|glyph| glyph.from_byte)
+        };
 
-        assert_eq!(
-            byte(layout.step(0, 0, Direction::Forward)),
-            Some((4, 1)),
-            "past the tab"
-        );
-        assert_eq!(
-            byte(layout.step(5, 0, Direction::Forward)),
-            Some((7, 5)),
-            "past 漢"
-        );
-        assert_eq!(
-            byte(layout.step(7, 0, Direction::Backward)),
-            Some((5, 2)),
-            "onto 漢's head"
-        );
-        assert_eq!(
-            byte(layout.step(4, 0, Direction::Backward)),
-            Some((0, 0)),
-            "onto the tab's head"
-        );
+        assert_eq!(byte(0, Direction::Forward), Some(1), "past the tab");
+        assert_eq!(byte(5, Direction::Forward), Some(5), "past 漢");
+        assert_eq!(byte(7, Direction::Backward), Some(2), "onto 漢 from b");
+        assert_eq!(byte(6, Direction::Backward), Some(1), "from 漢's tail");
+        assert_eq!(byte(4, Direction::Backward), Some(0), "onto the tab");
         assert_eq!(
             layout.find_byte(2),
-            Some((5, 0)),
+            Some(SlotPosition::new(5, 0)),
             "a wide glyph is found at its head"
         );
     }
@@ -405,7 +394,7 @@ mod tests {
     fn wrapped_rows() {
         // Width 4: "abcd" then "↩ ef"
         let layout = layout("abcdef", 4, 3);
-        assert_eq!(layout.find_byte(4), Some((2, 1)));
+        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 1)));
         assert_eq!(
             layout
                 .edge_glyph(1, Direction::Forward)

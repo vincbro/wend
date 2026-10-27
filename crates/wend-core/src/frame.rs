@@ -31,12 +31,26 @@ impl Default for Cell {
     }
 }
 
+/// A cell in the frame, which covers the whole terminal, not just one view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CellPosition {
+    pub col: u16,
+    pub row: u16,
+}
+
+impl CellPosition {
+    #[must_use]
+    pub fn new(col: u16, row: u16) -> Self {
+        Self { col, row }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub area: Area,
     pub cells: Box<[Cell]>,
     pub mode: Mode,
-    pub cursor: (usize, usize),
+    pub cursor: CellPosition,
 }
 
 impl Frame {
@@ -46,31 +60,32 @@ impl Frame {
             area,
             cells: vec![Cell::default(); area.len_u32() as usize].into_boxed_slice(),
             mode: Mode::Normal,
-            cursor: (0, 0),
+            cursor: CellPosition::default(),
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = ((u16, u16), &Cell)> {
+    pub fn iter(&self) -> impl Iterator<Item = (CellPosition, &Cell)> {
         let Area { cols, rows } = self.area;
         (0..rows)
-            .flat_map(move |row| (0..cols).map(move |col| (col, row)))
+            .flat_map(move |row| (0..cols).map(move |col| CellPosition::new(col, row)))
             .zip(self.cells.iter())
     }
 
+    fn index(&self, pos: CellPosition) -> usize {
+        usize::from(pos.col) + usize::from(pos.row) * self.area.width()
+    }
+
     #[must_use]
-    pub fn get(&self, x: u16, y: u16) -> &Cell {
-        let idx = u32::from(x) + u32::from(y) * u32::from(self.area.cols);
-        &self.cells[idx as usize]
+    pub fn get(&self, pos: CellPosition) -> &Cell {
+        &self.cells[self.index(pos)]
     }
 
-    pub fn get_mut(&mut self, x: u16, y: u16) -> &mut Cell {
-        let idx = u32::from(x) + u32::from(y) * u32::from(self.area.cols);
-        &mut self.cells[idx as usize]
+    pub fn get_mut(&mut self, pos: CellPosition) -> &mut Cell {
+        &mut self.cells[self.index(pos)]
     }
 
-    pub fn write(&mut self, x: u16, y: u16, cell: Cell) {
-        let idx = u32::from(x) + u32::from(y) * u32::from(self.area.cols);
-        self.cells[idx as usize] = cell;
+    pub fn write(&mut self, pos: CellPosition, cell: Cell) {
+        self.cells[self.index(pos)] = cell;
     }
 
     #[must_use]

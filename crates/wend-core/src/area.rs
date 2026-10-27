@@ -1,3 +1,9 @@
+/// Converts to a terminal coordinate, clamping at `u16::MAX` instead of failing.
+#[must_use]
+pub(crate) fn saturating_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Area {
     pub cols: u16,

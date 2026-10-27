@@ -199,14 +199,14 @@ fn main() -> Result<()> {
 
 fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
     writer.queue(cursor::MoveTo(0, 0))?;
-    for ((col, row), cell) in frame.iter() {
+    for (pos, cell) in frame.iter() {
         if cell.cursor {
             writer.queue(style::SetAttribute(Attribute::Reverse))?;
         } else if cell.selected {
             writer.queue(style::SetAttribute(Attribute::Underlined))?;
         }
         writer
-            .queue(cursor::MoveTo(col, row))?
+            .queue(cursor::MoveTo(pos.col, pos.row))?
             .queue(style::Print(cell.grapheme.as_str_sanitize()))?
             .queue(style::SetAttribute(Attribute::Reset))?;
     }
