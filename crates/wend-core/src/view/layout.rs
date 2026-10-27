@@ -1,4 +1,4 @@
-use crate::{area::Area, buffer::Buffer};
+use crate::{area::Area, buffer::Buffer, view::Direction};
 
 use std::ops;
 
@@ -143,6 +143,84 @@ impl Layout {
         (0..self.area.height()).filter_map(|idx| self.row(idx))
     }
 
+    /// The glyph in a slot, reading only within the row so a col past the edge can't
+    /// reach into the next one.
+    #[must_use]
+    pub(super) fn glyph_at(&self, col: usize, row: usize) -> Option<Glyph> {
+        let slot = self.row(row)?.slots.get(col).copied()?;
+        self.glyph(slot)
+    }
+
+    /// Where the glyph holding `byte` starts, none if it is off screen.
+    #[must_use]
+    pub(super) fn find_byte(&self, byte: usize) -> Option<(usize, usize)> {
+        self.rows().enumerate().find_map(|(row_idx, row)| {
+            if !(row.meta.from_byte..row.meta.to_byte).contains(&byte) {
+                return None;
+            }
+            // The first slot of a glyph is its head, tails come after it
+            let col_idx = row.slots.iter().position(|slot| {
+                self.glyph(*slot)
+                    .is_some_and(|glyph| glyph.as_range().contains(&byte))
+            })?;
+            Some((col_idx, row_idx))
+        })
+    }
+
+    /// The next glyph from `col` in a direction within the row, skipping the tails of the
+    /// glyph at `col`. Returns the col the found glyph starts at.
+    #[must_use]
+    pub(super) fn step(
+        &self,
+        col: usize,
+        row: usize,
+        direction: Direction,
+    ) -> Option<(usize, Glyph)> {
+        let Row { meta, slots } = self.row(row)?;
+        let col = col.min(slots.len());
+        let base = self.glyph_at(col, row);
+        let differs = |idx: usize| {
+            self.glyph_at(idx, row)
+                .filter(|glyph| Some(*glyph) != base)
+                .map(|glyph| (idx, glyph))
+        };
+
+        match direction {
+            // Only up to the last used slot, the rest of the row is blank
+            Direction::Forward => (col.saturating_add(1)..meta.len).find_map(differs),
+            Direction::Backward => {
+                let (mut idx, glyph) = (0..col).rev().find_map(differs)?;
+                // Scanning backwards lands on the last tail, walk back to the head
+                while idx > 0 && self.glyph_at(idx - 1, row) == Some(glyph) {
+                    idx -= 1;
+                }
+                Some((idx, glyph))
+            }
+        }
+    }
+
+    /// The first (`Forward`) or last (`Backward`) glyph of a row.
+    #[must_use]
+    pub(super) fn edge_glyph(&self, row: usize, direction: Direction) -> Option<Glyph> {
+        match direction {
+            Direction::Forward => self.glyph_at(0, row).or_else(|| {
+                self.step(0, row, Direction::Forward)
+                    .map(|(_, glyph)| glyph)
+            }),
+            Direction::Backward => self
+                .step(self.area.width(), row, Direction::Backward)
+                .map(|(_, glyph)| glyph),
+        }
+    }
+
+    /// The last glyph on screen.
+    #[must_use]
+    pub(super) fn last_glyph(&self) -> Option<Glyph> {
+        (0..self.area.height())
+            .rev()
+            .find_map(|row| self.edge_glyph(row, Direction::Backward))
+    }
+
     fn new_line(&mut self) {
         self.seal();
         self.line_ptr = self.line_ptr.saturating_add(1);
@@ -250,12 +328,12 @@ impl Layout {
     pub(super) fn rebuild(&mut self, buffer: &Buffer, area: Area, scroll_offset: usize) {
         self.resize(area, scroll_offset);
 
-        let start = buffer.rope.byte_of_line(self.scroll_offset);
+        let start = buffer.rope().byte_of_line(self.scroll_offset);
         self.byte_ptr = start;
         self.row_byte_ptr = start;
 
         let mut reached_end = true;
-        for grapheme in buffer.rope.byte_slice(start..).graphemes() {
+        for grapheme in buffer.rope().byte_slice(start..).graphemes() {
             if self.row_ptr >= self.area.height() {
                 reached_end = false;
                 break;
@@ -269,12 +347,76 @@ impl Layout {
         // A virtual glyph one past the last byte, so the cursor always has somewhere to be,
         // even in an empty buffer, and text can be appended at the end
         if reached_end {
-            let end = buffer.rope.byte_len();
+            let end = buffer.rope().byte_len();
             self.write(Slot::Glyph(Glyph::new(end, end.saturating_add(1), 0)));
         }
 
         if self.col_ptr > 0 {
             self.seal();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout(text: &str, cols: u16, rows: u16) -> Layout {
+        let area = Area::new(cols, rows);
+        let mut layout = Layout::new(area, 0);
+        layout.rebuild(&Buffer::from(text), area, 0);
+        layout
+    }
+
+    #[test]
+    fn step_skips_tails() {
+        // The tab spans cols 0..4, 漢 spans 5..7
+        let layout = layout("\ta漢b", 20, 2);
+        let byte = |found: Option<(usize, Glyph)>| found.map(|(col, glyph)| (col, glyph.from_byte));
+
+        assert_eq!(
+            byte(layout.step(0, 0, Direction::Forward)),
+            Some((4, 1)),
+            "past the tab"
+        );
+        assert_eq!(
+            byte(layout.step(5, 0, Direction::Forward)),
+            Some((7, 5)),
+            "past 漢"
+        );
+        assert_eq!(
+            byte(layout.step(7, 0, Direction::Backward)),
+            Some((5, 2)),
+            "onto 漢's head"
+        );
+        assert_eq!(
+            byte(layout.step(4, 0, Direction::Backward)),
+            Some((0, 0)),
+            "onto the tab's head"
+        );
+        assert_eq!(
+            layout.find_byte(2),
+            Some((5, 0)),
+            "a wide glyph is found at its head"
+        );
+    }
+
+    #[test]
+    fn wrapped_rows() {
+        // Width 4: "abcd" then "↩ ef"
+        let layout = layout("abcdef", 4, 3);
+        assert_eq!(layout.find_byte(4), Some((2, 1)));
+        assert_eq!(
+            layout
+                .edge_glyph(1, Direction::Forward)
+                .map(|glyph| glyph.from_byte),
+            Some(4)
+        );
+        assert_eq!(
+            layout
+                .edge_glyph(0, Direction::Backward)
+                .map(|glyph| glyph.from_byte),
+            Some(3)
+        );
     }
 }

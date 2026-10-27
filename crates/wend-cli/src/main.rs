@@ -16,6 +16,7 @@ use wend_core::{
     area::Area,
     editor::{Editor, Mode},
     frame::Frame,
+    view::{Direction, Motion},
 };
 
 const HELP: &str = "Usage: wend [file/to/open]";
@@ -103,37 +104,89 @@ fn main() -> Result<()> {
     let frame = editor.frame();
     render_frame(&frame, &mut stdout)?;
 
+    // Set by the first key of a two key binding, like the g in gs
+    let mut pending_g = false;
+
     loop {
         let event = event::read()?;
         if let Event::Resize(cols, rows) = event {
             editor.resize(Area::new(cols, rows));
         } else if let Event::Key(key) = event {
-            if editor.is_normal() {
-                if key.code.is_char('h') {
-                    editor.view.left();
-                } else if key.code.is_char('j') {
-                    editor.view.down();
-                } else if key.code.is_char('k') {
-                    editor.view.up();
-                } else if key.code.is_char('l') {
-                    editor.view.right();
-                } else if key.code.is_char('i') {
-                    editor.switch_mode(Mode::Insert);
-                } else if key.code.is_char('o') {
-                    editor.view.new_line();
-                    editor.switch_mode(Mode::Insert);
-                } else if key.code.is_char('q') {
-                    break;
-                }
-            } else if editor.is_insert() {
+            if editor.is_insert() {
                 if key.code.is_esc() {
                     editor.switch_mode(Mode::Normal);
                 } else if key.code.is_backspace() {
                     editor.view.delete();
                 } else if key.code.is_tab() {
                     editor.view.insert('\t');
+                } else if key.code.is_enter() {
+                    editor.view.insert('\n');
                 } else if let Some(char) = key.code.as_char() {
                     editor.view.insert(char);
+                }
+            } else {
+                // Normal and Select share one keymap, Select only makes motions extend
+                let extend = editor.is_select();
+
+                if pending_g {
+                    pending_g = false;
+                    match key.code.as_char() {
+                        Some('s') => editor
+                            .view
+                            .move_selection(Motion::File(Direction::Backward), extend),
+                        Some('e') => editor
+                            .view
+                            .move_selection(Motion::File(Direction::Forward), extend),
+                        _ => {}
+                    }
+                } else if key.code.is_esc() {
+                    editor.switch_mode(Mode::Normal);
+                } else if let Some(char) = key.code.as_char() {
+                    match char {
+                        'h' => editor
+                            .view
+                            .move_selection(Motion::Horizontal(Direction::Backward), extend),
+                        'l' => editor
+                            .view
+                            .move_selection(Motion::Horizontal(Direction::Forward), extend),
+                        'j' => editor
+                            .view
+                            .move_selection(Motion::Vertical(Direction::Forward), extend),
+                        'k' => editor
+                            .view
+                            .move_selection(Motion::Vertical(Direction::Backward), extend),
+                        'w' => editor
+                            .view
+                            .move_selection(Motion::Word(Direction::Forward), extend),
+                        'b' => editor
+                            .view
+                            .move_selection(Motion::Word(Direction::Backward), extend),
+                        'H' => editor
+                            .view
+                            .move_selection(Motion::Line(Direction::Backward), extend),
+                        'L' => editor
+                            .view
+                            .move_selection(Motion::Line(Direction::Forward), extend),
+                        'J' => editor
+                            .view
+                            .move_selection(Motion::Page(Direction::Forward), extend),
+                        'K' => editor
+                            .view
+                            .move_selection(Motion::Page(Direction::Backward), extend),
+                        'g' => pending_g = true,
+                        'd' => editor.view.delete_selection(),
+                        'u' => editor.view.revert(),
+                        // TODO: show the error once there is a status line
+                        's' => drop(editor.view.save()),
+                        'i' => editor.switch_mode(Mode::Insert),
+                        'o' => {
+                            editor.view.new_line();
+                            editor.switch_mode(Mode::Insert);
+                        }
+                        'v' => editor.switch_mode(if extend { Mode::Normal } else { Mode::Select }),
+                        'q' => break,
+                        _ => {}
+                    }
                 }
             }
         }
@@ -149,6 +202,8 @@ fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
     for ((col, row), cell) in frame.iter() {
         if cell.cursor {
             writer.queue(style::SetAttribute(Attribute::Reverse))?;
+        } else if cell.selected {
+            writer.queue(style::SetAttribute(Attribute::Underlined))?;
         }
         writer
             .queue(cursor::MoveTo(col, row))?

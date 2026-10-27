@@ -10,6 +10,8 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
     Normal,
+    /// Normal, except motions extend the selection instead of moving it.
+    Select,
     Insert,
 }
 
@@ -24,10 +26,13 @@ pub struct Editor {
 impl Editor {
     #[must_use]
     pub fn new(area: Area) -> Self {
+        let width = area.width().min(50);
+        let overflow = u16::try_from(area.width().saturating_sub(width) / 2).unwrap_or(u16::MAX);
+        let view = Area::new(u16::try_from(width).unwrap_or(u16::MAX), area.rows);
         Self {
             area,
             buffers: vec![],
-            view: View::new(Rect::new(0, 0, area)),
+            view: View::new(Rect::new(overflow, 0, view)),
             mode: Mode::Normal,
         }
     }
@@ -51,7 +56,7 @@ impl Editor {
     pub fn frame(&mut self) -> Frame {
         let mut frame = Frame::new(self.area);
         // Scroll to the cursor before rendering, so the frame shows where the cursor is
-        frame.cursor = self.view.get_cursor();
+        frame.cursor = self.view.cursor_position();
         self.view.render(&mut frame);
         frame.mode = self.mode;
         frame
@@ -68,6 +73,11 @@ impl Editor {
 
     pub fn is_normal(&self) -> bool {
         matches!(self.mode, Mode::Normal)
+    }
+
+    #[must_use]
+    pub fn is_select(&self) -> bool {
+        matches!(self.mode, Mode::Select)
     }
 
     pub fn is_insert(&self) -> bool {

@@ -4,15 +4,17 @@ use crate::{area::Area, editor::Mode, grapheme::Grapheme};
 pub struct Cell {
     pub grapheme: Grapheme,
     pub cursor: bool,
+    pub selected: bool,
     pub z_index: u8,
 }
 
 impl Cell {
     #[must_use]
-    pub fn new(grapheme: Grapheme, cursor: bool, z_index: u8) -> Self {
+    pub fn new(grapheme: Grapheme, cursor: bool, selected: bool, z_index: u8) -> Self {
         Self {
             grapheme,
             cursor,
+            selected,
             z_index,
         }
     }
@@ -23,6 +25,7 @@ impl Default for Cell {
         Self {
             grapheme: Grapheme::default(),
             cursor: false,
+            selected: false,
             z_index: 0,
         }
     }
