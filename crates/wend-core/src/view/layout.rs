@@ -271,6 +271,14 @@ impl Layout {
             glyph.tails = jumps;
             self.write(Slot::Glyph(glyph));
         } else {
+            // A wide glyph that doesn't fit the rest of the row moves to the next one, the
+            // terminal can't draw half of it. Unless it wouldn't fit there either.
+            let cols = glyph.tails.saturating_add(1);
+            let fits_row = self.col_ptr.saturating_add(cols) <= self.area.width();
+            let fits_wrapped = self.wrap_col().saturating_add(cols) <= self.area.width();
+            if !fits_row && fits_wrapped && self.col_ptr < self.area.width() {
+                self.wrap();
+            }
             self.write(Slot::Glyph(glyph));
             if grapheme.ends_with('\n') {
                 self.new_line();
@@ -283,12 +291,7 @@ impl Layout {
         // Wrap lazily, only once something actually needs the next row. Wrapping right
         // after filling a row would give a newline in the last column an empty ↩ row.
         if self.col_ptr >= self.area.width() {
-            self.seal();
-            // The markers need room or they would wrap forever
-            if self.area.width() > 2 {
-                self.write(Slot::Misc('↩'));
-                self.write(Slot::Blank);
-            }
+            self.wrap();
         }
 
         if self.row_ptr >= self.area.height() {
@@ -309,6 +312,21 @@ impl Layout {
                 self.write(Slot::Tail(idx));
             }
         }
+    }
+
+    /// Seals the row and starts a wrapped one, its text begins at `wrap_col`.
+    fn wrap(&mut self) {
+        self.seal();
+        if self.wrap_col() > 0 {
+            self.write(Slot::Misc('↩'));
+            self.write(Slot::Blank);
+        }
+    }
+
+    /// The first col of a wrapped row free for text, after the markers.
+    fn wrap_col(&self) -> usize {
+        // The markers need room or they would wrap forever
+        if self.area.width() > 2 { 2 } else { 0 }
     }
 
     fn resize(&mut self, area: Area, scroll_offset: usize) {
@@ -388,6 +406,23 @@ mod tests {
             Some(SlotPosition::new(5, 0)),
             "a wide glyph is found at its head"
         );
+    }
+
+    #[test]
+    fn wide_glyph_wraps_whole() {
+        // Width 5: "abcd" leaves one col, too little for 漢, so it starts the next row
+        let layout = layout("abcd漢e", 5, 3);
+        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 1)));
+        assert!(
+            layout.slot(4).is_some_and(Slot::is_blank),
+            "the gap is blank"
+        );
+        assert_eq!(
+            layout.row(0).map(|row| (row.meta.to_byte, row.meta.len)),
+            Some((4, 4)),
+            "the gap is not part of the row"
+        );
+        assert_eq!(layout.find_byte(7), Some(SlotPosition::new(4, 1)));
     }
 
     #[test]

@@ -5,6 +5,9 @@ pub struct Cell {
     pub grapheme: Grapheme,
     pub cursor: bool,
     pub selected: bool,
+    /// Drawn by the wide grapheme to its left, so there is nothing to print. Printing
+    /// into half of a wide grapheme makes the terminal blank all of it.
+    pub covered: bool,
     pub z_index: u8,
 }
 
@@ -15,6 +18,7 @@ impl Cell {
             grapheme,
             cursor,
             selected,
+            covered: false,
             z_index,
         }
     }
@@ -26,6 +30,7 @@ impl Default for Cell {
             grapheme: Grapheme::default(),
             cursor: false,
             selected: false,
+            covered: false,
             z_index: 0,
         }
     }

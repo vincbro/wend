@@ -9,7 +9,7 @@ use anyhow::{Result, bail};
 use crossterm::{
     QueueableCommand, cursor,
     event::{self, Event},
-    style::{self, Attribute},
+    style::{self, Attribute, Color},
     terminal::{self},
 };
 use wend_core::{
@@ -18,6 +18,10 @@ use wend_core::{
     frame::Frame,
     view::{Direction, Motion},
 };
+
+use crate::theme::MELLOW;
+
+mod theme;
 
 const HELP: &str = "Usage: wend [file/to/open]";
 
@@ -198,18 +202,30 @@ fn main() -> Result<()> {
 }
 
 fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
+    // Terminals that support it hold the frame back until it is whole, so a half drawn
+    // one never shows. The others ignore it.
+    writer.queue(terminal::BeginSynchronizedUpdate)?;
     writer.queue(cursor::MoveTo(0, 0))?;
     for (pos, cell) in frame.iter() {
+        if cell.covered {
+            continue;
+        }
         if cell.cursor {
-            writer.queue(style::SetAttribute(Attribute::Reverse))?;
+            writer.queue(style::SetBackgroundColor(MELLOW.cursor_bg))?;
+            writer.queue(style::SetForegroundColor(MELLOW.cursor_fg))?;
         } else if cell.selected {
-            writer.queue(style::SetAttribute(Attribute::Underlined))?;
+            writer.queue(style::SetBackgroundColor(MELLOW.selection_bg))?;
+            writer.queue(style::SetForegroundColor(MELLOW.selection_fg))?;
+        } else {
+            writer.queue(style::SetBackgroundColor(MELLOW.background))?;
+            writer.queue(style::SetForegroundColor(MELLOW.foreground))?;
         }
         writer
             .queue(cursor::MoveTo(pos.col, pos.row))?
             .queue(style::Print(cell.grapheme.as_str_sanitize()))?
             .queue(style::SetAttribute(Attribute::Reset))?;
     }
+    writer.queue(terminal::EndSynchronizedUpdate)?;
     writer.flush()?;
     Ok(())
 }

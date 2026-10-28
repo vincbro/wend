@@ -339,10 +339,24 @@ impl View {
                         self.buffer.get_grapheme(glyph.as_range())
                     };
 
+                    // A tail is covered when the head prints wide enough to reach it, the
+                    // rest (a tab, a too long grapheme shown as U+FFFD) print as blanks
+                    let (grapheme, covered) = match slot {
+                        Slot::Tail(head_idx) => {
+                            let offset = self
+                                .layout
+                                .slot_index(SlotPosition::new(col, row))
+                                .saturating_sub(head_idx);
+                            (Grapheme::from_char(' '), offset < grapheme.width())
+                        }
+                        _ => (grapheme, false),
+                    };
+
                     Cell {
                         grapheme,
                         cursor: glyph.as_range().contains(&head),
                         selected: selected.contains(&glyph.from_byte),
+                        covered,
                         z_index: 0,
                     }
                 } else if let Slot::Misc(char) = slot {
@@ -350,6 +364,7 @@ impl View {
                         grapheme: Grapheme::from_char(char),
                         cursor: false,
                         selected: false,
+                        covered: false,
                         z_index: 0,
                     }
                 } else {
@@ -357,6 +372,7 @@ impl View {
                         grapheme: Grapheme::from_char(' '),
                         cursor: false,
                         selected: false,
+                        covered: false,
                         z_index: 0,
                     }
                 };
@@ -413,5 +429,25 @@ pub(crate) mod tests {
         view.delete_selection();
         assert_eq!(view.buffer.rope().to_string(), "ab");
         assert_eq!(view.selection, Selection::point(1));
+    }
+
+    #[test]
+    fn render_covers_wide_tails_only() {
+        let mut view = view("a😀b\tc", 20, 2);
+        let mut frame = Frame::new(Area::new(20, 2));
+        view.render(&mut frame);
+        let cell = |col: u16| frame.get(CellPosition::new(col, 0));
+
+        assert_eq!(cell(1).grapheme.as_str(), "😀");
+        assert!(!cell(1).covered, "the head prints");
+        assert!(cell(2).covered, "the emoji already draws its tail");
+        assert_eq!(cell(3).grapheme.as_str(), "b");
+        assert!(!cell(3).covered);
+        // The tab spans cols 4..8, its head prints one blank so the tails must too
+        assert!(
+            (4..8).all(|col| !cell(col).covered),
+            "tab tails print blanks"
+        );
+        assert_eq!(cell(8).grapheme.as_str(), "c");
     }
 }
