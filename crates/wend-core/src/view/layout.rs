@@ -73,6 +73,21 @@ impl Slot {
     }
 }
 
+/// The top of a view. The first line on screen and how many of its wrapped rows are
+/// scrolled past, so the view can start partway through a line that wraps.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct ScrollOffset {
+    pub line: usize,
+    pub row: usize,
+}
+
+impl ScrollOffset {
+    #[must_use]
+    pub(super) fn new(line: usize, row: usize) -> Self {
+        Self { line, row }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Row<'a> {
     pub meta: RowMeta,
@@ -93,8 +108,10 @@ pub(super) struct Layout {
     slots: Vec<Slot>,
     row_meta: Vec<Option<RowMeta>>,
     area: Area,
-    // From which line we start from
-    scroll_offset: usize,
+    // Where we start from, the row is what we actually skipped after a rebuild
+    scroll_offset: ScrollOffset,
+    // Rows of the first line left to skip
+    skip_rows: usize,
 
     row_ptr: usize,
     col_ptr: usize,
@@ -105,12 +122,13 @@ pub(super) struct Layout {
 
 impl Layout {
     #[must_use]
-    pub(super) fn new(area: Area, scroll_offset: usize) -> Self {
+    pub(super) fn new(area: Area, scroll_offset: ScrollOffset) -> Self {
         let mut layout = Self {
             slots: Vec::with_capacity(area.len()),
             row_meta: Vec::with_capacity(area.height()),
             area,
             scroll_offset,
+            skip_rows: 0,
 
             row_ptr: 0,
             col_ptr: 0,
@@ -121,6 +139,13 @@ impl Layout {
         };
         layout.resize(area, scroll_offset);
         layout
+    }
+
+    /// Where the layout starts. After a rebuild the row is clamped to the rows the first
+    /// line actually has.
+    #[must_use]
+    pub(super) fn scroll_offset(&self) -> ScrollOffset {
+        self.scroll_offset
     }
 
     // Gets the glyph, none if it's Blank
@@ -213,15 +238,9 @@ impl Layout {
         }
     }
 
-    /// The last glyph on screen.
-    #[must_use]
-    pub(super) fn last_glyph(&self) -> Option<Glyph> {
-        (0..self.area.height())
-            .rev()
-            .find_map(|row| self.edge_glyph(row, Direction::Backward))
-    }
-
     fn new_line(&mut self) {
+        // The line ended before we skipped as many rows as asked, show its last row
+        self.stop_skipping();
         self.seal();
         self.line_ptr = self.line_ptr.saturating_add(1);
     }
@@ -230,6 +249,16 @@ impl Layout {
     fn seal(&mut self) {
         // Past the last row, there is nothing left to seal
         if self.row_ptr >= self.area.height() {
+            return;
+        }
+
+        // A skipped row is laid out like any other so it wraps the same, the next row
+        // writes over its slots
+        if self.skip_rows > 0 {
+            self.skip_rows -= 1;
+            self.scroll_offset.row = self.scroll_offset.row.saturating_add(1);
+            self.row_byte_ptr = self.byte_ptr;
+            self.col_ptr = 0;
             return;
         }
 
@@ -314,6 +343,10 @@ impl Layout {
         }
     }
 
+    fn stop_skipping(&mut self) {
+        self.skip_rows = 0;
+    }
+
     /// Seals the row and starts a wrapped one, its text begins at `wrap_col`.
     fn wrap(&mut self) {
         self.seal();
@@ -329,9 +362,11 @@ impl Layout {
         if self.area.width() > 2 { 2 } else { 0 }
     }
 
-    fn resize(&mut self, area: Area, scroll_offset: usize) {
+    fn resize(&mut self, area: Area, scroll_offset: ScrollOffset) {
         self.area = area;
-        self.scroll_offset = scroll_offset;
+        // Counted back up by the rows we actually skip
+        self.scroll_offset = ScrollOffset::new(scroll_offset.line, 0);
+        self.skip_rows = scroll_offset.row;
 
         self.row_meta.clear();
         self.row_meta.resize_with(self.area.height(), || None);
@@ -340,13 +375,13 @@ impl Layout {
 
         self.col_ptr = 0;
         self.row_ptr = 0;
-        self.line_ptr = scroll_offset;
+        self.line_ptr = scroll_offset.line;
     }
 
-    pub(super) fn rebuild(&mut self, buffer: &Buffer, area: Area, scroll_offset: usize) {
+    pub(super) fn rebuild(&mut self, buffer: &Buffer, area: Area, scroll_offset: ScrollOffset) {
         self.resize(area, scroll_offset);
 
-        let start = buffer.rope().byte_of_line(self.scroll_offset);
+        let start = buffer.rope().byte_of_line(self.scroll_offset.line);
         self.byte_ptr = start;
         self.row_byte_ptr = start;
 
@@ -369,6 +404,8 @@ impl Layout {
             self.write(Slot::Glyph(Glyph::new(end, end.saturating_add(1), 0)));
         }
 
+        // The buffer ended before we skipped as many rows as asked, show its last row
+        self.stop_skipping();
         if self.col_ptr > 0 {
             self.seal();
         }
@@ -380,9 +417,13 @@ mod tests {
     use super::*;
 
     fn layout(text: &str, cols: u16, rows: u16) -> Layout {
+        scrolled_layout(text, cols, rows, ScrollOffset::default())
+    }
+
+    fn scrolled_layout(text: &str, cols: u16, rows: u16, scroll_offset: ScrollOffset) -> Layout {
         let area = Area::new(cols, rows);
-        let mut layout = Layout::new(area, 0);
-        layout.rebuild(&Buffer::from(text), area, 0);
+        let mut layout = Layout::new(area, scroll_offset);
+        layout.rebuild(&Buffer::from(text), area, scroll_offset);
         layout
     }
 
@@ -442,5 +483,28 @@ mod tests {
                 .map(|glyph| glyph.from_byte),
             Some(3)
         );
+    }
+
+    #[test]
+    fn skips_wrapped_rows() {
+        // Width 4: "abcd" then "↩ ef", start on the second
+        let layout = scrolled_layout("abcdef", 4, 3, ScrollOffset::new(0, 1));
+        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 0)));
+        assert_eq!(layout.find_byte(0), None, "the skipped row is off screen");
+        assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 1));
+    }
+
+    #[test]
+    fn skip_clamps_to_the_last_row_of_the_line() {
+        // Width 4: "abcd" then "↩ e\n", then "xy"
+        let layout = scrolled_layout("abcde\nxy", 4, 3, ScrollOffset::new(0, usize::MAX));
+        assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 1));
+        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 0)));
+        assert_eq!(layout.row(1).map(|row| row.meta.line), Some(1));
+
+        // No line break, the end of buffer glyph wraps onto its own row and ends the line
+        let layout = scrolled_layout("abcdef", 4, 3, ScrollOffset::new(0, usize::MAX));
+        assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 2));
+        assert_eq!(layout.find_byte(6), Some(SlotPosition::new(2, 0)));
     }
 }

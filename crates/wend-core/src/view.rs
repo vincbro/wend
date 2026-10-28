@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub mod layout;
-use layout::{Layout, Slot, SlotPosition};
+use layout::{Layout, ScrollOffset, Slot, SlotPosition};
 mod motion;
 pub use motion::{Direction, Motion};
 mod selection;
@@ -31,7 +31,7 @@ pub struct View {
     layout_dirty: bool,
     selection: Selection,
 
-    scroll_offset: usize,
+    scroll_offset: ScrollOffset,
     scroll_marign: usize,
     desired_col: usize,
 }
@@ -42,11 +42,11 @@ impl View {
         Self {
             buffer: Buffer::new(),
             rect,
-            layout: Layout::new(rect.area, 0),
+            layout: Layout::new(rect.area, ScrollOffset::default()),
             layout_dirty: true,
             selection: Selection::point(0),
 
-            scroll_offset: 0,
+            scroll_offset: ScrollOffset::default(),
             scroll_marign: 10,
             desired_col: 0,
         }
@@ -218,52 +218,61 @@ impl View {
 
         let head = self.selection.head();
         if self.layout.find_byte(head).is_none() {
-            let line = self.buffer.rope().line_of_byte(head);
-            self.scroll_offset = line.saturating_sub(margin);
+            // Put the head's line on top, then a screen at a time through it until the head
+            // shows up. A jump never passes the head, the margin pulls it into place below.
+            self.scroll_offset = ScrollOffset::new(self.buffer.rope().line_of_byte(head), 0);
             self.rebuild();
-
-            // Lines above us wrapped into more rows than the margin, put our line on top
-            if self.layout.find_byte(head).is_none() {
-                self.scroll_offset = line;
+            while self.layout.find_byte(head).is_none() {
+                let prev_offset = self.scroll_offset;
+                self.scroll_offset.row = self.scroll_offset.row.saturating_add(height.max(1));
                 self.rebuild();
-            }
-
-            // Our line wraps into more rows than fit on screen and we scroll by whole
-            // lines, so the view can't reach the head, bring the head to the view
-            if self.layout.find_byte(head).is_none()
-                && let Some(glyph) = self.layout.last_glyph()
-            {
-                self.selection = Selection::new(self.selection.anchor(), glyph.from_byte);
+                if self.scroll_offset == prev_offset {
+                    break;
+                }
             }
         }
 
-        let Some(SlotPosition { row, .. }) = self.layout.find_byte(self.selection.head()) else {
-            return;
-        };
-
-        // Only ever scroll one way per call, a tall wrapped line could otherwise make
-        // us bounce between the top and bottom margin forever
-        let scroll_up = row < margin;
-        let scroll_down = row + margin >= height;
-
-        while let Some(SlotPosition { row, .. }) = self.layout.find_byte(self.selection.head()) {
-            let prev_offset = self.scroll_offset;
-            if scroll_up && row < margin && self.scroll_offset > 0 {
-                self.scroll_offset -= 1;
-            } else if scroll_down && row + margin >= height {
-                self.scroll_offset += 1;
+        // One row at a time, so the head moves one row per step and stops right at the
+        // margin. The margin is at most half the screen, the head can't be in both.
+        while let Some(SlotPosition { row, .. }) = self.layout.find_byte(head) {
+            let direction = if row < margin {
+                Direction::Backward
+            } else if row + margin >= height {
+                Direction::Forward
             } else {
                 break;
-            }
-            self.rebuild();
-
-            // A tall wrapped line pushed the head off screen, undo and settle
-            if self.layout.find_byte(self.selection.head()).is_none() {
-                self.scroll_offset = prev_offset;
-                self.rebuild();
+            };
+            if !self.scroll_row(direction) {
                 break;
             }
         }
+    }
+
+    /// Scrolls one row, false if there is nowhere further to go.
+    fn scroll_row(&mut self, direction: Direction) -> bool {
+        let prev_offset = self.scroll_offset;
+        let ScrollOffset { line, row } = prev_offset;
+        match direction {
+            Direction::Forward => {
+                self.scroll_offset = ScrollOffset::new(line, row.saturating_add(1));
+                self.rebuild();
+                // Clamped back, we were on the line's last row, start the next line
+                if self.scroll_offset == prev_offset {
+                    self.scroll_offset = ScrollOffset::new(line.saturating_add(1), 0);
+                    self.rebuild();
+                }
+            }
+            Direction::Backward => {
+                self.scroll_offset = match row.checked_sub(1) {
+                    Some(row) => ScrollOffset::new(line, row),
+                    // The layout clamps it onto the last row of the line above
+                    None if line > 0 => ScrollOffset::new(line - 1, usize::MAX),
+                    None => return false,
+                };
+                self.rebuild();
+            }
+        }
+        self.scroll_offset != prev_offset
     }
 
     /// Rebuilds the layout if anything it depends on changed since the last rebuild.
@@ -274,10 +283,12 @@ impl View {
     }
 
     fn rebuild(&mut self) {
-        // Edits and reverts can make the buffer shorter than where we scrolled to
-        self.scroll_offset = self.scroll_offset.min(self.buffer.rope().line_len());
+        // Edits and reverts can make the buffer shorter than where we scrolled to, the
+        // layout clamps the row the same way
+        self.scroll_offset.line = self.scroll_offset.line.min(self.buffer.rope().line_len());
         self.layout
             .rebuild(&self.buffer, self.rect.area, self.scroll_offset);
+        self.scroll_offset = self.layout.scroll_offset();
         self.layout_dirty = false;
     }
 
@@ -290,7 +301,7 @@ impl View {
     pub fn open_buffer(&mut self, mut new_buffer: Buffer) -> Buffer {
         mem::swap(&mut new_buffer, &mut self.buffer);
         // The old selection and scroll are byte and line offsets into the old buffer
-        self.scroll_offset = 0;
+        self.scroll_offset = ScrollOffset::default();
         self.desired_col = 0;
         self.layout_dirty = true;
         self.set_selection(Selection::point(0), ColumnPolicy::Sync);
@@ -450,5 +461,55 @@ pub(crate) mod tests {
             "tab tails print blanks"
         );
         assert_eq!(cell(8).grapheme.as_str(), "c");
+    }
+
+    #[test]
+    fn scrolls_through_a_wrapped_line_a_row_at_a_time() {
+        // Width 4, one line: "aaaa" then rows of "↩ aa". Height 5 gives a margin of 2.
+        let mut view = view(&"a".repeat(40), 4, 5);
+        let mut rows = vec![];
+        for _ in 0..12 {
+            view.move_selection(Motion::Vertical(Direction::Forward), false);
+            let pos = view.layout.find_byte(view.selection.head()).unwrap();
+            rows.push((pos.row, view.scroll_offset));
+        }
+        // Down to the margin, then the head stays on it and the view follows row by row
+        let expected: Vec<_> = (1..=12)
+            .map(|step: usize| {
+                let row = step.min(2);
+                (row, ScrollOffset::new(0, step - row))
+            })
+            .collect();
+        assert_eq!(rows, expected);
+
+        // And back up, the head stays on the top margin until the view reaches the top
+        view.move_selection(Motion::Vertical(Direction::Backward), false);
+        view.move_selection(Motion::Vertical(Direction::Backward), false);
+        view.move_selection(Motion::Vertical(Direction::Backward), false);
+        let pos = view.layout.find_byte(view.selection.head()).unwrap();
+        assert_eq!((pos.row, view.scroll_offset), (2, ScrollOffset::new(0, 7)));
+    }
+
+    #[test]
+    fn scrolls_up_onto_the_last_row_of_the_line_above() {
+        // Width 4: line 0 is "aaaa", "↩ a\n", line 1 is "b"
+        let mut view = view("aaaaa\nb\nc\nd", 4, 3);
+        view.scroll_offset = ScrollOffset::new(1, 0);
+        view.rebuild();
+        assert!(view.scroll_row(Direction::Backward));
+        assert_eq!(view.scroll_offset, ScrollOffset::new(0, 1));
+        assert!(view.scroll_row(Direction::Backward));
+        assert_eq!(view.scroll_offset, ScrollOffset::new(0, 0));
+        assert!(!view.scroll_row(Direction::Backward), "already at the top");
+    }
+
+    #[test]
+    fn jumps_into_the_middle_of_a_tall_line() {
+        // One line far taller than the screen, the end of it can still be reached
+        let mut view = view(&"a".repeat(200), 4, 5);
+        view.move_selection(Motion::File(Direction::Forward), false);
+        assert_eq!(view.selection.head(), 199, "the head is not pulled back");
+        let pos = view.layout.find_byte(view.selection.head()).unwrap();
+        assert_eq!(pos.row, 2, "on the bottom margin");
     }
 }
