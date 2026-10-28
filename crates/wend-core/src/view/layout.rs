@@ -51,28 +51,6 @@ pub(super) enum Slot {
     Blank,
 }
 
-impl Slot {
-    #[must_use]
-    pub(super) const fn is_glyph(self) -> bool {
-        matches!(self, Self::Glyph(_))
-    }
-
-    #[must_use]
-    pub(super) const fn is_tail(self) -> bool {
-        matches!(self, Self::Tail { .. })
-    }
-
-    #[must_use]
-    pub(super) const fn is_misc(self) -> bool {
-        matches!(self, Self::Misc(_))
-    }
-
-    #[must_use]
-    pub(super) const fn is_blank(self) -> bool {
-        matches!(self, Self::Blank)
-    }
-}
-
 /// The top of a view. The first line on screen and how many of its wrapped rows are
 /// scrolled past, so the view can start partway through a line that wraps.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -455,7 +433,7 @@ mod tests {
         let layout = layout("abcd漢e", 5, 3);
         assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 1)));
         assert!(
-            layout.slot(4).is_some_and(Slot::is_blank),
+            matches!(layout.slot(4), Some(Slot::Blank)),
             "the gap is blank"
         );
         assert_eq!(

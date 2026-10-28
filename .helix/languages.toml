@@ -1,6 +1,17 @@
 # rust-analyzer runs clippy instead of `cargo check` on save, so the editor shows
 # every lint `just clippy` fails on. Lint levels come from [workspace.lints] and
 # clippy.toml, which clippy reads itself: no flags needed here.
+#
+# Formatting uses the nightly rustfmt pinned as `fmt_toolchain` in the justfile,
+# so format-on-save matches `just fmt-check`. Keep the two dates in step.
 [language-server.rust-analyzer.config]
 cargo = { features = "all" }
 check = { command = "clippy", allTargets = true }
+rustfmt = { overrideCommand = [
+  "rustup",
+  "run",
+  "nightly-2026-10-13",
+  "rustfmt",
+  "--edition",
+  "2024",
+] }

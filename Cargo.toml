@@ -22,8 +22,9 @@ lexopt = { version = "0.3.2" }
 unicode-width = { version = "0.2.2" }
 wend-core = { path = "crates/wend-core", version = "=0.0.1" }
 
-# Lint policy: CONTRIBUTING.md#lints. A new lint from a toolchain bump is
-# fixed, or allowed here with a reason, in the same change.
+# Lint policy: CONTRIBUTING.md#lints, and STYLE.md for the rules each lint
+# enforces (S-* ids below). A new lint from a toolchain bump is fixed, or
+# allowed here with a comment, in the same change.
 [workspace.lints.rust]
 # Off-by-default rustc lints we want on.
 elided_lifetimes_in_paths = "warn"
@@ -39,9 +40,9 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 trivial_casts = "warn"
 trivial_numeric_casts = "warn"
 unit_bindings = "warn"
-unnameable_types = "warn"
-unreachable_pub = "warn"
-# Each unsafe site opts in with #[expect(unsafe_code, reason = "...")].
+unnameable_types = "warn"                            # S-VISIBILITY
+unreachable_pub = "warn"                             # S-VISIBILITY
+# S-UNSAFE: each site opts in with #[allow(unsafe_code, reason = "...")].
 unsafe_code = "warn"
 unsafe_op_in_unsafe_fn = "warn"
 unused_import_braces = "warn"
@@ -63,7 +64,6 @@ pedantic = { level = "warn", priority = -1 }
 
 # Allowed from the groups above.
 missing_errors_doc = "allow"
-missing_panics_doc = "allow"
 multiple_crate_versions = "allow" # we don't control our dependencies' trees
 
 # Opted in from restriction.
@@ -77,18 +77,28 @@ print_stdout = "warn"
 # Skips Drop, so the terminal is never restored. Return from main instead.
 exit = "warn"
 mem_forget = "warn"
-# A panic loses the user's unsaved work. expect() with a message is allowed
-# where the invariant is real; unwrap() is fine in tests (clippy.toml).
+# S-PANICS: a panic loses the user's unsaved work. expect() with the invariant
+# is allowed; unwrap() and panic!() are fine in tests (clippy.toml).
 get_unwrap = "warn"
+panic = "warn"
+unwrap_in_result = "warn"
 unwrap_used = "warn"
-# Unsafe stays rare and explained.
+# S-UNSAFE: unsafe stays rare and explained.
 multiple_unsafe_ops_per_block = "warn"
 undocumented_unsafe_blocks = "warn"
 unnecessary_safety_comment = "warn"
 unnecessary_safety_doc = "warn"
-# Lint escapes say why, and fail once they're no longer needed.
-allow_attributes = "warn"
-allow_attributes_without_reason = "warn"
+# S-QUALIFIED-FNS: `mem::swap`, not `std::mem::swap` (clippy.toml).
+absolute_paths = "warn"
+# S-NAMES-ABBREVIATIONS: single letters outside the allowed set (clippy.toml).
+min_ident_chars = "warn"
+# S-FIELDS: a struct's fields are all pub or all private.
+partial_pub_fields = "warn"
+# S-DOCS: doc comments are sentences.
+doc_paragraphs_missing_punctuation = "warn"
+# S-TESTS: unit tests live in `mod tests`, named for the behavior.
+redundant_test_prefix = "warn"
+tests_outside_test_module = "warn"
 # Clarity.
 clone_on_ref_ptr = "warn"
 lossy_float_literal = "warn"
@@ -99,6 +109,9 @@ rest_pat_in_fully_bound_structs = "warn"
 str_to_string = "warn"
 unused_result_ok = "warn"
 verbose_file_reads = "warn"
+
+# Opted in from nursery, one by one like restriction.
+use_self = "warn" # `Self { .. }`, not the type's name, inside its impl
 
 [profile.dev.package."*"]
 # Dependencies optimised in dev builds: an editor is unusable at opt-level 0.

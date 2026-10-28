@@ -34,7 +34,8 @@ jobs:
         with:
           tool: just,cargo-sort,taplo
 
-      # The toolchain pinned in rust-toolchain.toml, as on a laptop.
+      # The toolchain pinned in rust-toolchain.toml, plus the nightly rustfmt
+      # pinned in the justfile, as on a laptop.
       - name: Set up Rust
         run: just toolchain
 
@@ -77,6 +78,29 @@ jobs:
 
       - name: Dependencies
         run: just deps
+
+  # STYLE.md S-COMMITS for every commit the PR adds, the same check as the
+  # commit-msg hook from `just hooks`.
+  commits:
+    name: commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up tools
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: just
+
+      - name: Commit messages
+        run: just commits ${{ github.event.pull_request.base.sha }}
 
   msrv:
     name: msrv

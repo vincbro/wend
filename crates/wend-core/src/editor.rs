@@ -26,7 +26,7 @@ pub struct Editor {
 impl Editor {
     #[must_use]
     pub fn new(area: Area) -> Self {
-        let width = area.width().min(50);
+        let width = area.width().min(100);
         let overflow = saturating_u16(area.width().saturating_sub(width) / 2);
         let view = Area::new(saturating_u16(width), area.rows);
         Self {

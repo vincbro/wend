@@ -7,7 +7,7 @@ Thanks for taking an interest. wend is heavily opinionated (see the [README](REA
 You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just).
 
 ```sh
-just toolchain   # installs the pinned Rust and the cargo tools the recipes use
+just toolchain   # installs the pinned Rust, nightly rustfmt, the cargo tools and the git hooks
 just run         # runs wend from source
 just check       # what CI runs: fmt, clippy, docs, tests
 ```
@@ -23,9 +23,15 @@ The workspace lives in `crates/`, one flat folder per crate, each named after it
 
 Every other crate is named after its folder, with the `wend-` prefix. Every crate inherits its version, edition, lints and shared dependencies from the root `Cargo.toml`.
 
+## Style
+
+[STYLE.md](STYLE.md) is how wend's Rust is written: layout, naming, errors, API shape, tests and commits, each rule with its reason. Most rules are enforced by the checks below. The rest are flagged in review, citing the rule's `S-…` id.
+
+To check a change against the rules tools can't enforce, ask your coding agent to run the `style-review` skill (`.claude/skills/style-review/SKILL.md`). Any agent that reads [AGENTS.md](AGENTS.md) finds it.
+
 ## Before you push
 
-`just check` has to pass. It fails on any formatting difference, any clippy or rustdoc warning, any failing test, and any dependency problem (below).
+`just check` has to pass. It fails on any formatting difference, any clippy or rustdoc warning, any failing test, and any dependency problem (below). On a pull request, CI also checks every commit message (see [Commits](#commits)).
 
 ## Dependencies
 
@@ -40,12 +46,14 @@ Declare every dependency once, in `[workspace.dependencies]` in the root `Cargo.
 
 The lint policy lives in `[workspace.lints]` in the root `Cargo.toml`. In short:
 
-- clippy's `all`, `pedantic` and `cargo` groups are on, plus a small set of `restriction` lints chosen for an editor. Each is listed with its reason.
+- clippy's `all`, `pedantic` and `cargo` groups are on, plus a set of `restriction` lints chosen for an editor and to enforce [STYLE.md](STYLE.md). Each is listed with its reason, or the `S-…` rule it enforces. Thresholds, such as nesting depth and the banned names, live in `clippy.toml`.
 - **No printing.** The terminal is the UI, and a stray `println!` or `eprintln!` corrupts the screen. Log or return errors instead.
-- **No `unwrap()` and no `std::process::exit` outside tests.** A panic loses the user's unsaved work, and `exit` skips the code that restores the terminal. Use `?`, or `expect("...")` when an invariant really holds.
-- **Public items need docs.**
-- **Unsafe is opt-in per site.** Mark it with `#[expect(unsafe_code, reason = "...")]` and put a `// SAFETY:` comment on every `unsafe` block.
-- **Escape hatches give reasons.** Use `#[expect(lint, reason = "...")]`, not `#[allow]`, so the escape fails once it's no longer needed.
+- **No `unwrap()`, `panic!` or `std::process::exit` outside tests.** A panic loses the user's unsaved work, and `exit` skips the code that restores the terminal. Use `?`, or `expect("...")` stating the invariant when one really holds.
+- **Docs where they add insight, not everywhere.** Document what a type is for, what a function promises, and when it panics (`# Panics` is linted). Don't restate what names and types already say (STYLE.md S-DOCS).
+- **Fields are all public or all private.** Stateful structs keep every field private (STYLE.md S-FIELDS).
+- **Code stays flat.** Nothing nests deeper than 4 blocks (STYLE.md S-FLAT).
+- **Unsafe is opt-in per site.** Mark it with `#[allow(unsafe_code, reason = "...")]` and put a `// SAFETY:` comment on every `unsafe` block.
+- **Escape hatches are local.** Silence a lint with `#[allow(lint)]` on the smallest item that needs it, never crate-wide.
 
 The toolchain is pinned in `rust-toolchain.toml`, so everyone sees the same lints. A toolchain bump goes in its own change, which fixes or allows (with a reason) any new lints it brings.
 
@@ -53,9 +61,22 @@ The toolchain is pinned in `rust-toolchain.toml`, so everyone sees the same lint
 
 `just fmt` formats everything, and `just check` fails on anything it would change:
 
-- Rust: `cargo fmt` with the stable options in `rustfmt.toml`, so any toolchain formats the same way.
+- Rust: rustfmt with the options in `rustfmt.toml`. The import options (STYLE.md S-IMPORTS) are nightly-only, so `just fmt` runs the nightly pinned as `fmt_toolchain` in the `justfile`, and `just toolchain` installs it. A plain `cargo fmt` on stable warns and skips them. Point your editor at the pinned nightly; `.helix/languages.toml` already does for Helix.
 - `Cargo.toml` dependency tables: sorted alphabetically by `cargo sort`.
 - Every TOML file: formatted by `taplo` (`taplo.toml`). It never reorders keys, so hand-grouped tables such as the lints keep their order.
+
+## Commits
+
+Commit messages follow STYLE.md S-COMMITS: `area: lowercase imperative summary`, at most 72 characters with no trailing period, then a blank line and a body saying why.
+
+```
+view: scroll by row instead of by line
+
+Scrolling moved whole lines, so a line that wrapped past the bottom of
+the screen could never be scrolled through. Scroll one row at a time.
+```
+
+`just hooks`, run by `just toolchain`, installs a commit-msg hook that rejects anything else, and CI runs the same check (`just commits`) on every commit in a pull request.
 
 ## Releases
 

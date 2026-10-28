@@ -40,6 +40,13 @@ duplicates = "deny"
 include-path-dependencies = true
 unused = "deny"
 
+# S-ERRORS: wend-core returns typed thiserror errors. anyhow is for the
+# binary, where errors stop being handled and start being shown.
+[[bans.deny]]
+crate = "anyhow"
+wrappers = ["wend"]
+reason = "S-ERRORS: anyhow is only for the wend binary"
+
 [sources]
 unknown-git = "deny"
 unknown-registry = "deny"
