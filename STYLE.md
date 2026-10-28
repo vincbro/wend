@@ -174,13 +174,13 @@ Add a short example where seeing a call explains a type or function faster than 
 
 ## Errors and panics
 
-### S-ERRORS: Each failing module owns a `thiserror` enum in `error.rs`
+### S-ERRORS: Each failing module owns a `thiserror` enum and a `Result` alias in `error.rs`
 
-A module whose functions can fail has an `error.rs` submodule with one enum, named plain `Error`, that is re-exported:
+A module whose functions can fail has an `error.rs` submodule with one enum, named plain `Error`, and a `Result` alias that fills in that error. Both are re-exported:
 
 ```rust
 // buffer/error.rs
-use std::io;
+use std::{io, result};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -190,18 +190,20 @@ pub enum Error {
     Io(#[from] io::Error),
 }
 
+pub type Result<T> = result::Result<T, Error>;
+
 // buffer.rs
 mod error;
-pub use error::Error;
+pub use error::{Error, Result};
 ```
 
-Callers refer to it through its module, `buffer::Error`, the same way std has `io::Error` and `fmt::Error`. A leaf module that gains errors becomes `foo.rs` plus `foo/error.rs` (see S-MOD-FILES).
+Callers refer to them through the module, `buffer::Error` and `buffer::Result<T>`, the same way std has `io::Error` and `io::Result<T>`. Inside the module, `Result<T>` means the module's own alias. A leaf module that gains errors becomes `foo.rs` plus `foo/error.rs` (see S-MOD-FILES).
 
 `wend-core` returns these typed errors. The `wend` binary uses `anyhow`: it adds `.context("…")` and returns from `main` when it reaches a state it can't recover from.
 
-*Why:* typed errors let the code that can do something about a failure `match` on exactly what went wrong. The binary is where errors stop being handled and start being shown, and that's what `anyhow` is good at. One file per module means you always know where a module's failure modes are listed.
+*Why:* typed errors let the code that can do something about a failure `match` on exactly what went wrong. The alias keeps signatures short and makes the error a function returns follow from the module it lives in. The binary is where errors stop being handled and start being shown, and that's what `anyhow` is good at. One file per module means you always know where a module's failure modes are listed.
 
-*Enforced:* deps (cargo-deny allows `anyhow` only as a dependency of `wend`). Review checks that each error lives in `error.rs` and is named `Error`.
+*Enforced:* deps (cargo-deny allows `anyhow` only as a dependency of `wend`). Review checks that each error lives in `error.rs`, is named `Error`, and comes with the re-exported `Result` alias.
 
 ### S-ERROR-TEXT: Error messages are lowercase, with no trailing period
 

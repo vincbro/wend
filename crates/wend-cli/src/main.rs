@@ -2,13 +2,16 @@
 
 use std::{
     io::{self, Write},
+    mem,
+    ops::ControlFlow,
     panic,
+    path::Path,
 };
 
 use anyhow::{Result, bail};
 use crossterm::{
     QueueableCommand, cursor,
-    event::{self, Event},
+    event::{self, Event, KeyCode},
     style::{self, Attribute},
     terminal::{self},
 };
@@ -36,8 +39,8 @@ fn parse_args() -> Result<Args> {
     let mut parser = lexopt::Parser::from_env();
     while let Some(arg) = parser.next()? {
         match arg {
-            Value(val) if file.is_none() => {
-                file = Some(val.string()?);
+            Value(value) if file.is_none() => {
+                file = Some(value.string()?);
             }
             Long("help") => {
                 bail!(HELP);
@@ -104,7 +107,7 @@ fn main() -> Result<()> {
     let window = terminal::window_size()?;
     let area = Area::new(window.columns, window.rows);
     let mut editor = Editor::new(area);
-    editor.open_file(args.file.as_str())?;
+    editor.open_file(Path::new(&args.file))?;
     let frame = editor.frame();
     render_frame(&frame, &mut stdout)?;
 
@@ -112,93 +115,100 @@ fn main() -> Result<()> {
     let mut pending_g = false;
 
     loop {
-        let event = event::read()?;
-        if let Event::Resize(cols, rows) = event {
-            editor.resize(Area::new(cols, rows));
-        } else if let Event::Key(key) = event {
-            if editor.is_insert() {
-                if key.code.is_esc() {
-                    editor.switch_mode(Mode::Normal);
-                } else if key.code.is_backspace() {
-                    editor.view.delete();
-                } else if key.code.is_tab() {
-                    editor.view.insert('\t');
-                } else if key.code.is_enter() {
-                    editor.view.insert('\n');
-                } else if let Some(char) = key.code.as_char() {
-                    editor.view.insert(char);
-                }
-            } else {
-                // Normal and Select share one keymap, Select only makes motions extend
-                let extend = editor.is_select();
-
-                if pending_g {
-                    pending_g = false;
-                    match key.code.as_char() {
-                        Some('s') => editor
-                            .view
-                            .move_selection(Motion::File(Direction::Backward), extend),
-                        Some('e') => editor
-                            .view
-                            .move_selection(Motion::File(Direction::Forward), extend),
-                        _ => {}
-                    }
-                } else if key.code.is_esc() {
-                    editor.switch_mode(Mode::Normal);
-                } else if let Some(char) = key.code.as_char() {
-                    match char {
-                        'h' => editor
-                            .view
-                            .move_selection(Motion::Horizontal(Direction::Backward), extend),
-                        'l' => editor
-                            .view
-                            .move_selection(Motion::Horizontal(Direction::Forward), extend),
-                        'j' => editor
-                            .view
-                            .move_selection(Motion::Vertical(Direction::Forward), extend),
-                        'k' => editor
-                            .view
-                            .move_selection(Motion::Vertical(Direction::Backward), extend),
-                        'w' => editor
-                            .view
-                            .move_selection(Motion::Word(Direction::Forward), extend),
-                        'b' => editor
-                            .view
-                            .move_selection(Motion::Word(Direction::Backward), extend),
-                        'H' => editor
-                            .view
-                            .move_selection(Motion::Line(Direction::Backward), extend),
-                        'L' => editor
-                            .view
-                            .move_selection(Motion::Line(Direction::Forward), extend),
-                        'J' => editor
-                            .view
-                            .move_selection(Motion::Page(Direction::Forward), extend),
-                        'K' => editor
-                            .view
-                            .move_selection(Motion::Page(Direction::Backward), extend),
-                        'g' => pending_g = true,
-                        'd' => editor.view.delete_selection(),
-                        'u' => editor.view.revert(),
-                        // TODO: show the error once there is a status line
-                        's' => drop(editor.view.save()),
-                        'i' => editor.switch_mode(Mode::Insert),
-                        'o' => {
-                            editor.view.new_line();
-                            editor.switch_mode(Mode::Insert);
-                        }
-                        'v' => editor.switch_mode(if extend { Mode::Normal } else { Mode::Select }),
-                        'q' => break,
-                        _ => {}
-                    }
-                }
-            }
+        if handle_event(&mut editor, &event::read()?, &mut pending_g).is_break() {
+            break;
         }
-
         let frame = editor.frame();
         render_frame(&frame, &mut stdout)?;
     }
     Ok(())
+}
+
+fn handle_event(editor: &mut Editor, event: &Event, pending_g: &mut bool) -> ControlFlow<()> {
+    match *event {
+        Event::Resize(cols, rows) => editor.resize(Area::new(cols, rows)),
+        Event::Key(key) if editor.is_insert() => insert_key(editor, key.code),
+        Event::Key(key) => return normal_key(editor, key.code, pending_g),
+        _ => {}
+    }
+    ControlFlow::Continue(())
+}
+
+fn insert_key(editor: &mut Editor, code: KeyCode) {
+    match code {
+        KeyCode::Esc => editor.switch_mode(Mode::Normal),
+        KeyCode::Backspace => editor.view_mut().delete(),
+        KeyCode::Tab => editor.view_mut().insert('\t'),
+        KeyCode::Enter => editor.view_mut().insert('\n'),
+        KeyCode::Char(c) => editor.view_mut().insert(c),
+        _ => {}
+    }
+}
+
+/// Normal and Select share one keymap, Select only makes motions extend.
+fn normal_key(editor: &mut Editor, code: KeyCode, pending_g: &mut bool) -> ControlFlow<()> {
+    let extend = editor.is_select();
+
+    if mem::take(pending_g) {
+        if let Some(motion) = g_motion(code) {
+            editor.view_mut().move_selection(motion, extend);
+        }
+        return ControlFlow::Continue(());
+    }
+    if code.is_esc() {
+        editor.switch_mode(Mode::Normal);
+        return ControlFlow::Continue(());
+    }
+    let Some(c) = code.as_char() else {
+        return ControlFlow::Continue(());
+    };
+    if let Some(motion) = motion(c) {
+        editor.view_mut().move_selection(motion, extend);
+        return ControlFlow::Continue(());
+    }
+
+    match c {
+        'g' => *pending_g = true,
+        'd' => editor.view_mut().delete_selection(),
+        'u' => editor.view_mut().revert(),
+        // TODO: show the error once there is a status line
+        's' => drop(editor.view_mut().save()),
+        'i' => editor.switch_mode(Mode::Insert),
+        'o' => {
+            editor.view_mut().new_line();
+            editor.switch_mode(Mode::Insert);
+        }
+        'v' => editor.switch_mode(if extend { Mode::Normal } else { Mode::Select }),
+        'q' => return ControlFlow::Break(()),
+        _ => {}
+    }
+    ControlFlow::Continue(())
+}
+
+fn motion(c: char) -> Option<Motion> {
+    let motion = match c {
+        'h' => Motion::Horizontal(Direction::Backward),
+        'l' => Motion::Horizontal(Direction::Forward),
+        'j' => Motion::Vertical(Direction::Forward),
+        'k' => Motion::Vertical(Direction::Backward),
+        'w' => Motion::Word(Direction::Forward),
+        'b' => Motion::Word(Direction::Backward),
+        'H' => Motion::Line(Direction::Backward),
+        'L' => Motion::Line(Direction::Forward),
+        'J' => Motion::Page(Direction::Forward),
+        'K' => Motion::Page(Direction::Backward),
+        _ => return None,
+    };
+    Some(motion)
+}
+
+/// The motion for the key after a g.
+fn g_motion(code: KeyCode) -> Option<Motion> {
+    match code.as_char()? {
+        's' => Some(Motion::File(Direction::Backward)),
+        'e' => Some(Motion::File(Direction::Forward)),
+        _ => None,
+    }
 }
 
 fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
@@ -211,11 +221,11 @@ fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
             continue;
         }
         if cell.cursor {
-            writer.queue(style::SetBackgroundColor(MELLOW.cursor_bg))?;
-            writer.queue(style::SetForegroundColor(MELLOW.cursor_fg))?;
+            writer.queue(style::SetBackgroundColor(MELLOW.cursor_background))?;
+            writer.queue(style::SetForegroundColor(MELLOW.cursor_foreground))?;
         } else if cell.selected {
-            writer.queue(style::SetBackgroundColor(MELLOW.selection_bg))?;
-            writer.queue(style::SetForegroundColor(MELLOW.selection_fg))?;
+            writer.queue(style::SetBackgroundColor(MELLOW.selection_background))?;
+            writer.queue(style::SetForegroundColor(MELLOW.selection_foreground))?;
         } else {
             writer.queue(style::SetBackgroundColor(MELLOW.background))?;
             writer.queue(style::SetForegroundColor(MELLOW.foreground))?;

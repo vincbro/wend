@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{self, BufWriter, Write},
+    io::{BufWriter, Write},
     ops,
     path::{Path, PathBuf},
 };
@@ -11,6 +11,8 @@ use crate::grapheme::Grapheme;
 
 mod change;
 pub use change::Change;
+mod error;
+pub use error::{Error, Result};
 
 /// The text of a file, plus its clean state.
 ///
@@ -19,7 +21,7 @@ pub use change::Change;
 /// costs the parts that differ.
 #[derive(Debug, Clone)]
 pub struct Buffer {
-    pub path: Option<PathBuf>,
+    path: Option<PathBuf>,
     rope: Rope,
     clean: Rope,
     dirty: bool,
@@ -31,17 +33,15 @@ impl Buffer {
         Self::from_rope(None, Rope::new())
     }
 
-    pub fn from_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let content = fs::read(&path)?;
-
-        // Should never be in prod im just lazy and don't feel like making real errors
-        let content = str::from_utf8(&content).expect("Failed to parse utf8");
+    pub fn from_path(path: &Path) -> Result<Self> {
+        let content = fs::read(path)?;
+        let content = str::from_utf8(&content).map_err(|_| Error::InvalidUtf8)?;
 
         let mut rope_builder = crop::RopeBuilder::new();
         rope_builder.append(content);
 
         Ok(Self::from_rope(
-            Some(path.as_ref().to_path_buf()),
+            Some(path.to_path_buf()),
             rope_builder.build(),
         ))
     }
@@ -53,6 +53,11 @@ impl Buffer {
             rope,
             dirty: false,
         }
+    }
+
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     #[must_use]
@@ -68,16 +73,17 @@ impl Buffer {
 
     /// Replaces `range` with `text`, the only way the text changes.
     ///
-    /// Panics if the range is out of bounds or doesn't fall on char boundaries.
-    pub fn edit<T: AsRef<str>>(&mut self, range: ops::Range<usize>, text: T) -> Change {
-        let text = text.as_ref();
+    /// # Panics
+    ///
+    /// If `range` is out of bounds or doesn't fall on char boundaries.
+    pub fn edit(&mut self, range: ops::Range<usize>, text: &str) -> Change {
         assert!(
             range.start <= range.end && range.end <= self.rope.byte_len(),
-            "Edit range {range:?} is out of bounds"
+            "edit ranges come from selections, which stay inside the rope, got {range:?}"
         );
         assert!(
             self.rope.is_char_boundary(range.start) && self.rope.is_char_boundary(range.end),
-            "Edit range {range:?} is not on char boundaries"
+            "edit ranges come from selections, which sit on grapheme starts, got {range:?}"
         );
 
         let change = Change::new(range.start, range.len(), text.len());
@@ -98,9 +104,9 @@ impl Buffer {
     }
 
     /// Writes the text to `path` and makes it the new clean state.
-    pub fn save(&mut self) -> io::Result<()> {
+    pub fn save(&mut self) -> Result<()> {
         let Some(path) = &self.path else {
-            return Err(io::Error::other("The buffer has no path to save to"));
+            return Err(Error::NoPath);
         };
 
         let mut file = BufWriter::new(File::create(path)?);
@@ -114,8 +120,11 @@ impl Buffer {
         Ok(())
     }
 
+    /// # Panics
+    ///
+    /// If `range` is out of bounds or doesn't fall on char boundaries.
     #[must_use]
-    pub fn get_grapheme(&self, range: ops::Range<usize>) -> Grapheme {
+    pub fn grapheme(&self, range: ops::Range<usize>) -> Grapheme {
         Grapheme::from_bytes_iter(self.rope.byte_slice(range).bytes())
     }
 }
@@ -134,15 +143,21 @@ impl From<&str> for Buffer {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, process};
+
     use super::*;
 
     #[test]
     fn edit_applies_and_dirties() {
         let mut buffer = Buffer::from("hello world");
         let change = buffer.edit(6..11, "wend");
-        assert_eq!(buffer.rope().to_string(), "hello wend");
-        assert_eq!(change, Change::new(6, 5, 4));
-        assert!(buffer.is_dirty());
+        assert_eq!(buffer.rope().to_string(), "hello wend", "world is replaced");
+        assert_eq!(
+            change,
+            Change::new(6, 5, 4),
+            "the change holds the removed and inserted lengths"
+        );
+        assert!(buffer.is_dirty(), "an edit dirties the buffer");
     }
 
     #[test]
@@ -153,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "char boundaries")]
+    #[should_panic(expected = "grapheme starts")]
     fn edit_inside_a_char_panics() {
         let mut buffer = Buffer::from("é");
         buffer.edit(1..1, "x");
@@ -170,8 +185,27 @@ mod tests {
     }
 
     #[test]
+    fn non_utf8_file_is_an_error() {
+        let path = env::temp_dir().join(format!("wend-latin1-{}.txt", process::id()));
+        fs::write(&path, b"caf\xe9").unwrap();
+
+        let result = Buffer::from_path(&path);
+        fs::remove_file(&path).unwrap();
+        assert!(
+            matches!(result, Err(Error::InvalidUtf8)),
+            "a latin-1 file is refused, not a panic"
+        );
+    }
+
+    #[test]
+    fn save_without_a_path_is_an_error() {
+        let mut buffer = Buffer::from("abc");
+        assert!(matches!(buffer.save(), Err(Error::NoPath)));
+    }
+
+    #[test]
     fn save_then_revert_keeps_saved_text() {
-        let path = std::env::temp_dir().join(format!("wend-save-{}.txt", std::process::id()));
+        let path = env::temp_dir().join(format!("wend-save-{}.txt", process::id()));
         fs::write(&path, "abc").unwrap();
 
         let mut buffer = Buffer::from_path(&path).unwrap();

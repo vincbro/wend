@@ -1,13 +1,15 @@
-use crate::{area::Area, buffer::Buffer, view::Direction};
-
 use std::ops;
 
 use unicode_width::UnicodeWidthStr;
 
+use crate::{area::Area, buffer::Buffer, view::Direction};
+
 const TAB_WIDTH: usize = 4;
 
+/// A grapheme as laid out: the bytes it covers, and how many tail slots follow its own
+/// slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Glyph {
+pub(super) struct Glyph {
     pub from_byte: usize,
     pub to_byte: usize,
     pub tails: usize,
@@ -46,7 +48,9 @@ impl SlotPosition {
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Slot {
     Glyph(Glyph),
+    /// The rest of a glyph wider than one slot. Holds the index of the glyph's own slot.
     Tail(usize),
+    /// A marker that isn't text, such as the ↩ that starts a wrapped row.
     Misc(char),
     Blank,
 }
@@ -77,25 +81,31 @@ pub(super) struct RowMeta {
     pub line: usize,
     pub from_byte: usize,
     pub to_byte: usize,
-    // How many slots unitl the end of the line
+    /// How many slots the row uses, the rest of it is blank.
     pub len: usize,
 }
 
+/// The grid of slots a view's text is laid out on, rebuilt whenever the buffer, the area
+/// or the scroll changes.
+///
+/// `slots` always holds `area.len()` slots row by row, and `row_meta` one entry per row,
+/// `None` for the rows past the end of the buffer.
 #[derive(Debug, Clone)]
 pub(super) struct Layout {
     slots: Vec<Slot>,
     row_meta: Vec<Option<RowMeta>>,
     area: Area,
-    // Where we start from, the row is what we actually skipped after a rebuild
+    /// Where the layout starts. While rebuilding, the row counts the rows actually
+    /// skipped.
     scroll_offset: ScrollOffset,
-    // Rows of the first line left to skip
+    /// Rows of the first line still to skip while rebuilding.
     skip_rows: usize,
 
-    row_ptr: usize,
-    col_ptr: usize,
-    line_ptr: usize,
-    row_byte_ptr: usize,
-    byte_ptr: usize,
+    row_cursor: usize,
+    col_cursor: usize,
+    line_cursor: usize,
+    row_start_byte: usize,
+    byte_cursor: usize,
 }
 
 impl Layout {
@@ -108,12 +118,12 @@ impl Layout {
             scroll_offset,
             skip_rows: 0,
 
-            row_ptr: 0,
-            col_ptr: 0,
-            line_ptr: 0,
+            row_cursor: 0,
+            col_cursor: 0,
+            line_cursor: 0,
 
-            row_byte_ptr: 0,
-            byte_ptr: 0,
+            row_start_byte: 0,
+            byte_cursor: 0,
         };
         layout.resize(area, scroll_offset);
         layout
@@ -126,19 +136,20 @@ impl Layout {
         self.scroll_offset
     }
 
-    // Gets the glyph, none if it's Blank
+    /// The glyph a slot belongs to, following a tail to its glyph. None for markers and
+    /// blanks.
     #[must_use]
     pub(super) fn glyph(&self, slot: Slot) -> Option<Glyph> {
         match slot {
             Slot::Glyph(glyph) => Some(glyph),
-            Slot::Tail(slot_idx) => self.glyph(self.slot(slot_idx)?),
+            Slot::Tail(head_index) => self.glyph(self.slot(head_index)?),
             Slot::Misc(_) | Slot::Blank => None,
         }
     }
 
     #[must_use]
-    pub(super) fn slot(&self, slot_idx: usize) -> Option<Slot> {
-        self.slots.get(slot_idx).copied()
+    pub(super) fn slot(&self, index: usize) -> Option<Slot> {
+        self.slots.get(index).copied()
     }
 
     #[must_use]
@@ -157,7 +168,7 @@ impl Layout {
     }
 
     pub(super) fn rows(&self) -> impl Iterator<Item = Row<'_>> {
-        (0..self.area.height()).filter_map(|idx| self.row(idx))
+        (0..self.area.height()).filter_map(|row| self.row(row))
     }
 
     /// The glyph in a slot, reading only within the row so a col past the edge can't
@@ -171,16 +182,16 @@ impl Layout {
     /// Where the glyph holding `byte` starts, none if it is off screen.
     #[must_use]
     pub(super) fn find_byte(&self, byte: usize) -> Option<SlotPosition> {
-        self.rows().enumerate().find_map(|(row_idx, row)| {
-            if !(row.meta.from_byte..row.meta.to_byte).contains(&byte) {
+        self.rows().enumerate().find_map(|(row, layout_row)| {
+            if !(layout_row.meta.from_byte..layout_row.meta.to_byte).contains(&byte) {
                 return None;
             }
             // The first slot of a glyph is its head, tails come after it
-            let col_idx = row.slots.iter().position(|slot| {
+            let col = layout_row.slots.iter().position(|slot| {
                 self.glyph(*slot)
                     .is_some_and(|glyph| glyph.as_range().contains(&byte))
             })?;
-            Some(SlotPosition::new(col_idx, row_idx))
+            Some(SlotPosition::new(col, row))
         })
     }
 
@@ -195,7 +206,7 @@ impl Layout {
 
         match direction {
             // Only up to the last used slot, the rest of the row is blank
-            Direction::Forward => (pos.col.saturating_add(1)..meta.len).find_map(differs),
+            Direction::Forward => (pos.col + 1..meta.len).find_map(differs),
             Direction::Backward => (0..pos.col.min(slots.len())).rev().find_map(differs),
         }
     }
@@ -220,13 +231,13 @@ impl Layout {
         // The line ended before we skipped as many rows as asked, show its last row
         self.stop_skipping();
         self.seal();
-        self.line_ptr = self.line_ptr.saturating_add(1);
+        self.line_cursor += 1;
     }
 
     /// Seals the current row, appends row meta data.
     fn seal(&mut self) {
         // Past the last row, there is nothing left to seal
-        if self.row_ptr >= self.area.height() {
+        if self.row_cursor >= self.area.height() {
             return;
         }
 
@@ -234,56 +245,50 @@ impl Layout {
         // writes over its slots
         if self.skip_rows > 0 {
             self.skip_rows -= 1;
-            self.scroll_offset.row = self.scroll_offset.row.saturating_add(1);
-            self.row_byte_ptr = self.byte_ptr;
-            self.col_ptr = 0;
+            let ScrollOffset { line, row } = self.scroll_offset;
+            self.scroll_offset = ScrollOffset::new(line, row + 1);
+            self.row_start_byte = self.byte_cursor;
+            self.col_cursor = 0;
             return;
         }
 
-        self.row_meta[self.row_ptr] = Some(RowMeta {
-            line: self.line_ptr,
-            from_byte: self.row_byte_ptr,
-            to_byte: self.byte_ptr,
-            len: self.col_ptr,
+        self.row_meta[self.row_cursor] = Some(RowMeta {
+            line: self.line_cursor,
+            from_byte: self.row_start_byte,
+            to_byte: self.byte_cursor,
+            len: self.col_cursor,
         });
 
-        for _ in self.col_ptr..self.area.width() {
-            let idx = self.col_ptr + self.row_ptr * self.area.width();
-            let Some(slot_mut) = self.slots.get_mut(idx) else {
-                panic!("Should not be able to overflow");
-            };
-            *slot_mut = Slot::Blank;
-            self.col_ptr = self.col_ptr.saturating_add(1);
-        }
+        let from = self.slot_index(SlotPosition::new(self.col_cursor, self.row_cursor));
+        let to = self.slot_index(SlotPosition::new(0, self.row_cursor + 1));
+        self.slots
+            .get_mut(from..to)
+            .expect("the row cursor is below the area's height, so its row is inside the grid")
+            .fill(Slot::Blank);
 
-        self.row_byte_ptr = self.byte_ptr;
+        self.row_start_byte = self.byte_cursor;
 
-        self.col_ptr = 0;
-        self.row_ptr = self.row_ptr.saturating_add(1);
+        self.col_cursor = 0;
+        self.row_cursor += 1;
     }
 
     fn write_grapheme(&mut self, grapheme: &str) {
         let mut glyph = Glyph::new(
-            self.byte_ptr,
-            self.byte_ptr.saturating_add(grapheme.len()),
+            self.byte_cursor,
+            self.byte_cursor + grapheme.len(),
             grapheme.width().saturating_sub(1),
         );
         if grapheme == "\t" {
-            let jumps = if self.col_ptr.is_multiple_of(TAB_WIDTH) {
-                TAB_WIDTH
-            } else {
-                TAB_WIDTH - (self.col_ptr % TAB_WIDTH)
-            }
-            .saturating_sub(1);
-            glyph.tails = jumps;
+            // Up to the next tab stop, a whole tab width when already on one
+            glyph.tails = TAB_WIDTH - self.col_cursor % TAB_WIDTH - 1;
             self.write(Slot::Glyph(glyph));
         } else {
             // A wide glyph that doesn't fit the rest of the row moves to the next one, the
             // terminal can't draw half of it. Unless it wouldn't fit there either.
-            let cols = glyph.tails.saturating_add(1);
-            let fits_row = self.col_ptr.saturating_add(cols) <= self.area.width();
-            let fits_wrapped = self.wrap_col().saturating_add(cols) <= self.area.width();
-            if !fits_row && fits_wrapped && self.col_ptr < self.area.width() {
+            let cols = glyph.tails + 1;
+            let fits_row = self.col_cursor + cols <= self.area.width();
+            let fits_wrapped = self.wrap_col() + cols <= self.area.width();
+            if !fits_row && fits_wrapped && self.col_cursor < self.area.width() {
                 self.wrap();
             }
             self.write(Slot::Glyph(glyph));
@@ -297,26 +302,26 @@ impl Layout {
     fn write(&mut self, slot: Slot) {
         // Wrap lazily, only once something actually needs the next row. Wrapping right
         // after filling a row would give a newline in the last column an empty ↩ row.
-        if self.col_ptr >= self.area.width() {
+        if self.col_cursor >= self.area.width() {
             self.wrap();
         }
 
-        if self.row_ptr >= self.area.height() {
+        if self.row_cursor >= self.area.height() {
             return;
         }
 
-        let idx = self.slot_index(SlotPosition::new(self.col_ptr, self.row_ptr));
-        let Some(slot_mut) = self.slots.get_mut(idx) else {
-            panic!("Should not be able to overflow");
-        };
-        *slot_mut = slot;
+        let index = self.slot_index(SlotPosition::new(self.col_cursor, self.row_cursor));
+        *self.slots.get_mut(index).expect(
+            "both cursors are inside the area after the wrap and height checks, so the slot is \
+             inside the grid",
+        ) = slot;
 
-        self.col_ptr = self.col_ptr.saturating_add(1);
+        self.col_cursor += 1;
 
         if let Slot::Glyph(glyph) = slot {
-            self.byte_ptr = glyph.to_byte;
+            self.byte_cursor = glyph.to_byte;
             for _ in 0..glyph.tails {
-                self.write(Slot::Tail(idx));
+                self.write(Slot::Tail(index));
             }
         }
     }
@@ -351,21 +356,25 @@ impl Layout {
         self.slots.clear();
         self.slots.resize_with(area.len(), || Slot::Blank);
 
-        self.col_ptr = 0;
-        self.row_ptr = 0;
-        self.line_ptr = scroll_offset.line;
+        self.col_cursor = 0;
+        self.row_cursor = 0;
+        self.line_cursor = scroll_offset.line;
     }
 
     pub(super) fn rebuild(&mut self, buffer: &Buffer, area: Area, scroll_offset: ScrollOffset) {
         self.resize(area, scroll_offset);
+        // Nothing fits, and a row with no columns would never fill up
+        if area.is_empty() {
+            return;
+        }
 
         let start = buffer.rope().byte_of_line(self.scroll_offset.line);
-        self.byte_ptr = start;
-        self.row_byte_ptr = start;
+        self.byte_cursor = start;
+        self.row_start_byte = start;
 
         let mut reached_end = true;
         for grapheme in buffer.rope().byte_slice(start..).graphemes() {
-            if self.row_ptr >= self.area.height() {
+            if self.row_cursor >= self.area.height() {
                 reached_end = false;
                 break;
             }
@@ -379,12 +388,12 @@ impl Layout {
         // even in an empty buffer, and text can be appended at the end
         if reached_end {
             let end = buffer.rope().byte_len();
-            self.write(Slot::Glyph(Glyph::new(end, end.saturating_add(1), 0)));
+            self.write(Slot::Glyph(Glyph::new(end, end + 1, 0)));
         }
 
         // The buffer ended before we skipped as many rows as asked, show its last row
         self.stop_skipping();
-        if self.col_ptr > 0 {
+        if self.col_cursor > 0 {
             self.seal();
         }
     }
@@ -476,13 +485,33 @@ mod tests {
     fn skip_clamps_to_the_last_row_of_the_line() {
         // Width 4: "abcd" then "↩ e\n", then "xy"
         let layout = scrolled_layout("abcde\nxy", 4, 3, ScrollOffset::new(0, usize::MAX));
-        assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 1));
-        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 0)));
-        assert_eq!(layout.row(1).map(|row| row.meta.line), Some(1));
+        assert_eq!(
+            layout.scroll_offset(),
+            ScrollOffset::new(0, 1),
+            "line 0 only has two rows"
+        );
+        assert_eq!(
+            layout.find_byte(4),
+            Some(SlotPosition::new(2, 0)),
+            "its last row is on top"
+        );
+        assert_eq!(
+            layout.row(1).map(|row| row.meta.line),
+            Some(1),
+            "the next line follows it"
+        );
 
         // No line break, the end of buffer glyph wraps onto its own row and ends the line
         let layout = scrolled_layout("abcdef", 4, 3, ScrollOffset::new(0, usize::MAX));
-        assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 2));
-        assert_eq!(layout.find_byte(6), Some(SlotPosition::new(2, 0)));
+        assert_eq!(
+            layout.scroll_offset(),
+            ScrollOffset::new(0, 2),
+            "the end of buffer row counts"
+        );
+        assert_eq!(
+            layout.find_byte(6),
+            Some(SlotPosition::new(2, 0)),
+            "the end of buffer glyph is on top"
+        );
     }
 }

@@ -19,6 +19,7 @@ anyhow = { version = "1.0.104" }
 crop = { version = "0.4.3", features = ["graphemes"] }
 crossterm = { version = "0.29.0" }
 lexopt = { version = "0.3.2" }
+thiserror = { version = "2.0.21" }
 unicode-width = { version = "0.2.2" }
 wend-core = { path = "crates/wend-core", version = "=0.0.1" }
 
@@ -52,7 +53,6 @@ unused_qualifications = "warn"
 
 [workspace.lints.rustdoc]
 all = { level = "warn", priority = -1 }
-missing_crate_level_docs = "allow"
 
 # all, pedantic and cargo are on. restriction is opted into lint by lint
 # instead of as a group: the group holds lints that contradict each other and
@@ -63,7 +63,7 @@ cargo = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
 # Allowed from the groups above.
-missing_errors_doc = "allow"
+missing_errors_doc = "allow"      # errors are typed enums (S-ERRORS), their variants say how a call fails
 multiple_crate_versions = "allow" # we don't control our dependencies' trees
 
 # Opted in from restriction.

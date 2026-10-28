@@ -24,14 +24,13 @@ impl Change {
     /// stays on the grapheme it was on while typing in front of it.
     #[must_use]
     pub fn map_pos(&self, pos: usize) -> usize {
-        let removed_end = self.at.saturating_add(self.removed_len);
+        let removed_end = self.at + self.removed_len;
         if pos < self.at {
             pos
         } else if pos < removed_end {
-            self.at.saturating_add(self.inserted_len)
+            self.at + self.inserted_len
         } else {
-            pos.saturating_sub(self.removed_len)
-                .saturating_add(self.inserted_len)
+            pos - self.removed_len + self.inserted_len
         }
     }
 }

@@ -12,6 +12,7 @@ categories = ["text-editors"]
 
 [dependencies]
 crop.workspace = true
+thiserror.workspace = true
 unicode-width.workspace = true
 
 [lints]

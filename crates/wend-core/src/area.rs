@@ -42,7 +42,7 @@ impl Area {
     }
 }
 
-/// Where in a frame a view is allowed to render
+/// Where in a frame a view is allowed to render.
 #[derive(Debug, Clone, Copy)]
 pub struct Rect {
     pub col: u16,

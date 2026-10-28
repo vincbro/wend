@@ -56,15 +56,15 @@ impl Grapheme {
     /// everything else is printed as is, its width matches `UnicodeWidthStr::width`.
     #[must_use]
     pub fn as_str_sanitize(&self) -> &str {
-        let str = self.as_str();
-        let mut chars = str.chars();
+        let text = self.as_str();
+        let mut chars = text.chars();
         let Some(c) = chars.next() else {
             // An empty print would leave the old terminal cell untouched
             return " ";
         };
 
         // Controls always form their own grapheme (UAX #29), the only exception is CRLF
-        if c.is_control() && (chars.as_str().is_empty() || str == "\r\n") {
+        if c.is_control() && (chars.as_str().is_empty() || text == "\r\n") {
             return match c {
                 // The layout already gives these their width
                 '\t' | '\n' | '\r' => " ",
@@ -77,11 +77,11 @@ impl Grapheme {
         }
 
         // Bidi controls, zero width chars, BOM, lone combining marks, ...
-        if str.width() == 0 {
+        if text.width() == 0 {
             return "\u{FFFD}";
         }
 
-        str
+        text
     }
 }
 

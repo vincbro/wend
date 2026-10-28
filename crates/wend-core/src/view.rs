@@ -1,13 +1,13 @@
-use std::{io, mem, ops};
+use std::{mem, ops};
 
 use crate::{
-    area::{Rect, saturating_u16},
-    buffer::{Buffer, Change},
+    area::{self, Rect},
+    buffer::{self, Buffer, Change},
     frame::{Cell, CellPosition, Frame},
     grapheme::Grapheme,
 };
 
-pub mod layout;
+mod layout;
 use layout::{Layout, ScrollOffset, Slot, SlotPosition};
 mod motion;
 pub use motion::{Direction, Motion};
@@ -23,6 +23,10 @@ enum ColumnPolicy {
     Sync,
 }
 
+/// A buffer shown in a rectangle of the frame, with a selection.
+///
+/// After every public call both ends of the selection sit on grapheme starts, the head
+/// is on screen and `desired_col` is inside the width. `check_invariants` checks them.
 #[derive(Debug, Clone)]
 pub struct View {
     buffer: Buffer,
@@ -53,20 +57,24 @@ impl View {
     }
 
     /// Where the head is in the frame, scrolling first so it always is on screen.
+    ///
+    /// # Panics
+    ///
+    /// If the view's area is empty, since there is nowhere to show the head.
     pub fn cursor_position(&mut self) -> CellPosition {
         self.ensure_cursor_visible();
         let pos = self
             .layout
             .find_byte(self.selection.head())
-            .expect("The cursor is always visible after ensure_cursor_visible");
+            .expect("ensure_cursor_visible scrolls the head on screen when the area isn't empty");
         self.cell_position(pos)
     }
 
     /// Where a slot of the layout ends up in the frame.
     fn cell_position(&self, pos: SlotPosition) -> CellPosition {
         CellPosition::new(
-            self.rect.col.saturating_add(saturating_u16(pos.col)),
-            self.rect.row.saturating_add(saturating_u16(pos.row)),
+            self.rect.col.saturating_add(area::saturating_u16(pos.col)),
+            self.rect.row.saturating_add(area::saturating_u16(pos.row)),
         )
     }
 
@@ -80,7 +88,7 @@ impl View {
         }
         let mut start = rope.byte_of_line(rope.line_of_byte(byte));
         for grapheme in rope.byte_slice(start..).graphemes() {
-            let end = start.saturating_add(grapheme.len());
+            let end = start + grapheme.len();
             if end > byte {
                 return start;
             }
@@ -99,7 +107,7 @@ impl View {
             .graphemes()
             .next()
             .map_or(1, |grapheme| grapheme.len());
-        start.saturating_add(len)
+        start + len
     }
 
     /// The bytes the selection covers, from its first grapheme through its last.
@@ -161,7 +169,7 @@ impl View {
         else {
             return;
         };
-        self.edit(to_byte.saturating_sub(len)..to_byte, "");
+        self.edit(to_byte - len..to_byte, "");
         self.check_invariants();
     }
 
@@ -182,17 +190,13 @@ impl View {
         let line = rope.line_of_byte(self.selection.head());
         // The end of the line's text, before its line break
         let line_end = if line < rope.line_len() {
-            rope.byte_of_line(line)
-                .saturating_add(rope.line(line).byte_len())
+            rope.byte_of_line(line) + rope.line(line).byte_len()
         } else {
             rope.byte_len()
         };
 
         self.edit(line_end..line_end, "\n");
-        self.set_selection(
-            Selection::point(line_end.saturating_add(1)),
-            ColumnPolicy::Sync,
-        );
+        self.set_selection(Selection::point(line_end + 1), ColumnPolicy::Sync);
         self.check_invariants();
     }
 
@@ -205,7 +209,7 @@ impl View {
         self.check_invariants();
     }
 
-    pub fn save(&mut self) -> io::Result<()> {
+    pub fn save(&mut self) -> buffer::Result<()> {
         self.buffer.save()
     }
 
@@ -218,18 +222,7 @@ impl View {
 
         let head = self.selection.head();
         if self.layout.find_byte(head).is_none() {
-            // Put the head's line on top, then a screen at a time through it until the head
-            // shows up. A jump never passes the head, the margin pulls it into place below.
-            self.scroll_offset = ScrollOffset::new(self.buffer.rope().line_of_byte(head), 0);
-            self.rebuild();
-            while self.layout.find_byte(head).is_none() {
-                let prev_offset = self.scroll_offset;
-                self.scroll_offset.row = self.scroll_offset.row.saturating_add(height.max(1));
-                self.rebuild();
-                if self.scroll_offset == prev_offset {
-                    break;
-                }
-            }
+            self.jump_to(head);
         }
 
         // One row at a time, so the head moves one row per step and stops right at the
@@ -248,17 +241,34 @@ impl View {
         }
     }
 
+    /// Puts the line holding `byte` on top, then scrolls a screen at a time through it until
+    /// `byte` shows up. A jump never passes it, the margin pulls it into place below.
+    fn jump_to(&mut self, byte: usize) {
+        let height = self.rect.area.height();
+        self.scroll_offset = ScrollOffset::new(self.buffer.rope().line_of_byte(byte), 0);
+        self.rebuild();
+        while self.layout.find_byte(byte).is_none() {
+            let prev_offset = self.scroll_offset;
+            self.scroll_offset =
+                ScrollOffset::new(prev_offset.line, prev_offset.row + height.max(1));
+            self.rebuild();
+            if self.scroll_offset == prev_offset {
+                break;
+            }
+        }
+    }
+
     /// Scrolls one row, false if there is nowhere further to go.
     fn scroll_row(&mut self, direction: Direction) -> bool {
         let prev_offset = self.scroll_offset;
         let ScrollOffset { line, row } = prev_offset;
         match direction {
             Direction::Forward => {
-                self.scroll_offset = ScrollOffset::new(line, row.saturating_add(1));
+                self.scroll_offset = ScrollOffset::new(line, row + 1);
                 self.rebuild();
                 // Clamped back, we were on the line's last row, start the next line
                 if self.scroll_offset == prev_offset {
-                    self.scroll_offset = ScrollOffset::new(line.saturating_add(1), 0);
+                    self.scroll_offset = ScrollOffset::new(line + 1, 0);
                     self.rebuild();
                 }
             }
@@ -285,7 +295,8 @@ impl View {
     fn rebuild(&mut self) {
         // Edits and reverts can make the buffer shorter than where we scrolled to, the
         // layout clamps the row the same way
-        self.scroll_offset.line = self.scroll_offset.line.min(self.buffer.rope().line_len());
+        let ScrollOffset { line, row } = self.scroll_offset;
+        self.scroll_offset = ScrollOffset::new(line.min(self.buffer.rope().line_len()), row);
         self.layout
             .rebuild(&self.buffer, self.rect.area, self.scroll_offset);
         self.scroll_offset = self.layout.scroll_offset();
@@ -318,7 +329,7 @@ impl View {
         for byte in [self.selection.anchor(), self.selection.head()] {
             assert!(
                 byte <= rope.byte_len() && rope.is_char_boundary(byte),
-                "Selection end {byte} is not on a char boundary"
+                "set_selection snaps both ends onto grapheme starts inside the rope, got {byte}"
             );
         }
 
@@ -327,69 +338,65 @@ impl View {
         }
         assert!(
             !self.layout_dirty && self.layout.find_byte(self.selection.head()).is_some(),
-            "The head is not on screen"
+            "ensure_cursor_visible rebuilds the layout and scrolls the head on screen"
         );
         assert!(
             self.desired_col < self.rect.area.width(),
-            "desired_col {} is past the edge",
+            "resize clamps desired_col to the width, got {}",
             self.desired_col
         );
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
         self.refresh_layout();
-        let head = self.selection.head();
         let selected = self.selection_range();
-
-        for (row, line) in self.layout.rows().enumerate() {
-            for (col, slot) in line.slots.iter().copied().enumerate() {
-                let cell = if let Some(glyph) = self.layout.glyph(slot) {
-                    // The end of buffer slot points past the rope, it has nothing to show
-                    let grapheme = if glyph.from_byte >= self.buffer.rope().byte_len() {
-                        Grapheme::from_char(' ')
-                    } else {
-                        self.buffer.get_grapheme(glyph.as_range())
-                    };
-
-                    // A tail is covered when the head prints wide enough to reach it, the
-                    // rest (a tab, a too long grapheme shown as U+FFFD) print as blanks
-                    let (grapheme, covered) = match slot {
-                        Slot::Tail(head_idx) => {
-                            let offset = self
-                                .layout
-                                .slot_index(SlotPosition::new(col, row))
-                                .saturating_sub(head_idx);
-                            (Grapheme::from_char(' '), offset < grapheme.width())
-                        }
-                        _ => (grapheme, false),
-                    };
-
-                    Cell {
-                        grapheme,
-                        cursor: glyph.as_range().contains(&head),
-                        selected: selected.contains(&glyph.from_byte),
-                        covered,
-                        z_index: 0,
-                    }
-                } else if let Slot::Misc(char) = slot {
-                    Cell {
-                        grapheme: Grapheme::from_char(char),
-                        cursor: false,
-                        selected: false,
-                        covered: false,
-                        z_index: 0,
-                    }
-                } else {
-                    Cell {
-                        grapheme: Grapheme::from_char(' '),
-                        cursor: false,
-                        selected: false,
-                        covered: false,
-                        z_index: 0,
-                    }
-                };
-                frame.write(self.cell_position(SlotPosition::new(col, row)), cell);
+        for (row, layout_row) in self.layout.rows().enumerate() {
+            for (col, slot) in layout_row.slots.iter().copied().enumerate() {
+                let pos = SlotPosition::new(col, row);
+                frame.write(self.cell_position(pos), self.cell(slot, pos, &selected));
             }
+        }
+    }
+
+    /// The cell the slot at `pos` renders as. `selected` is the selection's byte range.
+    fn cell(&self, slot: Slot, pos: SlotPosition, selected: &ops::Range<usize>) -> Cell {
+        let blank = Cell {
+            grapheme: Grapheme::from_char(' '),
+            ..Cell::default()
+        };
+        let Some(glyph) = self.layout.glyph(slot) else {
+            return match slot {
+                Slot::Misc(c) => Cell {
+                    grapheme: Grapheme::from_char(c),
+                    ..blank
+                },
+                _ => blank,
+            };
+        };
+
+        // The end of buffer slot points past the rope, it has nothing to show
+        let grapheme = if glyph.from_byte >= self.buffer.rope().byte_len() {
+            Grapheme::from_char(' ')
+        } else {
+            self.buffer.grapheme(glyph.as_range())
+        };
+
+        // A tail is covered when the head prints wide enough to reach it, the rest (a tab,
+        // a too long grapheme shown as U+FFFD) print as blanks
+        let (grapheme, covered) = match slot {
+            Slot::Tail(head_index) => {
+                let offset = self.layout.slot_index(pos) - head_index;
+                (Grapheme::from_char(' '), offset < grapheme.width())
+            }
+            _ => (grapheme, false),
+        };
+
+        Cell {
+            grapheme,
+            cursor: glyph.as_range().contains(&self.selection.head()),
+            selected: selected.contains(&glyph.from_byte),
+            covered,
+            z_index: 0,
         }
     }
 }
@@ -397,7 +404,7 @@ impl View {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::area::Area;
+    use crate::{area::Area, editor::Mode};
 
     pub(crate) fn view(text: &str, cols: u16, rows: u16) -> View {
         let mut view = View::new(Rect::new(0, 0, Area::new(cols, rows)));
@@ -446,7 +453,7 @@ pub(crate) mod tests {
     #[test]
     fn render_covers_wide_tails_only() {
         let mut view = view("a😀b\tc", 20, 2);
-        let mut frame = Frame::new(Area::new(20, 2));
+        let mut frame = Frame::new(Area::new(20, 2), Mode::Normal, CellPosition::default());
         view.render(&mut frame);
         let cell = |col: u16| frame.get(CellPosition::new(col, 0));
 
@@ -487,7 +494,11 @@ pub(crate) mod tests {
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         let pos = view.layout.find_byte(view.selection.head()).unwrap();
-        assert_eq!((pos.row, view.scroll_offset), (2, ScrollOffset::new(0, 7)));
+        assert_eq!(
+            (pos.row, view.scroll_offset),
+            (2, ScrollOffset::new(0, 7)),
+            "each step up scrolls one row, the head stays on the top margin"
+        );
     }
 
     #[test]
@@ -497,9 +508,17 @@ pub(crate) mod tests {
         view.scroll_offset = ScrollOffset::new(1, 0);
         view.rebuild();
         assert!(view.scroll_row(Direction::Backward));
-        assert_eq!(view.scroll_offset, ScrollOffset::new(0, 1));
+        assert_eq!(
+            view.scroll_offset,
+            ScrollOffset::new(0, 1),
+            "onto the wrapped row of line 0, not its first row"
+        );
         assert!(view.scroll_row(Direction::Backward));
-        assert_eq!(view.scroll_offset, ScrollOffset::new(0, 0));
+        assert_eq!(
+            view.scroll_offset,
+            ScrollOffset::new(0, 0),
+            "then up through line 0's rows"
+        );
         assert!(!view.scroll_row(Direction::Backward), "already at the top");
     }
 

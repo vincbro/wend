@@ -1,8 +1,8 @@
-use std::{io, path::Path};
+use std::path::Path;
 
 use crate::{
-    area::{Area, Rect, saturating_u16},
-    buffer::Buffer,
+    area::{Area, Rect},
+    buffer::{self, Buffer},
     frame::Frame,
     view::View,
 };
@@ -15,35 +15,51 @@ pub enum Mode {
     Insert,
 }
 
+/// The whole editor: the terminal's area, the view and the mode.
+///
+/// `buffers` holds every open buffer except the one the view shows, so each open file
+/// lives in exactly one place.
 #[derive(Debug, Clone)]
 pub struct Editor {
-    pub area: Area,
-    pub buffers: Vec<Buffer>,
-    pub view: View,
-    pub mode: Mode,
+    area: Area,
+    buffers: Vec<Buffer>,
+    view: View,
+    mode: Mode,
 }
 
 impl Editor {
     #[must_use]
     pub fn new(area: Area) -> Self {
-        let width = area.width().min(100);
-        let overflow = saturating_u16(area.width().saturating_sub(width) / 2);
-        let view = Area::new(saturating_u16(width), area.rows);
+        let width = area.cols.min(100);
+        let left_col = (area.cols - width) / 2;
+        let view_area = Area::new(width, area.rows);
         Self {
             area,
             buffers: vec![],
-            view: View::new(Rect::new(overflow, 0, view)),
+            view: View::new(Rect::new(left_col, 0, view_area)),
             mode: Mode::Normal,
         }
     }
 
-    pub fn open_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        let path = path.as_ref();
+    #[must_use]
+    pub fn view(&self) -> &View {
+        &self.view
+    }
 
+    pub fn view_mut(&mut self) -> &mut View {
+        &mut self.view
+    }
+
+    #[must_use]
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    pub fn open_file(&mut self, path: &Path) -> buffer::Result<()> {
         let buffer = if let Some(index) = self
             .buffers
             .iter()
-            .position(|buffer| buffer.path.iter().any(|p| p == path))
+            .position(|buffer| buffer.path() == Some(path))
         {
             self.buffers.swap_remove(index)
         } else {
@@ -54,11 +70,10 @@ impl Editor {
     }
 
     pub fn frame(&mut self) -> Frame {
-        let mut frame = Frame::new(self.area);
         // Scroll to the cursor before rendering, so the frame shows where the cursor is
-        frame.cursor = self.view.cursor_position();
+        let cursor = self.view.cursor_position();
+        let mut frame = Frame::new(self.area, self.mode, cursor);
         self.view.render(&mut frame);
-        frame.mode = self.mode;
         frame
     }
 

@@ -70,7 +70,8 @@ Go through every rule in `STYLE.md` whose *Enforced* line includes "review". The
 - Plain-data structs that are mutated field by field across the code where building and overwriting a new value would be clearer.
 
 **S-ERRORS / S-ERROR-TEXT**
-- A module that can fail without a `foo/error.rs` holding `pub enum Error` (re-exported as `foo::Error`).
+- A module that can fail without a `foo/error.rs` holding `pub enum Error` and `pub type Result<T> = result::Result<T, Error>`, both re-exported (`pub use error::{Error, Result}`) so callers write `foo::Error` and `foo::Result<T>`.
+- A signature spelling out `Result<T, foo::Error>` where `foo::Result<T>` exists.
 - Errors defined elsewhere.
 - Ad-hoc `io::Error::other("...")` or string errors in `wend-core`.
 - Error messages that are capitalized or end with a period.

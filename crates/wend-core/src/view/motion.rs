@@ -82,7 +82,6 @@ impl View {
             Motion::Page(_) => return None,
         };
 
-        // Extending keeps the anchor, only the head follows the motion
         Some(if extend {
             Selection::new(self.selection.anchor(), moved.head())
         } else {
@@ -137,7 +136,7 @@ impl View {
         }
 
         let end = if line < rope.line_len() {
-            start.saturating_add(rope.line(line).byte_len())
+            start + rope.line(line).byte_len()
         } else {
             rope.byte_len()
         };
@@ -168,7 +167,7 @@ impl View {
             .graphemes()
             .scan(head, |byte, grapheme| {
                 let start = *byte;
-                *byte = byte.saturating_add(grapheme.len());
+                *byte += grapheme.len();
                 Some((start, word_class(&grapheme)))
             })
             .peekable();
@@ -190,7 +189,7 @@ impl View {
             .graphemes()
             .rev()
             .scan(end, |byte, grapheme| {
-                *byte = byte.saturating_sub(grapheme.len());
+                *byte -= grapheme.len();
                 Some((*byte, word_class(&grapheme)))
             })
             .peekable();
