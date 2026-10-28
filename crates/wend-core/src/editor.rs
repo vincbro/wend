@@ -71,6 +71,7 @@ impl Editor {
         self.mode = mode;
     }
 
+    #[must_use]
     pub fn is_normal(&self) -> bool {
         matches!(self.mode, Mode::Normal)
     }
@@ -80,6 +81,7 @@ impl Editor {
         matches!(self.mode, Mode::Select)
     }
 
+    #[must_use]
     pub fn is_insert(&self) -> bool {
         matches!(self.mode, Mode::Insert)
     }

@@ -37,6 +37,7 @@ pub struct View {
 }
 
 impl View {
+    #[must_use]
     pub fn new(rect: Rect) -> Self {
         Self {
             buffer: Buffer::new(),

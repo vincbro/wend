@@ -9,7 +9,7 @@ use anyhow::{Result, bail};
 use crossterm::{
     QueueableCommand, cursor,
     event::{self, Event},
-    style::{self, Attribute, Color},
+    style::{self, Attribute},
     terminal::{self},
 };
 use wend_core::{

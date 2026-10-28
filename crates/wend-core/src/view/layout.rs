@@ -53,22 +53,22 @@ pub(super) enum Slot {
 
 impl Slot {
     #[must_use]
-    pub const fn is_glyph(self) -> bool {
+    pub(super) const fn is_glyph(self) -> bool {
         matches!(self, Self::Glyph(_))
     }
 
     #[must_use]
-    pub const fn is_tail(self) -> bool {
+    pub(super) const fn is_tail(self) -> bool {
         matches!(self, Self::Tail { .. })
     }
 
     #[must_use]
-    pub const fn is_misc(self) -> bool {
+    pub(super) const fn is_misc(self) -> bool {
         matches!(self, Self::Misc(_))
     }
 
     #[must_use]
-    pub const fn is_blank(self) -> bool {
+    pub(super) const fn is_blank(self) -> bool {
         matches!(self, Self::Blank)
     }
 }
@@ -105,7 +105,7 @@ pub(super) struct Layout {
 
 impl Layout {
     #[must_use]
-    pub fn new(area: Area, scroll_offset: usize) -> Self {
+    pub(super) fn new(area: Area, scroll_offset: usize) -> Self {
         let mut layout = Self {
             slots: Vec::with_capacity(area.len()),
             row_meta: Vec::with_capacity(area.height()),

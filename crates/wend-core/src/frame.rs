@@ -1,6 +1,6 @@
 use crate::{area::Area, editor::Mode, grapheme::Grapheme};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Cell {
     pub grapheme: Grapheme,
     pub cursor: bool,
@@ -20,18 +20,6 @@ impl Cell {
             selected,
             covered: false,
             z_index,
-        }
-    }
-}
-
-impl Default for Cell {
-    fn default() -> Self {
-        Self {
-            grapheme: Grapheme::default(),
-            cursor: false,
-            selected: false,
-            covered: false,
-            z_index: 0,
         }
     }
 }
