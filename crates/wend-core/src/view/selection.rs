@@ -35,11 +35,6 @@ impl Selection {
         self.head
     }
 
-    #[must_use]
-    pub fn collapse(self) -> Self {
-        Self::point(self.head)
-    }
-
     /// Returns where the first selected grapheme starts.
     #[must_use]
     pub fn start(self) -> usize {

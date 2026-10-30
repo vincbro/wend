@@ -1,14 +1,16 @@
-use crate::{area::Area, editor::Mode, grapheme::Grapheme};
+use crate::{area::Area, grapheme::Grapheme};
 
+/// Holds what to draw in one terminal cell.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Cell {
     pub grapheme: Grapheme,
+    /// Set on every cell of the grapheme under the head, while `Frame::cursor` is the one
+    /// position where that grapheme starts.
     pub cursor: bool,
     pub selected: bool,
     /// Drawn by the wide grapheme to its left, so there is nothing to print. Printing
     /// into half of a wide grapheme makes the terminal blank all of it.
     pub covered: bool,
-    pub z_index: u8,
 }
 
 /// Locates a cell in the frame, which covers the whole terminal, not just one view.
@@ -33,30 +35,18 @@ impl CellPosition {
 pub struct Frame {
     area: Area,
     cells: Box<[Cell]>,
-    mode: Mode,
     cursor: Option<CellPosition>,
 }
 
 impl Frame {
     /// Creates a frame of blank cells.
     #[must_use]
-    pub fn new(area: Area, mode: Mode, cursor: Option<CellPosition>) -> Self {
+    pub fn new(area: Area, cursor: Option<CellPosition>) -> Self {
         Self {
             area,
             cells: vec![Cell::default(); area.len()].into_boxed_slice(),
-            mode,
             cursor,
         }
-    }
-
-    #[must_use]
-    pub fn area(&self) -> Area {
-        self.area
-    }
-
-    #[must_use]
-    pub fn mode(&self) -> Mode {
-        self.mode
     }
 
     /// Returns where the cursor is, none when the area is empty and can't show it.
@@ -87,13 +77,6 @@ impl Frame {
     /// # Panics
     ///
     /// If `pos` is outside the frame's area.
-    pub fn get_mut(&mut self, pos: CellPosition) -> &mut Cell {
-        &mut self.cells[self.index(pos)]
-    }
-
-    /// # Panics
-    ///
-    /// If `pos` is outside the frame's area.
     pub fn write(&mut self, pos: CellPosition, cell: Cell) {
         self.cells[self.index(pos)] = cell;
     }
@@ -103,9 +86,7 @@ impl Frame {
     /// If `row` is outside the frame's area.
     #[must_use]
     pub fn row(&self, row: u16) -> &[Cell] {
-        let start = u32::from(row) * u32::from(self.area.cols);
-        let end = start + u32::from(self.area.cols);
-        let range = start as usize..end as usize;
-        &self.cells[range]
+        let start = self.index(CellPosition::new(0, row));
+        &self.cells[start..start + self.area.width()]
     }
 }

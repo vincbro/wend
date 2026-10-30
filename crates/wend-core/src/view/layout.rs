@@ -47,6 +47,7 @@ impl SlotPosition {
     }
 }
 
+/// Says what one cell of the layout grid holds.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Slot {
     Glyph(Glyph),
@@ -72,12 +73,15 @@ impl ScrollOffset {
     }
 }
 
+/// Pairs a row of slots with its metadata.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Row<'a> {
     pub metadata: RowMetadata,
     pub slots: &'a [Slot],
 }
 
+/// Describes what a row shows. The byte range and `len` stop at its last used slot, so the
+/// gap left by a wide glyph that wrapped isn't part of the row.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RowMetadata {
     pub line: usize,
@@ -91,7 +95,8 @@ pub(super) struct RowMetadata {
 /// area or the scroll changes.
 ///
 /// `slots` always holds `area.len()` slots row by row, and `row_metadata` one entry per row,
-/// `None` for the rows past the end of the buffer.
+/// `None` for the rows past the end of the buffer. The cursor fields and `row_start_byte`
+/// only mean something during `rebuild`, where they track the next slot to write.
 #[derive(Debug, Clone)]
 pub(super) struct Layout {
     slots: Vec<Slot>,
@@ -197,7 +202,7 @@ impl Layout {
 
     #[must_use]
     pub(super) fn row(&self, index: usize) -> Option<Row<'_>> {
-        let start = index * self.area.width();
+        let start = self.slot_index(SlotPosition::new(0, index));
         let end = start + self.area.width();
         Some(Row {
             metadata: self.row_metadata.get(index).copied()??,
@@ -276,7 +281,7 @@ impl Layout {
 
     fn new_line(&mut self) {
         // The line ended before we skipped as many rows as asked, show its last row
-        self.stop_skipping();
+        self.skip_rows = 0;
         self.seal();
         self.line_cursor += 1;
     }
@@ -379,10 +384,6 @@ impl Layout {
         }
     }
 
-    fn stop_skipping(&mut self) {
-        self.skip_rows = 0;
-    }
-
     /// Seals the row and starts a wrapped one, its text begins at `wrap_col`.
     fn wrap(&mut self) {
         self.seal();
@@ -414,6 +415,8 @@ impl Layout {
         self.line_cursor = scroll_offset.line;
     }
 
+    /// Lays `buffer` out from `scroll_offset`. The row is clamped to the rows the first line
+    /// has, `scroll_offset()` returns where the layout really starts.
     pub(super) fn rebuild(&mut self, buffer: &Buffer, area: Area, scroll_offset: ScrollOffset) {
         self.resize(area, scroll_offset);
         // Nothing fits, and a row with no columns would never fill up
@@ -439,16 +442,11 @@ impl Layout {
         // even in an empty buffer, and text can be appended at the end
         if reached_end {
             let end = buffer.rope().byte_len();
-            self.write(Slot::Glyph(Glyph::new(
-                end,
-                end + 1,
-                0,
-                Grapheme::from_char(' '),
-            )));
+            self.write(Slot::Glyph(Glyph::new(end, end + 1, 0, Grapheme::blank())));
         }
 
         // The buffer ended before we skipped as many rows as asked, show its last row
-        self.stop_skipping();
+        self.skip_rows = 0;
         if self.col_cursor > 0 {
             self.seal();
         }

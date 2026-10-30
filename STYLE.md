@@ -100,7 +100,7 @@ These are allowed in variables, fields, functions and parameters:
 | `c` | a `char` |
 | `i`, `j`, `n`, `x`, `y` | counters and coordinates |
 | `pos`, `col`, `cols`, `row`, `rows` | positions and terminal coordinates |
-| `min`, `max`, `prev`, `next` | bounds and neighbours |
+| `min`, `max`, `prev`, `next` | bounds and neighbors |
 
 Anything else is spelled out: `index` not `idx`, `value` not `val`, `result` not `res`.
 

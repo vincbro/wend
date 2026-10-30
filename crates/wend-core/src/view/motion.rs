@@ -86,70 +86,60 @@ impl View {
 
     /// Scrolls a page and returns where the head goes, none if it can't move.
     ///
-    /// Lands where moving up or down a row at a time would, a screen less one row.
+    /// Forward lands on the row that was last on screen, backward on the row that was first.
     fn page(&mut self, direction: Direction) -> Option<usize> {
         let row = match direction {
             Direction::Forward => self.page_forward()?,
             Direction::Backward => self.page_backward(),
         };
         let head = self.closest_glyph_start(row)?;
-        // Moving a row at a time stops on the first row that can't move, and leaves the
-        // selection as it was, a range included
+        // Already on the edge row, leave the selection as it was, a range included
         (head != self.selection.head()).then_some(head)
     }
 
     /// Scrolls down a page and returns the row the head lands on, none if no row shows text.
     fn page_forward(&mut self) -> Option<usize> {
-        // The terminal can report 0 rows
-        let bottom = self.rect.area.height().saturating_sub(1);
+        let bottom = self.bottom_row();
         let scrolled = self.scroll(Direction::Forward, bottom);
         let last = self.layout.last_row()?;
         if bottom - scrolled <= last {
             return Some(bottom - scrolled);
         }
 
-        // The buffer ends first. Row by row the head would stop on its last row, with the
-        // view scrolled no further than putting that row on the bottom margin.
+        // The buffer ends first, its last row is the last one on screen. Undo the scroll so
+        // the view only moves as far as the margin pulls it.
         self.scroll(Direction::Backward, (bottom - last).min(scrolled));
         self.layout.last_row()
     }
 
     /// Scrolls up a page and returns the row the head lands on.
     fn page_backward(&mut self) -> usize {
-        // The terminal can report 0 rows
-        let bottom = self.rect.area.height().saturating_sub(1);
+        let bottom = self.bottom_row();
         let scrolled = self.scroll(Direction::Backward, bottom);
         // The top of the buffer stops the scroll short, the head stops on row 0 then
         scrolled
     }
 
     fn horizontal(&self, direction: Direction) -> Option<usize> {
-        let pos = self.layout.find_byte(self.selection.head())?;
+        let pos = self.head_position()?;
         if let Some(glyph) = self.layout.step(pos, direction) {
             return Some(glyph.from_byte);
         }
 
         // At the edge of the row, only continue if the line wrapped onto the next row
-        let neighbour = match direction {
-            Direction::Forward => pos.row + 1,
-            Direction::Backward => pos.row.checked_sub(1)?,
-        };
-        if self.layout.row(neighbour)?.metadata.line != self.layout.row(pos.row)?.metadata.line {
+        let neighbor = neighbor_row(pos.row, direction)?;
+        if self.layout.row(neighbor)?.metadata.line != self.layout.row(pos.row)?.metadata.line {
             return None;
         }
-        // Forward lands on the neighbour's first glyph, backward on its last
+        // Forward lands on the neighbor's first glyph, backward on its last
         self.layout
-            .edge_glyph(neighbour, direction)
+            .edge_glyph(neighbor, direction)
             .map(|glyph| glyph.from_byte)
     }
 
     fn vertical(&self, direction: Direction) -> Option<usize> {
-        let pos = self.layout.find_byte(self.selection.head())?;
-        let row = match direction {
-            Direction::Forward => pos.row + 1,
-            Direction::Backward => pos.row.checked_sub(1)?,
-        };
-        self.closest_glyph_start(row)
+        let pos = self.head_position()?;
+        self.closest_glyph_start(neighbor_row(pos.row, direction)?)
     }
 
     /// Returns the glyph on `row` at the column up and down aim for, or the closest one to it
@@ -173,11 +163,7 @@ impl View {
             return start;
         }
 
-        let end = if line < rope.line_len() {
-            start + rope.line(line).byte_len()
-        } else {
-            rope.byte_len()
-        };
+        let end = self.line_end(line);
         // An empty line, stay on its line break
         if end == start {
             return start;
@@ -218,11 +204,10 @@ impl View {
 
     /// Selects from the head back through any separators and the word before them.
     fn word_backward(&self) -> Option<Selection> {
-        let rope = self.buffer.rope();
-        let end = self
-            .grapheme_end(self.selection.head())
-            .min(rope.byte_len());
-        let mut graphemes = rope
+        let end = self.clamped_grapheme_end(self.selection.head());
+        let mut graphemes = self
+            .buffer
+            .rope()
             .byte_slice(..end)
             .graphemes()
             .rev()
@@ -242,6 +227,14 @@ impl View {
             head = take_run(&mut graphemes, word, byte);
         }
         Some(Selection::new(anchor, head))
+    }
+}
+
+/// Returns the row next to `row`, none above the first.
+fn neighbor_row(row: usize, direction: Direction) -> Option<usize> {
+    match direction {
+        Direction::Forward => Some(row + 1),
+        Direction::Backward => row.checked_sub(1),
     }
 }
 
@@ -313,36 +306,45 @@ mod tests {
     }
 
     #[test]
-    fn page_lands_where_moving_a_row_at_a_time_does() {
-        assert_pages_like_rows(Direction::Forward);
-        assert_pages_like_rows(Direction::Backward);
+    fn page_lands_on_the_edge_row_of_the_screen() {
+        assert_pages_onto_edge_row(Direction::Forward);
+        assert_pages_onto_edge_row(Direction::Backward);
     }
 
-    /// Pages one view and moves another a row at a time, from the far end of the buffer,
-    /// checking both stay in the same place.
-    fn assert_pages_like_rows(direction: Direction) {
+    /// Pages from the far end of the buffer to the other, checking every press lands on the
+    /// row that was last or first on screen before it.
+    fn assert_pages_onto_edge_row(direction: Direction) {
         // Wrapped, short and empty lines, a page crosses all of them
-        let text = "a line that wraps twice\nb\n\n\tc\n".repeat(20);
-        let mut paged = tests::view(&text, 8, 7);
-        let mut stepped = tests::view(&text, 8, 7);
+        let text = "a line that wraps twice\nb\n\n\tc\n".repeat(5);
+        let mut view = tests::view(&text, 8, 7);
         if direction == Direction::Backward {
-            paged.move_selection(Motion::File(Direction::Forward), false);
-            stepped.move_selection(Motion::File(Direction::Forward), false);
+            view.move_selection(Motion::File(Direction::Forward), false);
         }
 
         // Far enough to run into the other end of the buffer
         for page in 0..30 {
-            paged.move_selection(Motion::Page(direction), false);
-            // 7 rows high, a page is 6 rows
-            for _ in 0..6 {
-                stepped.move_selection(Motion::Vertical(direction), false);
-            }
-            assert_eq!(
-                (paged.selection, paged.scroll_offset),
-                (stepped.selection, stepped.scroll_offset),
-                "page {page} {direction:?}"
+            let edge_row = match direction {
+                Direction::Forward => view.layout.last_row().unwrap(),
+                Direction::Backward => 0,
+            };
+            let edge = view.layout.row(edge_row).unwrap().metadata;
+            view.move_selection(Motion::Page(direction), false);
+            assert!(
+                (edge.from_byte..edge.to_byte).contains(&view.selection.head()),
+                "page {page} {direction:?} lands on the edge row"
             );
         }
+
+        let head = view.selection.head();
+        let reached_far_end = match direction {
+            Direction::Forward => head == text.len(),
+            // The first row is 8 bytes, the head keeps the column it aims for
+            Direction::Backward => head < 8,
+        };
+        assert!(
+            reached_far_end,
+            "paging reaches the far end, stopped on {head}"
+        );
     }
 
     #[test]

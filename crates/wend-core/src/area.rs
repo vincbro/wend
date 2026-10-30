@@ -21,18 +21,13 @@ impl Area {
     }
 
     #[must_use]
-    pub fn len_u32(&self) -> u32 {
-        u32::from(self.cols) * u32::from(self.rows)
-    }
-
-    #[must_use]
     pub fn len(&self) -> usize {
         self.width() * self.height()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len_u32() == 0
+        self.len() == 0
     }
 
     #[must_use]

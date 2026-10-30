@@ -8,5 +8,3 @@ pub mod editor;
 pub mod frame;
 pub mod grapheme;
 pub mod view;
-
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");

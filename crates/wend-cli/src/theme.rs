@@ -12,6 +12,12 @@ pub(crate) struct Theme {
     pub(crate) cursor_background: Color,
 }
 
+const FOREGROUND: Color = Color::Rgb {
+    r: 0xc9,
+    g: 0xc7,
+    b: 0xcd,
+};
+
 /// Mellow by Rohit K Viswanath, the palette and choices of helix's `mellow.toml`.
 pub(crate) const MELLOW: Theme = Theme {
     background: Color::Rgb {
@@ -19,28 +25,16 @@ pub(crate) const MELLOW: Theme = Theme {
         g: 0x16,
         b: 0x17,
     },
-    foreground: Color::Rgb {
-        r: 0xc9,
-        g: 0xc7,
-        b: 0xcd,
-    },
+    foreground: FOREGROUND,
     // gray03, helix leaves the text as is so it keeps fg
     selection_background: Color::Rgb {
         r: 0x3e,
         g: 0x3e,
         b: 0x43,
     },
-    selection_foreground: Color::Rgb {
-        r: 0xc9,
-        g: 0xc7,
-        b: 0xcd,
-    },
+    selection_foreground: FOREGROUND,
     // fg on gray04, helix only sets the cursor's bg
-    cursor_foreground: Color::Rgb {
-        r: 0xc9,
-        g: 0xc7,
-        b: 0xcd,
-    },
+    cursor_foreground: FOREGROUND,
     cursor_background: Color::Rgb {
         r: 0x57,
         g: 0x57,

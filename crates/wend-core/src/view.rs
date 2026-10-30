@@ -35,8 +35,7 @@ pub struct View {
     layout_dirty: bool,
     selection: Selection,
 
-    scroll_offset: ScrollOffset,
-    scroll_marign: usize,
+    scroll_margin: usize,
     desired_col: usize,
 }
 
@@ -50,8 +49,7 @@ impl View {
             layout_dirty: true,
             selection: Selection::point(0),
 
-            scroll_offset: ScrollOffset::default(),
-            scroll_marign: 10,
+            scroll_margin: 10,
             desired_col: 0,
         }
     }
@@ -60,8 +58,13 @@ impl View {
     /// the area is empty. The area comes from the terminal, which can report no size at all.
     pub fn cursor_position(&mut self) -> Option<CellPosition> {
         self.ensure_cursor_visible();
-        let pos = self.layout.find_byte(self.selection.head())?;
+        let pos = self.head_position()?;
         Some(self.cell_position(pos))
+    }
+
+    /// Returns the slot the head is in, none if it is off screen.
+    fn head_position(&self) -> Option<SlotPosition> {
+        self.layout.find_byte(self.selection.head())
     }
 
     /// Returns where a slot of the layout ends up in the frame.
@@ -112,6 +115,12 @@ impl View {
             .map_or_else(|| self.rope_grapheme_end(start), |glyph| glyph.to_byte)
     }
 
+    /// Returns where the grapheme starting at `start` ends, inside the text even for the end
+    /// of buffer slot.
+    fn clamped_grapheme_end(&self, start: usize) -> usize {
+        self.grapheme_end(start).min(self.buffer.rope().byte_len())
+    }
+
     fn rope_grapheme_end(&self, start: usize) -> usize {
         let len = self
             .buffer
@@ -125,10 +134,7 @@ impl View {
 
     /// Returns the bytes the selection covers, from its first grapheme through its last.
     fn selection_range(&self) -> ops::Range<usize> {
-        let end = self
-            .grapheme_end(self.selection.end())
-            .min(self.buffer.rope().byte_len());
-        self.selection.start()..end
+        self.selection.start()..self.clamped_grapheme_end(self.selection.end())
     }
 
     /// The only way the selection changes. Snaps both ends to graphemes, scrolls so the
@@ -146,7 +152,7 @@ impl View {
 
     /// Makes the column the head is on the one up and down aim for.
     fn sync_desired_col(&mut self) {
-        if let Some(pos) = self.layout.find_byte(self.selection.head()) {
+        if let Some(pos) = self.head_position() {
             self.desired_col = pos.col;
         }
     }
@@ -199,18 +205,22 @@ impl View {
 
     /// Opens a new line below the head's line and puts the cursor on it.
     pub fn new_line(&mut self) {
-        let rope = self.buffer.rope();
-        let line = rope.line_of_byte(self.selection.head());
-        // The end of the line's text, before its line break
-        let line_end = if line < rope.line_len() {
-            rope.byte_of_line(line) + rope.line(line).byte_len()
-        } else {
-            rope.byte_len()
-        };
+        let line = self.buffer.rope().line_of_byte(self.selection.head());
+        let line_end = self.line_end(line);
 
         self.edit(line_end..line_end, "\n");
         self.set_selection(Selection::point(line_end + 1), ColumnPolicy::Sync);
         self.check_invariants();
+    }
+
+    /// Returns where the text of `line` ends, before its line break.
+    fn line_end(&self, line: usize) -> usize {
+        let rope = self.buffer.rope();
+        if line < rope.line_len() {
+            rope.byte_of_line(line) + rope.line(line).byte_len()
+        } else {
+            rope.byte_len()
+        }
     }
 
     /// Throws away every edit since the file was last loaded or saved.
@@ -226,11 +236,16 @@ impl View {
         self.buffer.save()
     }
 
+    /// Returns the index of the view's last row.
+    fn bottom_row(&self) -> usize {
+        // The terminal can report 0 rows
+        self.rect.area.height().saturating_sub(1)
+    }
+
     /// Returns how many rows to keep between the head and the top or bottom of the view, at
     /// most half of it so the head can always sit outside both margins.
     fn margin(&self) -> usize {
-        self.scroll_marign
-            .min(self.rect.area.height().saturating_sub(1) / 2)
+        self.scroll_margin.min(self.bottom_row() / 2)
     }
 
     fn ensure_cursor_visible(&mut self) {
@@ -260,14 +275,14 @@ impl View {
     /// `byte` shows up. A jump never passes it, the margin pulls it into place below.
     fn jump_to(&mut self, byte: usize) {
         let height = self.rect.area.height();
-        self.scroll_offset = ScrollOffset::new(self.buffer.rope().line_of_byte(byte), 0);
-        self.rebuild();
+        self.rebuild_at(ScrollOffset::new(self.buffer.rope().line_of_byte(byte), 0));
         while self.layout.find_byte(byte).is_none() {
-            let prev_offset = self.scroll_offset;
-            self.scroll_offset =
-                ScrollOffset::new(prev_offset.line, prev_offset.row + height.max(1));
-            self.rebuild();
-            if self.scroll_offset == prev_offset {
+            let prev_offset = self.layout.scroll_offset();
+            self.rebuild_at(ScrollOffset::new(
+                prev_offset.line,
+                prev_offset.row + height.max(1),
+            ));
+            if self.layout.scroll_offset() == prev_offset {
                 break;
             }
         }
@@ -283,8 +298,7 @@ impl View {
             Direction::Backward => self.offset_above(rows),
         };
         if scrolled > 0 {
-            self.scroll_offset = scroll_offset;
-            self.rebuild();
+            self.rebuild_at(scroll_offset);
         }
         scrolled
     }
@@ -295,13 +309,13 @@ impl View {
         let scroll_offset = self
             .layout
             .offset_of_row(rows)
-            .unwrap_or(self.scroll_offset);
+            .unwrap_or(self.layout.scroll_offset());
         (scroll_offset, rows)
     }
 
     /// Returns the scroll offset `rows` rows up, and how many rows that is.
     fn offset_above(&self, rows: usize) -> (ScrollOffset, usize) {
-        let ScrollOffset { mut line, mut row } = self.scroll_offset;
+        let ScrollOffset { mut line, mut row } = self.layout.scroll_offset();
         let mut left = rows;
         // A line at a time, onto the last row of the line above
         while left > row {
@@ -318,18 +332,19 @@ impl View {
     /// Rebuilds the layout if anything it depends on changed since the last rebuild.
     fn refresh_layout(&mut self) {
         if self.layout_dirty {
-            self.rebuild();
+            self.rebuild_at(self.layout.scroll_offset());
         }
     }
 
-    fn rebuild(&mut self) {
+    fn rebuild_at(&mut self, scroll_offset: ScrollOffset) {
         // Edits and reverts can make the buffer shorter than where we scrolled to, the
         // layout clamps the row the same way
-        let ScrollOffset { line, row } = self.scroll_offset;
-        self.scroll_offset = ScrollOffset::new(line.min(self.buffer.rope().line_len()), row);
-        self.layout
-            .rebuild(&self.buffer, self.rect.area, self.scroll_offset);
-        self.scroll_offset = self.layout.scroll_offset();
+        let line = scroll_offset.line.min(self.buffer.rope().line_len());
+        self.layout.rebuild(
+            &self.buffer,
+            self.rect.area,
+            ScrollOffset::new(line, scroll_offset.row),
+        );
         self.layout_dirty = false;
     }
 
@@ -339,12 +354,12 @@ impl View {
         self.layout_dirty = true;
     }
 
+    /// Shows `new_buffer` from its start and returns the buffer shown until now.
     pub fn open_buffer(&mut self, mut new_buffer: Buffer) -> Buffer {
         mem::swap(&mut new_buffer, &mut self.buffer);
         // The old selection and scroll are byte and line offsets into the old buffer
-        self.scroll_offset = ScrollOffset::default();
         self.desired_col = 0;
-        self.layout_dirty = true;
+        self.rebuild_at(ScrollOffset::default());
         self.set_selection(Selection::point(0), ColumnPolicy::Sync);
         new_buffer
     }
@@ -367,7 +382,7 @@ impl View {
             return;
         }
         assert!(
-            !self.layout_dirty && self.layout.find_byte(self.selection.head()).is_some(),
+            !self.layout_dirty && self.head_position().is_some(),
             "ensure_cursor_visible rebuilds the layout and scrolls the head on screen"
         );
         assert!(
@@ -377,6 +392,11 @@ impl View {
         );
     }
 
+    /// Writes the view's cells into `frame`, leaving the rest of it alone.
+    ///
+    /// # Panics
+    ///
+    /// If the view's rect reaches outside `frame`.
     pub fn render(&mut self, frame: &mut Frame) {
         self.refresh_layout();
         let selected = self.selection_range();
@@ -388,7 +408,7 @@ impl View {
     /// The cell the slot at `pos` renders as. `selected` is the selection's byte range.
     fn cell(&self, slot: Slot, pos: SlotPosition, selected: &ops::Range<usize>) -> Cell {
         let blank = Cell {
-            grapheme: Grapheme::from_char(' '),
+            grapheme: Grapheme::blank(),
             ..Cell::default()
         };
         let Some(glyph) = self.layout.glyph(slot) else {
@@ -406,7 +426,7 @@ impl View {
         let (grapheme, covered) = match slot {
             Slot::Tail(head_index) => {
                 let offset = self.layout.slot_index(pos) - head_index;
-                (Grapheme::from_char(' '), offset < glyph.grapheme.width())
+                (Grapheme::blank(), offset < glyph.grapheme.width())
             }
             _ => (glyph.grapheme, false),
         };
@@ -416,7 +436,6 @@ impl View {
             cursor: glyph.to_range().contains(&self.selection.head()),
             selected: selected.contains(&glyph.from_byte),
             covered,
-            z_index: 0,
         }
     }
 }
@@ -424,7 +443,7 @@ impl View {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{area::Area, editor::Mode};
+    use crate::area::Area;
 
     pub(crate) fn view(text: &str, cols: u16, rows: u16) -> View {
         let mut view = View::new(Rect::new(0, 0, Area::new(cols, rows)));
@@ -502,7 +521,7 @@ pub(crate) mod tests {
     #[test]
     fn render_covers_wide_tails_only() {
         let mut view = view("a😀b\tc", 20, 2);
-        let mut frame = Frame::new(Area::new(20, 2), Mode::Normal, None);
+        let mut frame = Frame::new(Area::new(20, 2), None);
         view.render(&mut frame);
         let cell = |col: u16| frame.get(CellPosition::new(col, 0));
 
@@ -527,7 +546,7 @@ pub(crate) mod tests {
         for _ in 0..12 {
             view.move_selection(Motion::Vertical(Direction::Forward), false);
             let pos = view.layout.find_byte(view.selection.head()).unwrap();
-            rows.push((pos.row, view.scroll_offset));
+            rows.push((pos.row, view.layout.scroll_offset()));
         }
         // Down to the margin, then the head stays on it and the view follows row by row
         let expected: Vec<_> = (1..=12)
@@ -544,7 +563,7 @@ pub(crate) mod tests {
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         let pos = view.layout.find_byte(view.selection.head()).unwrap();
         assert_eq!(
-            (pos.row, view.scroll_offset),
+            (pos.row, view.layout.scroll_offset()),
             (2, ScrollOffset::new(0, 7)),
             "each step up scrolls one row, the head stays on the top margin"
         );
@@ -554,11 +573,10 @@ pub(crate) mod tests {
     fn scrolls_up_onto_the_last_row_of_the_line_above() {
         // Width 4: line 0 is "aaaa", "↩ a\n", line 1 is "b"
         let mut view = view("aaaaa\nb\nc\nd", 4, 3);
-        view.scroll_offset = ScrollOffset::new(1, 0);
-        view.rebuild();
+        view.rebuild_at(ScrollOffset::new(1, 0));
         assert_eq!(view.scroll(Direction::Backward, 1), 1, "line 0 is above");
         assert_eq!(
-            view.scroll_offset,
+            view.layout.scroll_offset(),
             ScrollOffset::new(0, 1),
             "onto the wrapped row of line 0, not its first row"
         );
@@ -568,7 +586,7 @@ pub(crate) mod tests {
             "line 0 has a row left"
         );
         assert_eq!(
-            view.scroll_offset,
+            view.layout.scroll_offset(),
             ScrollOffset::new(0, 0),
             "then up through line 0's rows"
         );
@@ -585,7 +603,7 @@ pub(crate) mod tests {
             "stops at the last row"
         );
         assert_eq!(
-            view.scroll_offset,
+            view.layout.scroll_offset(),
             ScrollOffset::new(1, 0),
             "past both rows of line 0"
         );
@@ -594,7 +612,7 @@ pub(crate) mod tests {
             2,
             "stops at the top of the buffer"
         );
-        assert_eq!(view.scroll_offset, ScrollOffset::new(0, 0));
+        assert_eq!(view.layout.scroll_offset(), ScrollOffset::new(0, 0));
     }
 
     #[test]

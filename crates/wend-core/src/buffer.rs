@@ -7,8 +7,6 @@ use std::{
 
 use crop::{Rope, RopeBuilder};
 
-use crate::grapheme::Grapheme;
-
 mod change;
 pub use change::Change;
 mod error;
@@ -118,14 +116,6 @@ impl Buffer {
         self.clean = self.rope.clone();
         self.dirty = false;
         Ok(())
-    }
-
-    /// # Panics
-    ///
-    /// If `range` is out of bounds or doesn't fall on char boundaries.
-    #[must_use]
-    pub fn grapheme(&self, range: ops::Range<usize>) -> Grapheme {
-        Grapheme::from_bytes_iter(self.rope.byte_slice(range).bytes())
     }
 }
 

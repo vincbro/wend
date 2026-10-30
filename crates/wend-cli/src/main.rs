@@ -111,9 +111,9 @@ fn main() -> Result<()> {
         .open_file(Path::new(&args.file))
         .with_context(|| format!("failed to open {}", args.file))?;
     let mut frame = editor.frame();
-    render_frame(&frame, &mut stdout).context("failed to draw the frame")?;
+    draw(&mut editor, &mut frame, &mut stdout)?;
 
-    // Set by the first key of a two key binding, like the g in gs
+    // Set by the first key of a two-key binding, like the g in gs
     let mut pending_g = false;
 
     loop {
@@ -121,10 +121,14 @@ fn main() -> Result<()> {
         if handle_event(&mut editor, &event, &mut pending_g).is_break() {
             break;
         }
-        editor.update_frame(&mut frame);
-        render_frame(&frame, &mut stdout).context("failed to draw the frame")?;
+        draw(&mut editor, &mut frame, &mut stdout)?;
     }
     Ok(())
+}
+
+fn draw(editor: &mut Editor, frame: &mut Frame, writer: &mut impl Write) -> Result<()> {
+    editor.update_frame(frame);
+    render_frame(frame, writer).context("failed to draw the frame")
 }
 
 fn handle_event(editor: &mut Editor, event: &Event, pending_g: &mut bool) -> ControlFlow<()> {
@@ -215,7 +219,7 @@ fn g_motion(code: KeyCode) -> Option<Motion> {
 }
 
 fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
-    // Terminals that support it hold the frame back until it is whole, so a half drawn
+    // Terminals that support it hold the frame back until it is whole, so a half-drawn
     // one never shows. The others ignore it.
     writer.queue(terminal::BeginSynchronizedUpdate)?;
     writer.queue(cursor::MoveTo(0, 0))?;

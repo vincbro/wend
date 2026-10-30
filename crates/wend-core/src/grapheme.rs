@@ -3,6 +3,8 @@ use unicode_width::UnicodeWidthStr;
 /// Sets how many bytes a grapheme can hold inline, longer ones become U+FFFD.
 const CAPACITY: u8 = 31;
 
+const REPLACEMENT: &str = "\u{FFFD}";
+
 /// Stores a grapheme inline, so a cell never allocates.
 ///
 /// The first `len` bytes are always valid UTF-8, which `as_str` relies on.
@@ -18,6 +20,12 @@ impl Grapheme {
         let mut buf = [0u8; 4];
         let bytes = c.encode_utf8(&mut buf).bytes();
         Self::from_bytes_iter(bytes)
+    }
+
+    /// Creates the single space that blank cells show.
+    #[must_use]
+    pub(crate) fn blank() -> Self {
+        Self::from_char(' ')
     }
 
     /// Copies a grapheme in, anything too long or not valid UTF-8 becomes U+FFFD.
@@ -55,7 +63,7 @@ impl Grapheme {
 
     /// Returns the grapheme in a form that is safe to print to a terminal.
     ///
-    /// Controls and zero width graphemes are swapped for a single column stand in,
+    /// Controls and zero width graphemes are swapped for a single column stand-in,
     /// everything else is printed as is, its width matches `UnicodeWidthStr::width`.
     #[must_use]
     pub fn as_str_sanitize(&self) -> &str {
@@ -75,20 +83,20 @@ impl Grapheme {
                 '\0'..='\u{1F}' => CONTROL_PICTURES[c as usize],
                 '\u{7F}' => "␡",
                 // C1, some terminals treat 0x9B as CSI
-                _ => "\u{FFFD}",
+                _ => REPLACEMENT,
             };
         }
 
         // Bidi controls, zero width chars, BOM, lone combining marks, ...
         if text.width() == 0 {
-            return "\u{FFFD}";
+            return REPLACEMENT;
         }
 
         text
     }
 }
 
-/// Lists the control pictures (U+2400..U+241F), a visible single column stand in for C0.
+/// Lists the control pictures (U+2400..U+241F), a visible single column stand-in for C0.
 const CONTROL_PICTURES: [&str; 32] = [
     "␀", "␁", "␂", "␃", "␄", "␅", "␆", "␇", "␈", "␉", "␊", "␋", "␌", "␍", "␎", "␏", "␐", "␑", "␒",
     "␓", "␔", "␕", "␖", "␗", "␘", "␙", "␚", "␛", "␜", "␝", "␞", "␟",

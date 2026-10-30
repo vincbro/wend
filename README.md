@@ -57,6 +57,26 @@ Planned: something like [99](https://github.com/ThePrimeagen/99). Select some co
 
 The core never blocks. It takes in events (keys, file changes, sync updates, language server messages), updates its state and emits a snapshot of what the screen should look like. The frontend feeds it input and draws the latest snapshot. Anything slow (disk, network, language servers) runs elsewhere and reports back as just another event.
 
+## Keys
+
+What works today. Normal and select mode share a keymap, select only makes motions extend the selection.
+
+| Key       | Does                                    |
+| --------- | --------------------------------------- |
+| `h` `l`   | one grapheme left, right                |
+| `j` `k`   | one row down, up                        |
+| `w` `b`   | select the next, previous word          |
+| `H` `L`   | start, end of the line                  |
+| `J` `K`   | to the last, first row on screen        |
+| `gs` `ge` | start, end of the file                  |
+| `i`       | insert mode, `Esc` to leave             |
+| `o`       | open a line below and insert            |
+| `d`       | delete the selection                    |
+| `u`       | revert to the last save                 |
+| `s`       | save                                    |
+| `v`       | toggle select mode                      |
+| `q`       | quit                                    |
+
 ## Alternatives
 
 wend borrows a lot from [Helix](https://helix-editor.com), [Neovim](https://neovim.io) and [Zed](https://zed.dev). If wend isn't for you, one of those probably is.

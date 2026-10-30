@@ -7,6 +7,16 @@ use crate::{
     view::View,
 };
 
+/// The widest the view gets, wider terminals center it.
+const MAX_VIEW_COLS: u16 = 100;
+
+/// Returns where the view goes in a terminal of `area`.
+fn view_rect(area: Area) -> Rect {
+    let width = area.cols.min(MAX_VIEW_COLS);
+    let left_col = (area.cols - width) / 2;
+    Rect::new(left_col, 0, Area::new(width, area.rows))
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
     Normal,
@@ -30,14 +40,12 @@ pub struct Editor {
 impl Editor {
     #[must_use]
     pub fn new(area: Area) -> Self {
-        let mut editor = Self {
+        Self {
             area,
             buffers: vec![],
-            view: View::new(Rect::new(0, 0, area)),
+            view: View::new(view_rect(area)),
             mode: Mode::Normal,
-        };
-        editor.resize(area);
-        editor
+        }
     }
 
     #[must_use]
@@ -54,6 +62,8 @@ impl Editor {
         self.mode
     }
 
+    /// Shows the file at `path`, reusing its buffer if it's among the open buffers. The buffer
+    /// shown before joins them.
     pub fn open_file(&mut self, path: &Path) -> buffer::Result<()> {
         let buffer = if let Some(index) = self
             .buffers
@@ -68,33 +78,33 @@ impl Editor {
         Ok(())
     }
 
+    /// Builds a new frame of the terminal's size, with the cursor where the head is now.
     pub fn frame(&mut self) -> Frame {
         // Scroll to the cursor before rendering, so the frame shows where the cursor is
         let cursor = self.view.cursor_position();
-        let mut frame = Frame::new(self.area, self.mode, cursor);
+        let mut frame = Frame::new(self.area, cursor);
         self.update_frame(&mut frame);
         frame
     }
 
+    /// Redraws the view into `frame`, reusing its cells. `Frame::cursor` stays as it was, only
+    /// `frame` gives a new one.
+    ///
+    /// # Panics
+    ///
+    /// If `frame` is smaller than the view reaches, as one from before a resize can be.
     pub fn update_frame(&mut self, frame: &mut Frame) {
         self.view.render(frame);
     }
 
+    /// Fits the editor to a new terminal size, keeping the view capped and centered.
     pub fn resize(&mut self, area: Area) {
         self.area = area;
-        let width = area.cols.min(100);
-        let left_col = (area.cols - width) / 2;
-        let view_area = Area::new(width, area.rows);
-        self.view.resize(Rect::new(left_col, 0, view_area));
+        self.view.resize(view_rect(area));
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
-    }
-
-    #[must_use]
-    pub fn is_normal(&self) -> bool {
-        matches!(self.mode, Mode::Normal)
     }
 
     #[must_use]

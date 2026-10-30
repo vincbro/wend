@@ -115,7 +115,7 @@ verbose_file_reads = "warn"
 use_self = "warn" # `Self { .. }`, not the type's name, inside its impl
 
 [profile.dev.package."*"]
-# Dependencies optimised in dev builds: an editor is unusable at opt-level 0.
+# Dependencies optimized in dev builds: an editor is unusable at opt-level 0.
 opt-level = 2
 
 # What we ship: `cargo build --profile dist`. Kept out of `release` so
