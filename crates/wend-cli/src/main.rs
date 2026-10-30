@@ -16,9 +16,8 @@ use crossterm::{
     terminal::{self},
 };
 use wend_core::{
-    area::Area,
     editor::{Editor, Mode},
-    frame::{Cell, CellPosition, Frame},
+    frame::{Area, Cell, CellPosition, Frame},
     view::{Direction, Motion},
 };
 

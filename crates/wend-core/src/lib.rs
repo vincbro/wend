@@ -2,9 +2,7 @@
 //! terminal attached. The terminal frontend is the `wend` crate, in
 //! `crates/wend-cli`.
 
-pub mod area;
 pub mod buffer;
 pub mod editor;
 pub mod frame;
-pub mod grapheme;
 pub mod view;

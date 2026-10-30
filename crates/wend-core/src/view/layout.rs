@@ -2,7 +2,11 @@ use std::ops;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::{area::Area, buffer::Buffer, grapheme::Grapheme, view::Direction};
+use crate::{
+    buffer::Buffer,
+    frame::{Area, Grapheme},
+    view::Direction,
+};
 
 const TAB_WIDTH: usize = 4;
 

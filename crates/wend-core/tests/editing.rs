@@ -1,8 +1,7 @@
 use wend_core::{
-    area::Area,
     buffer::Buffer,
     editor::{Editor, Mode},
-    frame::{CellPosition, Frame},
+    frame::{Area, CellPosition, Frame},
     view::{Direction, Motion},
 };
 

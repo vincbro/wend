@@ -1,9 +1,8 @@
 use std::path::Path;
 
 use crate::{
-    area::{Area, Rect},
     buffer::{self, Buffer},
-    frame::Frame,
+    frame::{Area, Frame, Rect},
     view::View,
 };
 

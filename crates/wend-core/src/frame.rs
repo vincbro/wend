@@ -1,4 +1,8 @@
-use crate::{area::Area, grapheme::Grapheme};
+mod area;
+pub(crate) use area::terminal_coordinate;
+pub use area::{Area, Rect};
+mod grapheme;
+pub use grapheme::Grapheme;
 
 /// Holds what to draw in one terminal cell.
 #[derive(Debug, Clone, Copy, Default)]

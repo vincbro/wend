@@ -11,10 +11,9 @@ use std::{
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use wend_core::{
-    area::Area,
     buffer::Buffer,
     editor::Editor,
-    frame::Frame,
+    frame::{Area, Frame},
     view::{Direction, Motion},
 };
 
