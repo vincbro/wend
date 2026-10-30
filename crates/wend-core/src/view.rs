@@ -213,10 +213,14 @@ impl View {
         self.buffer.save()
     }
 
-    fn ensure_cursor_visible(&mut self) {
-        let height = self.rect.area.height();
-        let margin = self.scroll_marign.min(height.saturating_sub(1) / 2);
+    /// How many rows to keep between the head and the top or bottom of the view, at most
+    /// half of it so the head can always sit outside both margins.
+    fn margin(&self) -> usize {
+        self.scroll_marign
+            .min(self.rect.area.height().saturating_sub(1) / 2)
+    }
 
+    fn ensure_cursor_visible(&mut self) {
         // The buffer or area might have changed since the last rebuild
         self.refresh_layout();
 
@@ -224,20 +228,18 @@ impl View {
         if self.layout.find_byte(head).is_none() {
             self.jump_to(head);
         }
+        // Only an empty area has nowhere to show the head
+        let Some(SlotPosition { row, .. }) = self.layout.find_byte(head) else {
+            return;
+        };
 
-        // One row at a time, so the head moves one row per step and stops right at the
-        // margin. The margin is at most half the screen, the head can't be in both.
-        while let Some(SlotPosition { row, .. }) = self.layout.find_byte(head) {
-            let direction = if row < margin {
-                Direction::Backward
-            } else if row + margin >= height {
-                Direction::Forward
-            } else {
-                break;
-            };
-            if !self.scroll_row(direction) {
-                break;
-            }
+        // Scrolls just far enough that the head stops right at the margin
+        let height = self.rect.area.height();
+        let margin = self.margin();
+        if row + margin >= height {
+            self.scroll(Direction::Forward, row + margin + 1 - height);
+        } else if row < margin {
+            self.scroll(Direction::Backward, margin - row);
         }
     }
 
@@ -258,31 +260,46 @@ impl View {
         }
     }
 
-    /// Scrolls one row, false if there is nowhere further to go.
-    fn scroll_row(&mut self, direction: Direction) -> bool {
-        let prev_offset = self.scroll_offset;
-        let ScrollOffset { line, row } = prev_offset;
-        match direction {
-            Direction::Forward => {
-                self.scroll_offset = ScrollOffset::new(line, row + 1);
-                self.rebuild();
-                // Clamped back, we were on the line's last row, start the next line
-                if self.scroll_offset == prev_offset {
-                    self.scroll_offset = ScrollOffset::new(line + 1, 0);
-                    self.rebuild();
-                }
-            }
-            Direction::Backward => {
-                self.scroll_offset = match row.checked_sub(1) {
-                    Some(row) => ScrollOffset::new(line, row),
-                    // The layout clamps it onto the last row of the line above
-                    None if line > 0 => ScrollOffset::new(line - 1, usize::MAX),
-                    None => return false,
-                };
-                self.rebuild();
-            }
+    /// Scrolls up to `rows` rows with a single rebuild and returns how many it scrolled.
+    ///
+    /// Backward stops at the top of the buffer. Forward stops once the last row on
+    /// screen is on top, the rows past it aren't laid out.
+    fn scroll(&mut self, direction: Direction, rows: usize) -> usize {
+        let (scroll_offset, scrolled) = match direction {
+            Direction::Forward => self.offset_below(rows),
+            Direction::Backward => self.offset_above(rows),
+        };
+        if scrolled > 0 {
+            self.scroll_offset = scroll_offset;
+            self.rebuild();
         }
-        self.scroll_offset != prev_offset
+        scrolled
+    }
+
+    /// The scroll offset `rows` rows down, read from the layout, and how many rows that is.
+    fn offset_below(&self, rows: usize) -> (ScrollOffset, usize) {
+        let rows = rows.min(self.layout.last_row().unwrap_or(0));
+        let scroll_offset = self
+            .layout
+            .offset_of_row(rows)
+            .unwrap_or(self.scroll_offset);
+        (scroll_offset, rows)
+    }
+
+    /// The scroll offset `rows` rows up, and how many rows that is.
+    fn offset_above(&self, rows: usize) -> (ScrollOffset, usize) {
+        let ScrollOffset { mut line, mut row } = self.scroll_offset;
+        let mut left = rows;
+        // A line at a time, onto the last row of the line above
+        while left > row {
+            let Some(above) = line.checked_sub(1) else {
+                return (ScrollOffset::default(), rows - left + row);
+            };
+            left -= row + 1;
+            line = above;
+            row = Layout::last_row_of_line(&self.buffer, self.rect.area.cols, line);
+        }
+        (ScrollOffset::new(line, row - left), rows)
     }
 
     /// Rebuilds the layout if anything it depends on changed since the last rebuild.
@@ -507,19 +524,41 @@ pub(crate) mod tests {
         let mut view = view("aaaaa\nb\nc\nd", 4, 3);
         view.scroll_offset = ScrollOffset::new(1, 0);
         view.rebuild();
-        assert!(view.scroll_row(Direction::Backward));
+        assert_eq!(view.scroll(Direction::Backward, 1), 1);
         assert_eq!(
             view.scroll_offset,
             ScrollOffset::new(0, 1),
             "onto the wrapped row of line 0, not its first row"
         );
-        assert!(view.scroll_row(Direction::Backward));
+        assert_eq!(view.scroll(Direction::Backward, 1), 1);
         assert_eq!(
             view.scroll_offset,
             ScrollOffset::new(0, 0),
             "then up through line 0's rows"
         );
-        assert!(!view.scroll_row(Direction::Backward), "already at the top");
+        assert_eq!(view.scroll(Direction::Backward, 1), 0, "already at the top");
+    }
+
+    #[test]
+    fn scrolls_many_rows_at_once() {
+        // Width 4: line 0 is "aaaa", "↩ a\n", then one row per line
+        let mut view = view("aaaaa\nb\nc\nd\ne", 4, 3);
+        assert_eq!(
+            view.scroll(Direction::Forward, 3),
+            2,
+            "stops at the last row"
+        );
+        assert_eq!(
+            view.scroll_offset,
+            ScrollOffset::new(1, 0),
+            "past both rows of line 0"
+        );
+        assert_eq!(
+            view.scroll(Direction::Backward, 5),
+            2,
+            "stops at the top of the buffer"
+        );
+        assert_eq!(view.scroll_offset, ScrollOffset::new(0, 0));
     }
 
     #[test]

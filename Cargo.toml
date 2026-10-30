@@ -16,6 +16,7 @@ readme = "README.md"
 # `just bump` rewrites these with [workspace.package]; a mismatch fails to build.
 [workspace.dependencies]
 anyhow = { version = "1.0.104" }
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 crop = { version = "0.4.3", features = ["graphemes"] }
 crossterm = { version = "0.29.0" }
 lexopt = { version = "0.3.2" }

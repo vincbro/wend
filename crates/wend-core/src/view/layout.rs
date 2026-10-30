@@ -136,6 +136,42 @@ impl Layout {
         self.scroll_offset
     }
 
+    /// The scroll offset that puts `row` on top, none for a row past the end of the
+    /// buffer.
+    #[must_use]
+    pub(super) fn offset_of_row(&self, row: usize) -> Option<ScrollOffset> {
+        let line = self.row(row)?.meta.line;
+        // Lines only go down the rows, so the first row holding the line is where it starts
+        let first = self
+            .row_meta
+            .iter()
+            .position(|meta| meta.is_some_and(|meta| meta.line == line))?;
+        // The top line may be scrolled partway through already
+        let skipped = if first == 0 {
+            self.scroll_offset.row
+        } else {
+            0
+        };
+        Some(ScrollOffset::new(line, skipped + row - first))
+    }
+
+    /// The last row that shows text, none when nothing fits.
+    #[must_use]
+    pub(super) fn last_row(&self) -> Option<usize> {
+        self.row_meta.iter().rposition(Option::is_some)
+    }
+
+    /// The index of the last row `line` wraps onto when laid out `cols` wide.
+    #[must_use]
+    pub(super) fn last_row_of_line(buffer: &Buffer, cols: u16, line: usize) -> usize {
+        // On a one row grid, skipping all of the line's rows clamps onto its last
+        let area = Area::new(cols, 1);
+        let scroll_offset = ScrollOffset::new(line, usize::MAX);
+        let mut layout = Self::new(area, scroll_offset);
+        layout.rebuild(buffer, area, scroll_offset);
+        layout.scroll_offset().row
+    }
+
     /// The glyph a slot belongs to, following a tail to its glyph. None for markers and
     /// blanks.
     #[must_use]
@@ -479,6 +515,32 @@ mod tests {
         assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 0)));
         assert_eq!(layout.find_byte(0), None, "the skipped row is off screen");
         assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 1));
+    }
+
+    #[test]
+    fn offset_of_row_counts_wrapped_rows() {
+        // Width 4: "abcd", "↩ e\n", then "xy"
+        let layout = layout("abcde\nxy", 4, 4);
+        assert_eq!(layout.offset_of_row(1), Some(ScrollOffset::new(0, 1)));
+        assert_eq!(layout.offset_of_row(2), Some(ScrollOffset::new(1, 0)));
+        assert_eq!(layout.offset_of_row(3), None, "past the end of the buffer");
+
+        let layout = scrolled_layout("abcde\nxy", 4, 4, ScrollOffset::new(0, 1));
+        assert_eq!(
+            layout.offset_of_row(0),
+            Some(ScrollOffset::new(0, 1)),
+            "the top row keeps the rows already skipped"
+        );
+        assert_eq!(layout.offset_of_row(1), Some(ScrollOffset::new(1, 0)));
+        assert_eq!(layout.last_row(), Some(1));
+    }
+
+    #[test]
+    fn last_row_of_line_counts_wrapped_rows() {
+        // Width 4: line 0 is "abcd", "↩ e\n", line 1 is "xy"
+        let buffer = Buffer::from("abcde\nxy");
+        assert_eq!(Layout::last_row_of_line(&buffer, 4, 0), 1);
+        assert_eq!(Layout::last_row_of_line(&buffer, 4, 1), 0);
     }
 
     #[test]

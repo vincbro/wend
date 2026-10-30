@@ -52,6 +52,11 @@ doc:
 test:
     cargo test --workspace --locked
 
+# Time an editing session over growing files; criterion compares with the last
+# run. Extra args go to criterion: just bench [args]
+bench *args:
+    cargo bench -p wend-core --bench session -- {{ args }}
+
 # Fail on unused dependencies, or on any cargo-deny check in deny.toml:
 # advisories, licenses, dependencies not shared through the workspace, sources
 deps:

@@ -10,10 +10,22 @@ readme.workspace = true
 keywords = ["editor", "text-editor", "rope", "modal"]
 categories = ["text-editors"]
 
+[lib]
+# Skip libtest's bench harness, the benches use criterion.
+bench = false
+
 [dependencies]
 crop.workspace = true
 thiserror.workspace = true
 unicode-width.workspace = true
 
+[dev-dependencies]
+criterion.workspace = true
+
 [lints]
 workspace = true
+
+# A headless editing session timed over growing files: `just bench`.
+[[bench]]
+name = "session"
+harness = false

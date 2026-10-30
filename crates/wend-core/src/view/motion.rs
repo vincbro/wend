@@ -47,22 +47,23 @@ fn word_class(grapheme: &str) -> WordClass {
 impl View {
     /// Moves the selection. With `extend` the anchor stays and only the head moves.
     pub fn move_selection(&mut self, motion: Motion, extend: bool) {
-        if let Motion::Page(direction) = motion {
-            // One row at a time, so every step scrolls like a normal move would
-            let rows = self.rect.area.height().saturating_sub(1).max(1);
-            for _ in 0..rows {
-                self.move_selection(Motion::Vertical(direction), extend);
-            }
-            return;
-        }
-
         // Motions read the layout around the head, make sure both are current
         self.ensure_cursor_visible();
-        let Some(selection) = self.motion(motion, extend) else {
+        let moved = match motion {
+            Motion::Page(direction) => self.page(direction).map(Selection::point),
+            _ => self.motion(motion),
+        };
+        let Some(moved) = moved else {
             return;
         };
+
+        let selection = if extend {
+            Selection::new(self.selection.anchor(), moved.head())
+        } else {
+            moved
+        };
         let policy = match motion {
-            Motion::Vertical(_) => ColumnPolicy::Keep,
+            Motion::Vertical(_) | Motion::Page(_) => ColumnPolicy::Keep,
             _ => ColumnPolicy::Sync,
         };
         self.set_selection(selection, policy);
@@ -70,23 +71,62 @@ impl View {
     }
 
     /// Where a motion would put the selection, without moving it.
-    fn motion(&self, motion: Motion, extend: bool) -> Option<Selection> {
-        let moved = match motion {
+    fn motion(&self, motion: Motion) -> Option<Selection> {
+        Some(match motion {
             Motion::Horizontal(direction) => Selection::point(self.horizontal(direction)?),
             Motion::Vertical(direction) => Selection::point(self.vertical(direction)?),
             Motion::Line(direction) => Selection::point(self.line_edge(direction)),
             Motion::File(direction) => Selection::point(self.file_edge(direction)),
             Motion::Word(Direction::Forward) => self.word_forward()?,
             Motion::Word(Direction::Backward) => self.word_backward()?,
-            // Moves one row at a time through `move_selection`
+            // Scrolls the view, so it can't be worked out without moving
             Motion::Page(_) => return None,
-        };
-
-        Some(if extend {
-            Selection::new(self.selection.anchor(), moved.head())
-        } else {
-            moved
         })
+    }
+
+    /// Scrolls a page and returns where the head goes, none if it can't move.
+    ///
+    /// Lands where moving up or down a row at a time would, a screen less one row.
+    fn page(&mut self, direction: Direction) -> Option<usize> {
+        let rows = self.rect.area.height().saturating_sub(1).max(1);
+        let row = self.layout.find_byte(self.selection.head())?.row;
+        let row = match direction {
+            Direction::Forward => self.page_forward(row, rows)?,
+            Direction::Backward => self.page_backward(row, rows),
+        };
+        let head = self.closest_glyph_start(row)?;
+        // Moving a row at a time stops on the first row that can't move, and leaves the
+        // selection as it was, a range included
+        (head != self.selection.head()).then_some(head)
+    }
+
+    /// Scrolls for the head on `row` to move `rows` rows down. Returns the row it lands on.
+    fn page_forward(&mut self, row: usize, rows: usize) -> Option<usize> {
+        // Rows above the bottom margin are reached without scrolling
+        let bottom = self.rect.area.height() - self.margin() - 1;
+        let wanted = row + rows;
+        let scrolled = self.scroll(Direction::Forward, wanted.saturating_sub(bottom));
+        let last = self.layout.last_row()?;
+        if wanted - scrolled <= last {
+            return Some(wanted - scrolled);
+        }
+
+        // The buffer ends first. Row by row the head would stop on its last row, with the
+        // view scrolled no further than putting that row on the bottom margin.
+        self.scroll(
+            Direction::Backward,
+            bottom.saturating_sub(last).min(scrolled),
+        );
+        self.layout.last_row()
+    }
+
+    /// Scrolls for the head on `row` to move `rows` rows up. Returns the row it lands on.
+    fn page_backward(&mut self, row: usize, rows: usize) -> usize {
+        // Rows below the top margin are reached without scrolling
+        let scroll = (self.margin() + rows).saturating_sub(row).min(rows);
+        let scrolled = self.scroll(Direction::Backward, scroll);
+        // The top of the buffer stops the scroll short, the head stops on row 0 then
+        (row + scrolled).saturating_sub(rows)
     }
 
     fn horizontal(&self, direction: Direction) -> Option<usize> {
@@ -115,9 +155,13 @@ impl View {
             Direction::Forward => pos.row.checked_add(1)?,
             Direction::Backward => pos.row.checked_sub(1)?,
         };
-        let target = SlotPosition::new(self.desired_col, row);
+        self.closest_glyph_start(row)
+    }
 
-        // The column we aim for, or the closest glyph to it on a shorter row
+    /// The glyph on `row` at the column up and down aim for, or the closest one to it on a
+    /// shorter row.
+    fn closest_glyph_start(&self, row: usize) -> Option<usize> {
+        let target = SlotPosition::new(self.desired_col, row);
         let glyph = self
             .layout
             .glyph_at(target)
@@ -272,6 +316,48 @@ mod tests {
             Selection::new(4, 0),
             "over the newline onto foo"
         );
+    }
+
+    #[test]
+    fn page_lands_where_moving_a_row_at_a_time_does() {
+        assert_pages_like_rows(Direction::Forward);
+        assert_pages_like_rows(Direction::Backward);
+    }
+
+    /// Pages one view and moves another a row at a time, from the far end of the buffer,
+    /// checking both stay in the same place.
+    fn assert_pages_like_rows(direction: Direction) {
+        // Wrapped, short and empty lines, a page crosses all of them
+        let text = "a line that wraps twice\nb\n\n\tc\n".repeat(20);
+        let mut paged = view(&text, 8, 7);
+        let mut stepped = view(&text, 8, 7);
+        if direction == Direction::Backward {
+            paged.move_selection(Motion::File(Direction::Forward), false);
+            stepped.move_selection(Motion::File(Direction::Forward), false);
+        }
+
+        // Far enough to run into the other end of the buffer
+        for page in 0..30 {
+            paged.move_selection(Motion::Page(direction), false);
+            // 7 rows high, a page is 6 rows
+            for _ in 0..6 {
+                stepped.move_selection(Motion::Vertical(direction), false);
+            }
+            assert_eq!(
+                (paged.selection, paged.scroll_offset),
+                (stepped.selection, stepped.scroll_offset),
+                "page {page} {direction:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn page_that_cannot_move_keeps_the_selection() {
+        let mut view = view("foo bar\nbaz", 20, 5);
+        view.move_selection(Motion::Word(Direction::Forward), false);
+        let word = view.selection;
+        view.move_selection(Motion::Page(Direction::Backward), false);
+        assert_eq!(view.selection, word, "already on the top row");
     }
 
     #[test]

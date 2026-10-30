@@ -73,8 +73,12 @@ impl Editor {
         // Scroll to the cursor before rendering, so the frame shows where the cursor is
         let cursor = self.view.cursor_position();
         let mut frame = Frame::new(self.area, self.mode, cursor);
-        self.view.render(&mut frame);
+        self.update_frame(&mut frame);
         frame
+    }
+
+    pub fn update_frame(&mut self, frame: &mut Frame) {
+        self.view.render(frame);
     }
 
     pub fn resize(&mut self, area: Area) {
