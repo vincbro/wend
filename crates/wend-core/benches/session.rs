@@ -1,11 +1,15 @@
 //! A headless editing session, timed over files of growing size.
 //!
 //! It drives `Editor` the way a terminal client does: a key and then a frame.
-//! Each phase is its own group with one entry per file size.
+//! Each phase is its own group with one entry per file size, and reports the time of a
+//! single action, the frame after it included.
 
-use std::hint;
+use std::{
+    hint,
+    time::{Duration, Instant},
+};
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput};
 use wend_core::{
     area::Area,
     buffer::Buffer,
@@ -15,13 +19,13 @@ use wend_core::{
 };
 
 /// File sizes in bytes.
-const SIZES: [usize; 4] = [10_000, 100_000, 1_000_000, 10_000_000];
+const SIZES: [usize; 3] = [100_000, 1_000_000, 10_000_000];
 
 /// A common terminal size. The editor caps its view at 100 columns.
 const COLS: u16 = 120;
 const ROWS: u16 = 40;
 
-/// What the type phase types, and the delete phase deletes again.
+/// What the delete phase types first, and then deletes again.
 const TYPED: &str = "let typed = \"some text\";";
 
 /// Lines that look like source code, cycled to fill a file.
@@ -95,14 +99,45 @@ fn type_text(editor: &mut Editor, frame: &mut Frame) {
     }
 }
 
-/// Times `play` on a freshly opened editor.
+/// Times `iters` actions, opening a fresh editor every `run` actions.
 ///
-/// Setup and destruction are excluded from the timed routine.
+/// One action from a fresh editor would time the same press over and over. A run also
+/// crosses lines, wrapped rows and scrolls, and the average covers all of them. Setup and
+/// destruction are outside the timer.
+fn time_actions(
+    source: &str,
+    iters: u64,
+    run: u64,
+    setup: fn(&mut Editor, &mut Frame),
+    action: &impl Fn(&mut Editor, &mut Frame),
+) -> Duration {
+    let mut elapsed = Duration::ZERO;
+    let mut left = iters;
+
+    while left > 0 {
+        let actions = left.min(run);
+        let (mut editor, mut frame) = opened(source);
+        setup(&mut editor, &mut frame);
+
+        let start = Instant::now();
+        for _ in 0..actions {
+            action(&mut editor, &mut frame);
+        }
+        elapsed += start.elapsed();
+
+        hint::black_box((editor, frame));
+        left -= actions;
+    }
+
+    elapsed
+}
+
 fn phase(
     criterion: &mut Criterion,
     name: &str,
+    run: u64,
     setup: fn(&mut Editor, &mut Frame),
-    play: fn(&mut Editor, &mut Frame),
+    action: impl Fn(&mut Editor, &mut Frame),
 ) {
     let mut group = criterion.benchmark_group(name);
 
@@ -113,18 +148,7 @@ fn phase(
             BenchmarkId::from_parameter(size),
             &source,
             |bencher, source| {
-                bencher.iter_batched(
-                    || {
-                        let (mut editor, mut frame) = opened(source);
-                        setup(&mut editor, &mut frame);
-                        (editor, frame)
-                    },
-                    |(mut editor, mut frame)| {
-                        play(&mut editor, &mut frame);
-                        hint::black_box((editor, frame))
-                    },
-                    BatchSize::LargeInput,
-                );
+                bencher.iter_custom(|iters| time_actions(source, iters, run, setup, &action));
             },
         );
     }
@@ -153,39 +177,80 @@ fn open(criterion: &mut Criterion) {
     group.finish();
 }
 
-fn page_down(criterion: &mut Criterion) {
-    phase(criterion, "page_down", nothing, |editor, frame| {
-        press(editor, frame, Motion::Page(Direction::Forward), 20);
-    });
+/// Redraws without moving, the part of every motion phase that isn't the motion.
+fn draw_only(criterion: &mut Criterion) {
+    phase(criterion, "draw", 100, nothing, draw);
 }
 
-fn word(criterion: &mut Criterion) {
-    phase(criterion, "word", nothing, |editor, frame| {
-        press(editor, frame, Motion::Word(Direction::Forward), 100);
-    });
+fn motions(criterion: &mut Criterion) {
+    both_directions(criterion, "horizontal", Motion::Horizontal, 100);
+    both_directions(criterion, "vertical", Motion::Vertical, 100);
+    both_directions(criterion, "word", Motion::Word, 100);
+    both_directions(criterion, "line", Motion::Line, 100);
+    both_directions(criterion, "page", Motion::Page, 20);
 }
 
-fn jump_end(criterion: &mut Criterion) {
-    phase(criterion, "jump_end", nothing, |editor, frame| {
+/// Times a motion each way. Forward starts at the top of the file and backward near the end,
+/// so both have `run` presses of text to move through.
+fn both_directions(
+    criterion: &mut Criterion,
+    name: &str,
+    motion: fn(Direction) -> Motion,
+    run: u64,
+) {
+    phase(
+        criterion,
+        &format!("{name}_forward"),
+        run,
+        nothing,
+        |editor, frame| press(editor, frame, motion(Direction::Forward), 1),
+    );
+    phase(
+        criterion,
+        &format!("{name}_backward"),
+        run,
+        near_end,
+        |editor, frame| press(editor, frame, motion(Direction::Backward), 1),
+    );
+}
+
+/// A second press wouldn't move, so every run is a single press.
+fn file_edges(criterion: &mut Criterion) {
+    phase(criterion, "file_forward", 1, nothing, |editor, frame| {
         press(editor, frame, Motion::File(Direction::Forward), 1);
     });
+    phase(criterion, "file_backward", 1, near_end, |editor, frame| {
+        press(editor, frame, Motion::File(Direction::Backward), 1);
+    });
+}
+
+/// Ends up a few pages before the end of the file with a full screen of text. Right after
+/// the jump most rows are empty, which would make every backward draw look cheap.
+fn near_end(editor: &mut Editor, frame: &mut Frame) {
+    press(editor, frame, Motion::File(Direction::Forward), 1);
+    press(editor, frame, Motion::Page(Direction::Backward), 3);
 }
 
 fn type_and_delete(criterion: &mut Criterion) {
-    phase(criterion, "type", nothing, type_text);
+    let run = TYPED.len() as u64;
 
-    phase(criterion, "delete", type_text, |editor, frame| {
-        for _ in TYPED.chars() {
-            editor.view_mut().delete();
-            draw(editor, frame);
-        }
+    phase(criterion, "type", run, nothing, |editor, frame| {
+        editor.view_mut().insert('x');
+        draw(editor, frame);
+    });
+
+    phase(criterion, "delete", run, type_text, |editor, frame| {
+        editor.view_mut().delete();
+        draw(editor, frame);
     });
 }
 
+/// The edit that makes a revert do something is setup, so every run is a single revert.
 fn revert(criterion: &mut Criterion) {
     phase(
         criterion,
         "revert",
+        1,
         |editor, _frame| editor.view_mut().insert('x'),
         |editor, frame| {
             editor.view_mut().revert();
@@ -199,9 +264,9 @@ fn nothing(_: &mut Editor, _: &mut Frame) {}
 criterion::criterion_group!(
     benches,
     open,
-    page_down,
-    word,
-    jump_end,
+    draw_only,
+    motions,
+    file_edges,
     type_and_delete,
     revert
 );

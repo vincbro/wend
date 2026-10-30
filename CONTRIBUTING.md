@@ -35,7 +35,7 @@ To check a change against the rules tools can't enforce, ask your coding agent t
 
 ## Benchmarks
 
-`just bench` runs the benchmarks with [criterion](https://github.com/criterion-rs/criterion.rs). They live in `crates/wend-core/benches/session.rs` and time a headless editing session: `Editor` driven the way a terminal client drives it, a key and then a frame. Each phase (open, page down, word motions, typing, deleting, jumping to the end, reverting) is timed on files of 10 KB, 100 KB, 1 MB and 10 MB, so you can see how it scales with file size.
+`just bench` runs the benchmarks with [criterion](https://github.com/criterion-rs/criterion.rs). They live in `crates/wend-core/benches/session.rs` and time a headless editing session: `Editor` driven the way a terminal client drives it, a key and then a frame. Each phase (open, a redraw on its own, every motion in both directions, typing, deleting, reverting) is timed per action on files of 100 KB, 1 MB and 10 MB, so you can see what one key press costs and how it scales with file size.
 
 criterion compares each run with the previous one on the same machine. To compare against a fixed point, save a baseline and run against it later:
 

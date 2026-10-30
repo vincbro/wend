@@ -8,7 +8,7 @@ use crate::{
 };
 
 mod layout;
-use layout::{Layout, ScrollOffset, Slot, SlotPosition};
+use layout::{Glyph, Layout, ScrollOffset, Slot, SlotPosition};
 mod motion;
 pub use motion::{Direction, Motion};
 mod selection;
@@ -78,8 +78,22 @@ impl View {
         )
     }
 
+    /// The glyph holding `byte`, none if it is off screen or the layout is out of date.
+    fn glyph_on_screen(&self, byte: usize) -> Option<Glyph> {
+        if self.layout_dirty {
+            return None;
+        }
+        self.layout.glyph_at(self.layout.find_byte(byte)?)
+    }
+
     /// Where the grapheme holding `byte` starts, the end of the buffer for anything past it.
     fn grapheme_start(&self, byte: usize) -> usize {
+        self.glyph_on_screen(byte)
+            .map_or_else(|| self.rope_grapheme_start(byte), |glyph| glyph.from_byte)
+    }
+
+    /// Walks the line from its start, so this costs as much as the line is long.
+    fn rope_grapheme_start(&self, byte: usize) -> usize {
         let rope = self.buffer.rope();
         let mut byte = byte.min(rope.byte_len());
         // Line lookups need a char boundary, back up to one, at most 3 bytes in UTF-8
@@ -100,6 +114,11 @@ impl View {
     /// Where the grapheme starting at `start` ends. The end of buffer slot is one byte
     /// wide, see `Layout::rebuild`.
     fn grapheme_end(&self, start: usize) -> usize {
+        self.glyph_on_screen(start)
+            .map_or_else(|| self.rope_grapheme_end(start), |glyph| glyph.to_byte)
+    }
+
+    fn rope_grapheme_end(&self, start: usize) -> usize {
         let len = self
             .buffer
             .rope()
@@ -391,21 +410,14 @@ impl View {
             };
         };
 
-        // The end of buffer slot points past the rope, it has nothing to show
-        let grapheme = if glyph.from_byte >= self.buffer.rope().byte_len() {
-            Grapheme::from_char(' ')
-        } else {
-            self.buffer.grapheme(glyph.as_range())
-        };
-
         // A tail is covered when the head prints wide enough to reach it, the rest (a tab,
         // a too long grapheme shown as U+FFFD) print as blanks
         let (grapheme, covered) = match slot {
             Slot::Tail(head_index) => {
                 let offset = self.layout.slot_index(pos) - head_index;
-                (Grapheme::from_char(' '), offset < grapheme.width())
+                (Grapheme::from_char(' '), offset < glyph.grapheme.width())
             }
-            _ => (grapheme, false),
+            _ => (glyph.grapheme, false),
         };
 
         Cell {
@@ -447,6 +459,35 @@ pub(crate) mod tests {
             "clamps to the end of the buffer"
         );
         view.check_invariants();
+    }
+
+    #[test]
+    fn grapheme_bounds_from_the_layout_match_the_rope() {
+        // Combining marks, wide glyphs, tabs, CRLF and wrapped rows, most of it off screen
+        let text = "e\u{301}a漢\t🦀\r\nb a line long enough to wrap\n\n".repeat(4);
+        let view = view(&text, 8, 6);
+        for byte in 0..=text.len() + 1 {
+            let start = view.grapheme_start(byte);
+            assert_eq!(
+                start,
+                view.rope_grapheme_start(byte),
+                "start of byte {byte}"
+            );
+            assert_eq!(
+                view.grapheme_end(start),
+                view.rope_grapheme_end(start),
+                "end of the grapheme starting at {start}"
+            );
+        }
+    }
+
+    #[test]
+    fn grapheme_start_ignores_an_out_of_date_layout() {
+        let mut view = view("ab", 20, 5);
+        // The mark joins a, the layout still has b on byte 1
+        view.buffer.edit(1..1, "\u{301}");
+        view.layout_dirty = true;
+        assert_eq!(view.grapheme_start(1), 0, "reads the edited text");
     }
 
     #[test]

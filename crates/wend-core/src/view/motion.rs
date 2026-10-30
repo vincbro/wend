@@ -88,11 +88,9 @@ impl View {
     ///
     /// Lands where moving up or down a row at a time would, a screen less one row.
     fn page(&mut self, direction: Direction) -> Option<usize> {
-        let rows = self.rect.area.height().saturating_sub(1).max(1);
-        let row = self.layout.find_byte(self.selection.head())?.row;
         let row = match direction {
-            Direction::Forward => self.page_forward(row, rows)?,
-            Direction::Backward => self.page_backward(row, rows),
+            Direction::Forward => self.page_forward()?,
+            Direction::Backward => self.page_backward(),
         };
         let head = self.closest_glyph_start(row)?;
         // Moving a row at a time stops on the first row that can't move, and leaves the
@@ -101,14 +99,12 @@ impl View {
     }
 
     /// Scrolls for the head on `row` to move `rows` rows down. Returns the row it lands on.
-    fn page_forward(&mut self, row: usize, rows: usize) -> Option<usize> {
-        // Rows above the bottom margin are reached without scrolling
-        let bottom = self.rect.area.height() - self.margin() - 1;
-        let wanted = row + rows;
-        let scrolled = self.scroll(Direction::Forward, wanted.saturating_sub(bottom));
+    fn page_forward(&mut self) -> Option<usize> {
+        let bottom = self.rect.area.height() - 1;
+        let scrolled = self.scroll(Direction::Forward, bottom);
         let last = self.layout.last_row()?;
-        if wanted - scrolled <= last {
-            return Some(wanted - scrolled);
+        if bottom - scrolled <= last {
+            return Some(bottom - scrolled);
         }
 
         // The buffer ends first. Row by row the head would stop on its last row, with the
@@ -121,12 +117,11 @@ impl View {
     }
 
     /// Scrolls for the head on `row` to move `rows` rows up. Returns the row it lands on.
-    fn page_backward(&mut self, row: usize, rows: usize) -> usize {
-        // Rows below the top margin are reached without scrolling
-        let scroll = (self.margin() + rows).saturating_sub(row).min(rows);
-        let scrolled = self.scroll(Direction::Backward, scroll);
+    fn page_backward(&mut self) -> usize {
+        let bottom = self.rect.area.height() - 1;
+        let scrolled = self.scroll(Direction::Backward, bottom);
         // The top of the buffer stops the scroll short, the head stops on row 0 then
-        (row + scrolled).saturating_sub(rows)
+        scrolled
     }
 
     fn horizontal(&self, direction: Direction) -> Option<usize> {

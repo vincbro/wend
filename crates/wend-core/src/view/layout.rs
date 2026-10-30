@@ -2,26 +2,28 @@ use std::ops;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::{area::Area, buffer::Buffer, view::Direction};
+use crate::{area::Area, buffer::Buffer, grapheme::Grapheme, view::Direction};
 
 const TAB_WIDTH: usize = 4;
 
 /// A grapheme as laid out: the bytes it covers, and how many tail slots follow its own
 /// slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(super) struct Glyph {
     pub from_byte: usize,
     pub to_byte: usize,
     pub tails: usize,
+    pub grapheme: Grapheme,
 }
 
 impl Glyph {
     #[must_use]
-    pub(super) fn new(from_byte: usize, to_byte: usize, tails: usize) -> Self {
+    pub(super) fn new(from_byte: usize, to_byte: usize, tails: usize, grapheme: Grapheme) -> Self {
         Self {
             from_byte,
             to_byte,
             tails,
+            grapheme,
         }
     }
 
@@ -313,6 +315,7 @@ impl Layout {
             self.byte_cursor,
             self.byte_cursor + grapheme.len(),
             grapheme.width().saturating_sub(1),
+            Grapheme::from_bytes_iter(grapheme.bytes()),
         );
         if grapheme == "\t" {
             // Up to the next tab stop, a whole tab width when already on one
@@ -424,7 +427,12 @@ impl Layout {
         // even in an empty buffer, and text can be appended at the end
         if reached_end {
             let end = buffer.rope().byte_len();
-            self.write(Slot::Glyph(Glyph::new(end, end + 1, 0)));
+            self.write(Slot::Glyph(Glyph::new(
+                end,
+                end + 1,
+                0,
+                Grapheme::from_char(' '),
+            )));
         }
 
         // The buffer ended before we skipped as many rows as asked, show its last row

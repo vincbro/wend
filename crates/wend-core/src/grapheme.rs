@@ -3,7 +3,7 @@ use unicode_width::UnicodeWidthStr;
 /// How many bytes a grapheme can hold inline, longer ones become U+FFFD.
 const CAPACITY: u8 = 31;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Grapheme {
     len: u8,
     bytes: [u8; CAPACITY as usize],
