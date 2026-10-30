@@ -10,21 +10,21 @@ pub enum Direction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Motion {
-    /// One grapheme left or right, following a wrapped line onto its next row.
+    /// Moves one grapheme left or right, following a wrapped line onto its next row.
     Horizontal(Direction),
-    /// One row up or down, aiming for the same column.
+    /// Moves one row up or down, aiming for the same column.
     Vertical(Direction),
     /// Selects the next or previous word.
     Word(Direction),
-    /// The start or end of the line.
+    /// Moves to the start or end of the line.
     Line(Direction),
-    /// A screen up or down.
+    /// Moves a screen up or down.
     Page(Direction),
-    /// The start or end of the file.
+    /// Moves to the start or end of the file.
     File(Direction),
 }
 
-/// What words are made of. Only letters and numbers make a word, `_` separates them just
+/// Says what words are made of. Only letters and numbers make a word, `_` separates them just
 /// like whitespace, so each part of a `snake_case_name` is its own word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WordClass {
@@ -98,9 +98,10 @@ impl View {
         (head != self.selection.head()).then_some(head)
     }
 
-    /// Scrolls for the head on `row` to move `rows` rows down. Returns the row it lands on.
+    /// Scrolls down a page and returns the row the head lands on, none if no row shows text.
     fn page_forward(&mut self) -> Option<usize> {
-        let bottom = self.rect.area.height() - 1;
+        // The terminal can report 0 rows
+        let bottom = self.rect.area.height().saturating_sub(1);
         let scrolled = self.scroll(Direction::Forward, bottom);
         let last = self.layout.last_row()?;
         if bottom - scrolled <= last {
@@ -109,16 +110,14 @@ impl View {
 
         // The buffer ends first. Row by row the head would stop on its last row, with the
         // view scrolled no further than putting that row on the bottom margin.
-        self.scroll(
-            Direction::Backward,
-            bottom.saturating_sub(last).min(scrolled),
-        );
+        self.scroll(Direction::Backward, (bottom - last).min(scrolled));
         self.layout.last_row()
     }
 
-    /// Scrolls for the head on `row` to move `rows` rows up. Returns the row it lands on.
+    /// Scrolls up a page and returns the row the head lands on.
     fn page_backward(&mut self) -> usize {
-        let bottom = self.rect.area.height() - 1;
+        // The terminal can report 0 rows
+        let bottom = self.rect.area.height().saturating_sub(1);
         let scrolled = self.scroll(Direction::Backward, bottom);
         // The top of the buffer stops the scroll short, the head stops on row 0 then
         scrolled
@@ -132,10 +131,10 @@ impl View {
 
         // At the edge of the row, only continue if the line wrapped onto the next row
         let neighbour = match direction {
-            Direction::Forward => pos.row.checked_add(1)?,
+            Direction::Forward => pos.row + 1,
             Direction::Backward => pos.row.checked_sub(1)?,
         };
-        if self.layout.row(neighbour)?.meta.line != self.layout.row(pos.row)?.meta.line {
+        if self.layout.row(neighbour)?.metadata.line != self.layout.row(pos.row)?.metadata.line {
             return None;
         }
         // Forward lands on the neighbour's first glyph, backward on its last
@@ -147,14 +146,14 @@ impl View {
     fn vertical(&self, direction: Direction) -> Option<usize> {
         let pos = self.layout.find_byte(self.selection.head())?;
         let row = match direction {
-            Direction::Forward => pos.row.checked_add(1)?,
+            Direction::Forward => pos.row + 1,
             Direction::Backward => pos.row.checked_sub(1)?,
         };
         self.closest_glyph_start(row)
     }
 
-    /// The glyph on `row` at the column up and down aim for, or the closest one to it on a
-    /// shorter row.
+    /// Returns the glyph on `row` at the column up and down aim for, or the closest one to it
+    /// on a shorter row.
     fn closest_glyph_start(&self, row: usize) -> Option<usize> {
         let target = SlotPosition::new(self.desired_col, row);
         let glyph = self
@@ -165,7 +164,7 @@ impl View {
         Some(glyph.from_byte)
     }
 
-    /// The first or last grapheme of the head's line, the line break not included.
+    /// Returns the first or last grapheme of the head's line, the line break not included.
     fn line_edge(&self, direction: Direction) -> usize {
         let rope = self.buffer.rope();
         let line = rope.line_of_byte(self.selection.head());
@@ -246,7 +245,7 @@ impl View {
     }
 }
 
-/// Where a word motion starts, as the byte and class of its first grapheme.
+/// Returns where a word motion starts, as the byte and class of its first grapheme.
 fn word_start<I>(graphemes: &mut Peekable<I>) -> Option<(usize, WordClass)>
 where
     I: Iterator<Item = (usize, WordClass)>,
@@ -280,12 +279,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::tests::view;
+    use crate::view::tests;
 
     #[test]
     fn word_stops_at_line_breaks() {
         // f0 o1 o2 ' '3 ' '4 '\n'5 b6 a7 r8
-        let mut view = view("foo  \nbar", 40, 5);
+        let mut view = tests::view("foo  \nbar", 40, 5);
         view.move_selection(Motion::Word(Direction::Forward), false);
         assert_eq!(
             view.selection,
@@ -324,8 +323,8 @@ mod tests {
     fn assert_pages_like_rows(direction: Direction) {
         // Wrapped, short and empty lines, a page crosses all of them
         let text = "a line that wraps twice\nb\n\n\tc\n".repeat(20);
-        let mut paged = view(&text, 8, 7);
-        let mut stepped = view(&text, 8, 7);
+        let mut paged = tests::view(&text, 8, 7);
+        let mut stepped = tests::view(&text, 8, 7);
         if direction == Direction::Backward {
             paged.move_selection(Motion::File(Direction::Forward), false);
             stepped.move_selection(Motion::File(Direction::Forward), false);
@@ -348,7 +347,7 @@ mod tests {
 
     #[test]
     fn page_that_cannot_move_keeps_the_selection() {
-        let mut view = view("foo bar\nbaz", 20, 5);
+        let mut view = tests::view("foo bar\nbaz", 20, 5);
         view.move_selection(Motion::Word(Direction::Forward), false);
         let word = view.selection;
         view.move_selection(Motion::Page(Direction::Backward), false);
@@ -357,14 +356,14 @@ mod tests {
 
     #[test]
     fn word_treats_underscore_as_a_separator() {
-        let mut view = view("long_string_with_underscores", 40, 5);
+        let mut view = tests::view("long_string_with_underscores", 40, 5);
         let mut anchors = vec![];
         for _ in 0..4 {
             view.move_selection(Motion::Word(Direction::Forward), false);
             anchors.push(view.selection.anchor());
         }
         // long, string, with, underscores
-        assert_eq!(anchors, [0, 5, 12, 17]);
+        assert_eq!(anchors, [0, 5, 12, 17], "one stop per part of the name");
 
         view.move_selection(Motion::Word(Direction::Backward), false);
         assert_eq!(

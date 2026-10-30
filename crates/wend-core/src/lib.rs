@@ -9,5 +9,4 @@ pub mod frame;
 pub mod grapheme;
 pub mod view;
 
-/// The version of wend, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

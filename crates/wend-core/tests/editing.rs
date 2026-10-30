@@ -29,7 +29,7 @@ mod tests {
     #[test]
     fn typing_inserts_in_front_of_the_cursor() {
         let mut editor = editor("world", 20, 3);
-        editor.switch_mode(Mode::Insert);
+        editor.set_mode(Mode::Insert);
         for c in "hello ".chars() {
             editor.view_mut().insert(c);
         }
@@ -38,7 +38,7 @@ mod tests {
         assert_eq!(row_text(&frame, 0), "hello world");
         assert_eq!(
             frame.cursor(),
-            CellPosition::new(6, 0),
+            Some(CellPosition::new(6, 0)),
             "the cursor stays on the w it started on"
         );
     }
@@ -55,7 +55,7 @@ mod tests {
 
         assert_eq!(
             editor.frame().cursor(),
-            CellPosition::new(1, 1),
+            Some(CellPosition::new(1, 1)),
             "on the h of three"
         );
     }
@@ -74,7 +74,7 @@ mod tests {
             "world",
             "the word and its space are gone"
         );
-        assert_eq!(frame.cursor(), CellPosition::new(0, 0));
+        assert_eq!(frame.cursor(), Some(CellPosition::new(0, 0)));
     }
 
     #[test]
@@ -95,7 +95,7 @@ mod tests {
             .move_selection(Motion::File(Direction::Forward), false);
 
         let frame = editor.frame();
-        let cursor = frame.cursor();
+        let cursor = frame.cursor().unwrap();
         assert!(cursor.row < 5, "the cursor is inside the frame");
         assert_eq!(
             row_text(&frame, cursor.row),
@@ -103,5 +103,34 @@ mod tests {
             "the cursor's row shows the last line"
         );
         assert_eq!(cursor.col, 1, "on the last grapheme, the 9");
+    }
+
+    #[test]
+    fn a_terminal_with_no_size_has_no_cursor() {
+        for (cols, rows) in [(0, 0), (20, 0), (0, 5)] {
+            let mut editor = editor("one\ntwo", cols, rows);
+            let view = editor.view_mut();
+            view.move_selection(Motion::Page(Direction::Forward), false);
+            view.move_selection(Motion::Page(Direction::Backward), false);
+            assert_eq!(
+                editor.frame().cursor(),
+                None,
+                "nowhere to show it, {cols}x{rows}"
+            );
+        }
+    }
+
+    #[test]
+    fn resizing_to_no_size_and_back_restores_the_cursor() {
+        let mut editor = editor("abc", 20, 3);
+        editor.resize(Area::new(0, 0));
+        assert_eq!(editor.frame().cursor(), None, "nowhere to show it");
+
+        editor.resize(Area::new(20, 3));
+        assert_eq!(
+            editor.frame().cursor(),
+            Some(CellPosition::new(0, 0)),
+            "back on the first grapheme"
+        );
     }
 }

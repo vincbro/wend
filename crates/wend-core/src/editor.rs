@@ -10,12 +10,12 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
     Normal,
-    /// Normal, except motions extend the selection instead of moving it.
+    /// Works like normal, except motions extend the selection instead of moving it.
     Select,
     Insert,
 }
 
-/// The whole editor: the terminal's area, the view and the mode.
+/// Holds the whole editor: the terminal's area, the view and the mode.
 ///
 /// `buffers` holds every open buffer except the one the view shows, so each open file
 /// lives in exactly one place.
@@ -30,15 +30,14 @@ pub struct Editor {
 impl Editor {
     #[must_use]
     pub fn new(area: Area) -> Self {
-        let width = area.cols.min(100);
-        let left_col = (area.cols - width) / 2;
-        let view_area = Area::new(width, area.rows);
-        Self {
+        let mut editor = Self {
             area,
             buffers: vec![],
-            view: View::new(Rect::new(left_col, 0, view_area)),
+            view: View::new(Rect::new(0, 0, area)),
             mode: Mode::Normal,
-        }
+        };
+        editor.resize(area);
+        editor
     }
 
     #[must_use]
@@ -83,10 +82,13 @@ impl Editor {
 
     pub fn resize(&mut self, area: Area) {
         self.area = area;
-        self.view.resize(Rect::new(0, 0, area));
+        let width = area.cols.min(100);
+        let left_col = (area.cols - width) / 2;
+        let view_area = Area::new(width, area.rows);
+        self.view.resize(Rect::new(left_col, 0, view_area));
     }
 
-    pub fn switch_mode(&mut self, mode: Mode) {
+    pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
     }
 

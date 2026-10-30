@@ -18,7 +18,7 @@ impl Change {
         }
     }
 
-    /// Where a byte position from before the edit is after it.
+    /// Returns where a byte position from before the edit is after it.
     ///
     /// A position at or inside the edited range moves past the inserted text, so a cursor
     /// stays on the grapheme it was on while typing in front of it.

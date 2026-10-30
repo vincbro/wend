@@ -1,7 +1,11 @@
-/// Converts to a terminal coordinate, clamping at `u16::MAX` instead of failing.
+/// Converts a position inside an `Area` to a terminal coordinate.
+///
+/// # Panics
+///
+/// If `value` doesn't fit in a `u16`, which it always does inside an `Area`.
 #[must_use]
-pub(crate) fn saturating_u16(value: usize) -> u16 {
-    u16::try_from(value).unwrap_or(u16::MAX)
+pub(crate) fn terminal_coordinate(value: usize) -> u16 {
+    u16::try_from(value).expect("an area is measured in u16, so positions inside it fit")
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -42,7 +46,7 @@ impl Area {
     }
 }
 
-/// Where in a frame a view is allowed to render.
+/// Marks out where in a frame a view is allowed to render.
 #[derive(Debug, Clone, Copy)]
 pub struct Rect {
     pub col: u16,

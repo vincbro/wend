@@ -14,13 +14,11 @@ pub(crate) struct Theme {
 
 /// Mellow by Rohit K Viswanath, the palette and choices of helix's `mellow.toml`.
 pub(crate) const MELLOW: Theme = Theme {
-    // bg
     background: Color::Rgb {
         r: 0x16,
         g: 0x16,
         b: 0x17,
     },
-    // fg
     foreground: Color::Rgb {
         r: 0xc9,
         g: 0xc7,

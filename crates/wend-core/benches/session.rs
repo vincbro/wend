@@ -99,20 +99,20 @@ fn type_text(editor: &mut Editor, frame: &mut Frame) {
     }
 }
 
-/// Times `iters` actions, opening a fresh editor every `run` actions.
+/// Times `iterations` actions, opening a fresh editor every `run` actions.
 ///
 /// One action from a fresh editor would time the same press over and over. A run also
 /// crosses lines, wrapped rows and scrolls, and the average covers all of them. Setup and
 /// destruction are outside the timer.
 fn time_actions(
     source: &str,
-    iters: u64,
+    iterations: u64,
     run: u64,
     setup: fn(&mut Editor, &mut Frame),
     action: &impl Fn(&mut Editor, &mut Frame),
 ) -> Duration {
     let mut elapsed = Duration::ZERO;
-    let mut left = iters;
+    let mut left = iterations;
 
     while left > 0 {
         let actions = left.min(run);
@@ -148,7 +148,9 @@ fn phase(
             BenchmarkId::from_parameter(size),
             &source,
             |bencher, source| {
-                bencher.iter_custom(|iters| time_actions(source, iters, run, setup, &action));
+                bencher.iter_custom(|iterations| {
+                    time_actions(source, iterations, run, setup, &action)
+                });
             },
         );
     }

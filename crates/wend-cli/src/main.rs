@@ -8,7 +8,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use crossterm::{
     QueueableCommand, cursor,
     event::{self, Event, KeyCode},
@@ -18,7 +18,7 @@ use crossterm::{
 use wend_core::{
     area::Area,
     editor::{Editor, Mode},
-    frame::Frame,
+    frame::{Cell, CellPosition, Frame},
     view::{Direction, Motion},
 };
 
@@ -26,7 +26,7 @@ use crate::theme::MELLOW;
 
 mod theme;
 
-const HELP: &str = "Usage: wend [file/to/open]";
+const HELP: &str = "usage: wend [file/to/open]";
 
 struct Args {
     file: String,
@@ -37,15 +37,15 @@ fn parse_args() -> Result<Args> {
 
     let mut file = None;
     let mut parser = lexopt::Parser::from_env();
-    while let Some(arg) = parser.next()? {
-        match arg {
+    while let Some(argument) = parser.next()? {
+        match argument {
             Value(value) if file.is_none() => {
                 file = Some(value.string()?);
             }
             Long("help") => {
                 bail!(HELP);
             }
-            _ => return Err(arg.unexpected().into()),
+            _ => return Err(argument.unexpected().into()),
         }
     }
 
@@ -96,30 +96,33 @@ fn main() -> Result<()> {
     // Restore before the default hook prints, or the message is lost on the
     // alternate screen and the shell is left in raw mode
     let default_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |info| {
+    panic::set_hook(Box::new(move |panic_info| {
         restore_terminal();
-        default_hook(info);
+        default_hook(panic_info);
     }));
 
-    let _guard = TerminalGuard::enter()?;
+    let _guard = TerminalGuard::enter().context("failed to set up the terminal")?;
     let mut stdout = io::stdout();
 
-    let window = terminal::window_size()?;
+    let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
     let mut editor = Editor::new(area);
-    editor.open_file(Path::new(&args.file))?;
-    let frame = editor.frame();
-    render_frame(&frame, &mut stdout)?;
+    editor
+        .open_file(Path::new(&args.file))
+        .with_context(|| format!("failed to open {}", args.file))?;
+    let mut frame = editor.frame();
+    render_frame(&frame, &mut stdout).context("failed to draw the frame")?;
 
     // Set by the first key of a two key binding, like the g in gs
     let mut pending_g = false;
 
     loop {
-        if handle_event(&mut editor, &event::read()?, &mut pending_g).is_break() {
+        let event = event::read().context("failed to read a terminal event")?;
+        if handle_event(&mut editor, &event, &mut pending_g).is_break() {
             break;
         }
-        let frame = editor.frame();
-        render_frame(&frame, &mut stdout)?;
+        editor.update_frame(&mut frame);
+        render_frame(&frame, &mut stdout).context("failed to draw the frame")?;
     }
     Ok(())
 }
@@ -136,7 +139,7 @@ fn handle_event(editor: &mut Editor, event: &Event, pending_g: &mut bool) -> Con
 
 fn insert_key(editor: &mut Editor, code: KeyCode) {
     match code {
-        KeyCode::Esc => editor.switch_mode(Mode::Normal),
+        KeyCode::Esc => editor.set_mode(Mode::Normal),
         KeyCode::Backspace => editor.view_mut().delete(),
         KeyCode::Tab => editor.view_mut().insert('\t'),
         KeyCode::Enter => editor.view_mut().insert('\n'),
@@ -156,7 +159,7 @@ fn normal_key(editor: &mut Editor, code: KeyCode, pending_g: &mut bool) -> Contr
         return ControlFlow::Continue(());
     }
     if code.is_esc() {
-        editor.switch_mode(Mode::Normal);
+        editor.set_mode(Mode::Normal);
         return ControlFlow::Continue(());
     }
     let Some(c) = code.as_char() else {
@@ -173,12 +176,12 @@ fn normal_key(editor: &mut Editor, code: KeyCode, pending_g: &mut bool) -> Contr
         'u' => editor.view_mut().revert(),
         // TODO: show the error once there is a status line
         's' => drop(editor.view_mut().save()),
-        'i' => editor.switch_mode(Mode::Insert),
+        'i' => editor.set_mode(Mode::Insert),
         'o' => {
             editor.view_mut().new_line();
-            editor.switch_mode(Mode::Insert);
+            editor.set_mode(Mode::Insert);
         }
-        'v' => editor.switch_mode(if extend { Mode::Normal } else { Mode::Select }),
+        'v' => editor.set_mode(if extend { Mode::Normal } else { Mode::Select }),
         'q' => return ControlFlow::Break(()),
         _ => {}
     }
@@ -220,22 +223,26 @@ fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
         if cell.covered {
             continue;
         }
-        if cell.cursor {
-            writer.queue(style::SetBackgroundColor(MELLOW.cursor_background))?;
-            writer.queue(style::SetForegroundColor(MELLOW.cursor_foreground))?;
-        } else if cell.selected {
-            writer.queue(style::SetBackgroundColor(MELLOW.selection_background))?;
-            writer.queue(style::SetForegroundColor(MELLOW.selection_foreground))?;
-        } else {
-            writer.queue(style::SetBackgroundColor(MELLOW.background))?;
-            writer.queue(style::SetForegroundColor(MELLOW.foreground))?;
-        }
-        writer
-            .queue(cursor::MoveTo(pos.col, pos.row))?
-            .queue(style::Print(cell.grapheme.as_str_sanitize()))?
-            .queue(style::SetAttribute(Attribute::Reset))?;
+        queue_cell(cell, pos, writer)?;
     }
     writer.queue(terminal::EndSynchronizedUpdate)?;
     writer.flush()?;
+    Ok(())
+}
+
+fn queue_cell(cell: &Cell, pos: CellPosition, writer: &mut impl Write) -> Result<()> {
+    let (background, foreground) = if cell.cursor {
+        (MELLOW.cursor_background, MELLOW.cursor_foreground)
+    } else if cell.selected {
+        (MELLOW.selection_background, MELLOW.selection_foreground)
+    } else {
+        (MELLOW.background, MELLOW.foreground)
+    };
+    writer
+        .queue(style::SetBackgroundColor(background))?
+        .queue(style::SetForegroundColor(foreground))?
+        .queue(cursor::MoveTo(pos.col, pos.row))?
+        .queue(style::Print(cell.grapheme.as_str_sanitize()))?
+        .queue(style::SetAttribute(Attribute::Reset))?;
     Ok(())
 }

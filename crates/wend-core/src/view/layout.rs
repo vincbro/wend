@@ -6,8 +6,8 @@ use crate::{area::Area, buffer::Buffer, grapheme::Grapheme, view::Direction};
 
 const TAB_WIDTH: usize = 4;
 
-/// A grapheme as laid out: the bytes it covers, and how many tail slots follow its own
-/// slot.
+/// Describes a grapheme as laid out: the bytes it covers, and how many tail slots follow
+/// its own slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(super) struct Glyph {
     pub from_byte: usize,
@@ -28,12 +28,12 @@ impl Glyph {
     }
 
     #[must_use]
-    pub(super) fn as_range(&self) -> ops::Range<usize> {
+    pub(super) fn to_range(self) -> ops::Range<usize> {
         self.from_byte..self.to_byte
     }
 }
 
-/// A slot in a view's layout grid. Relative to the view, not the frame.
+/// Locates a slot in a view's layout grid, relative to the view, not the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SlotPosition {
     pub col: usize,
@@ -50,14 +50,14 @@ impl SlotPosition {
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Slot {
     Glyph(Glyph),
-    /// The rest of a glyph wider than one slot. Holds the index of the glyph's own slot.
+    /// Fills the rest of a glyph wider than one slot. Holds the index of the glyph's own slot.
     Tail(usize),
-    /// A marker that isn't text, such as the ↩ that starts a wrapped row.
-    Misc(char),
+    /// Shows a marker that isn't text, such as the ↩ that starts a wrapped row.
+    Marker(char),
     Blank,
 }
 
-/// The top of a view. The first line on screen and how many of its wrapped rows are
+/// Marks the top of a view: the first line on screen and how many of its wrapped rows are
 /// scrolled past, so the view can start partway through a line that wraps.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct ScrollOffset {
@@ -74,33 +74,33 @@ impl ScrollOffset {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Row<'a> {
-    pub meta: RowMeta,
+    pub metadata: RowMetadata,
     pub slots: &'a [Slot],
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct RowMeta {
+pub(super) struct RowMetadata {
     pub line: usize,
     pub from_byte: usize,
     pub to_byte: usize,
-    /// How many slots the row uses, the rest of it is blank.
+    /// Counts the slots the row uses, the rest of it is blank.
     pub len: usize,
 }
 
-/// The grid of slots a view's text is laid out on, rebuilt whenever the buffer, the area
-/// or the scroll changes.
+/// Holds the grid of slots a view's text is laid out on, rebuilt whenever the buffer, the
+/// area or the scroll changes.
 ///
-/// `slots` always holds `area.len()` slots row by row, and `row_meta` one entry per row,
+/// `slots` always holds `area.len()` slots row by row, and `row_metadata` one entry per row,
 /// `None` for the rows past the end of the buffer.
 #[derive(Debug, Clone)]
 pub(super) struct Layout {
     slots: Vec<Slot>,
-    row_meta: Vec<Option<RowMeta>>,
+    row_metadata: Vec<Option<RowMetadata>>,
     area: Area,
-    /// Where the layout starts. While rebuilding, the row counts the rows actually
+    /// Marks where the layout starts. While rebuilding, the row counts the rows actually
     /// skipped.
     scroll_offset: ScrollOffset,
-    /// Rows of the first line still to skip while rebuilding.
+    /// Counts the rows of the first line still to skip while rebuilding.
     skip_rows: usize,
 
     row_cursor: usize,
@@ -115,7 +115,7 @@ impl Layout {
     pub(super) fn new(area: Area, scroll_offset: ScrollOffset) -> Self {
         let mut layout = Self {
             slots: Vec::with_capacity(area.len()),
-            row_meta: Vec::with_capacity(area.height()),
+            row_metadata: Vec::with_capacity(area.height()),
             area,
             scroll_offset,
             skip_rows: 0,
@@ -131,23 +131,23 @@ impl Layout {
         layout
     }
 
-    /// Where the layout starts. After a rebuild the row is clamped to the rows the first
+    /// Returns where the layout starts. After a rebuild the row is clamped to the rows the first
     /// line actually has.
     #[must_use]
     pub(super) fn scroll_offset(&self) -> ScrollOffset {
         self.scroll_offset
     }
 
-    /// The scroll offset that puts `row` on top, none for a row past the end of the
+    /// Returns the scroll offset that puts `row` on top, none for a row past the end of the
     /// buffer.
     #[must_use]
     pub(super) fn offset_of_row(&self, row: usize) -> Option<ScrollOffset> {
-        let line = self.row(row)?.meta.line;
+        let line = self.row(row)?.metadata.line;
         // Lines only go down the rows, so the first row holding the line is where it starts
         let first = self
-            .row_meta
+            .row_metadata
             .iter()
-            .position(|meta| meta.is_some_and(|meta| meta.line == line))?;
+            .position(|metadata| metadata.is_some_and(|metadata| metadata.line == line))?;
         // The top line may be scrolled partway through already
         let skipped = if first == 0 {
             self.scroll_offset.row
@@ -157,13 +157,13 @@ impl Layout {
         Some(ScrollOffset::new(line, skipped + row - first))
     }
 
-    /// The last row that shows text, none when nothing fits.
+    /// Returns the last row that shows text, none when nothing fits.
     #[must_use]
     pub(super) fn last_row(&self) -> Option<usize> {
-        self.row_meta.iter().rposition(Option::is_some)
+        self.row_metadata.iter().rposition(Option::is_some)
     }
 
-    /// The index of the last row `line` wraps onto when laid out `cols` wide.
+    /// Returns the index of the last row `line` wraps onto when laid out `cols` wide.
     #[must_use]
     pub(super) fn last_row_of_line(buffer: &Buffer, cols: u16, line: usize) -> usize {
         // On a one row grid, skipping all of the line's rows clamps onto its last
@@ -174,14 +174,14 @@ impl Layout {
         layout.scroll_offset().row
     }
 
-    /// The glyph a slot belongs to, following a tail to its glyph. None for markers and
-    /// blanks.
+    /// Returns the glyph a slot belongs to, following a tail to its glyph, none for markers
+    /// and blanks.
     #[must_use]
     pub(super) fn glyph(&self, slot: Slot) -> Option<Glyph> {
         match slot {
             Slot::Glyph(glyph) => Some(glyph),
             Slot::Tail(head_index) => self.glyph(self.slot(head_index)?),
-            Slot::Misc(_) | Slot::Blank => None,
+            Slot::Marker(_) | Slot::Blank => None,
         }
     }
 
@@ -200,7 +200,7 @@ impl Layout {
         let start = index * self.area.width();
         let end = start + self.area.width();
         Some(Row {
-            meta: self.row_meta.get(index).copied()??,
+            metadata: self.row_metadata.get(index).copied()??,
             slots: self.slots.get(start..end)?,
         })
     }
@@ -209,7 +209,16 @@ impl Layout {
         (0..self.area.height()).filter_map(|row| self.row(row))
     }
 
-    /// The glyph in a slot, reading only within the row so a col past the edge can't
+    pub(super) fn slots(&self) -> impl ExactSizeIterator<Item = (SlotPosition, Slot)> {
+        self.slots.iter().copied().enumerate().map(|(index, slot)| {
+            (
+                SlotPosition::new(index % self.area.width(), index / self.area.width()),
+                slot,
+            )
+        })
+    }
+
+    /// Returns the glyph in a slot, reading only within the row so a col past the edge can't
     /// reach into the next one.
     #[must_use]
     pub(super) fn glyph_at(&self, pos: SlotPosition) -> Option<Glyph> {
@@ -217,39 +226,39 @@ impl Layout {
         self.glyph(slot)
     }
 
-    /// Where the glyph holding `byte` starts, none if it is off screen.
+    /// Returns where the glyph holding `byte` starts, none if it is off screen.
     #[must_use]
     pub(super) fn find_byte(&self, byte: usize) -> Option<SlotPosition> {
         self.rows().enumerate().find_map(|(row, layout_row)| {
-            if !(layout_row.meta.from_byte..layout_row.meta.to_byte).contains(&byte) {
+            if !(layout_row.metadata.from_byte..layout_row.metadata.to_byte).contains(&byte) {
                 return None;
             }
             // The first slot of a glyph is its head, tails come after it
             let col = layout_row.slots.iter().position(|slot| {
                 self.glyph(*slot)
-                    .is_some_and(|glyph| glyph.as_range().contains(&byte))
+                    .is_some_and(|glyph| glyph.to_range().contains(&byte))
             })?;
             Some(SlotPosition::new(col, row))
         })
     }
 
-    /// The next glyph from `pos` in a direction within the row, skipping the tails of the
+    /// Returns the next glyph from `pos` in a direction within the row, skipping the tails of the
     /// glyph at `pos`.
     #[must_use]
     pub(super) fn step(&self, pos: SlotPosition, direction: Direction) -> Option<Glyph> {
-        let Row { meta, slots } = self.row(pos.row)?;
+        let Row { metadata, slots } = self.row(pos.row)?;
         let glyph = |col: usize| self.glyph(*slots.get(col)?);
         let base = glyph(pos.col);
         let differs = |col: usize| glyph(col).filter(|found| Some(*found) != base);
 
         match direction {
             // Only up to the last used slot, the rest of the row is blank
-            Direction::Forward => (pos.col + 1..meta.len).find_map(differs),
+            Direction::Forward => (pos.col + 1..metadata.len).find_map(differs),
             Direction::Backward => (0..pos.col.min(slots.len())).rev().find_map(differs),
         }
     }
 
-    /// The first (`Forward`) or last (`Backward`) glyph of a row.
+    /// Returns the first (`Forward`) or last (`Backward`) glyph of a row.
     #[must_use]
     pub(super) fn edge_glyph(&self, row: usize, direction: Direction) -> Option<Glyph> {
         match direction {
@@ -272,7 +281,7 @@ impl Layout {
         self.line_cursor += 1;
     }
 
-    /// Seals the current row, appends row meta data.
+    /// Seals the current row, appends row metadata.
     fn seal(&mut self) {
         // Past the last row, there is nothing left to seal
         if self.row_cursor >= self.area.height() {
@@ -290,7 +299,7 @@ impl Layout {
             return;
         }
 
-        self.row_meta[self.row_cursor] = Some(RowMeta {
+        self.row_metadata[self.row_cursor] = Some(RowMetadata {
             line: self.line_cursor,
             from_byte: self.row_start_byte,
             to_byte: self.byte_cursor,
@@ -311,30 +320,35 @@ impl Layout {
     }
 
     fn write_grapheme(&mut self, grapheme: &str) {
-        let mut glyph = Glyph::new(
-            self.byte_cursor,
-            self.byte_cursor + grapheme.len(),
-            grapheme.width().saturating_sub(1),
-            Grapheme::from_bytes_iter(grapheme.bytes()),
-        );
         if grapheme == "\t" {
             // Up to the next tab stop, a whole tab width when already on one
-            glyph.tails = TAB_WIDTH - self.col_cursor % TAB_WIDTH - 1;
-            self.write(Slot::Glyph(glyph));
-        } else {
-            // A wide glyph that doesn't fit the rest of the row moves to the next one, the
-            // terminal can't draw half of it. Unless it wouldn't fit there either.
-            let cols = glyph.tails + 1;
-            let fits_row = self.col_cursor + cols <= self.area.width();
-            let fits_wrapped = self.wrap_col() + cols <= self.area.width();
-            if !fits_row && fits_wrapped && self.col_cursor < self.area.width() {
-                self.wrap();
-            }
-            self.write(Slot::Glyph(glyph));
-            if grapheme.ends_with('\n') {
-                self.new_line();
-            }
+            let tails = TAB_WIDTH - self.col_cursor % TAB_WIDTH - 1;
+            self.write(Slot::Glyph(self.glyph_at_cursor(grapheme, tails)));
+            return;
         }
+
+        // A wide glyph that doesn't fit the rest of the row moves to the next one, the
+        // terminal can't draw half of it. Unless it wouldn't fit there either.
+        let tails = grapheme.width().saturating_sub(1);
+        let cols = tails + 1;
+        let fits_row = self.col_cursor + cols <= self.area.width();
+        let fits_wrapped = self.wrap_col() + cols <= self.area.width();
+        if !fits_row && fits_wrapped && self.col_cursor < self.area.width() {
+            self.wrap();
+        }
+        self.write(Slot::Glyph(self.glyph_at_cursor(grapheme, tails)));
+        if grapheme.ends_with('\n') {
+            self.new_line();
+        }
+    }
+
+    fn glyph_at_cursor(&self, grapheme: &str, tails: usize) -> Glyph {
+        Glyph::new(
+            self.byte_cursor,
+            self.byte_cursor + grapheme.len(),
+            tails,
+            Grapheme::from_bytes_iter(grapheme.bytes()),
+        )
     }
 
     /// Writes a single slot, handles auto sealing and overflow protection.
@@ -373,12 +387,12 @@ impl Layout {
     fn wrap(&mut self) {
         self.seal();
         if self.wrap_col() > 0 {
-            self.write(Slot::Misc('↩'));
+            self.write(Slot::Marker('↩'));
             self.write(Slot::Blank);
         }
     }
 
-    /// The first col of a wrapped row free for text, after the markers.
+    /// Returns the first col of a wrapped row free for text, after the markers.
     fn wrap_col(&self) -> usize {
         // The markers need room or they would wrap forever
         if self.area.width() > 2 { 2 } else { 0 }
@@ -390,8 +404,8 @@ impl Layout {
         self.scroll_offset = ScrollOffset::new(scroll_offset.line, 0);
         self.skip_rows = scroll_offset.row;
 
-        self.row_meta.clear();
-        self.row_meta.resize_with(self.area.height(), || None);
+        self.row_metadata.clear();
+        self.row_metadata.resize_with(self.area.height(), || None);
         self.slots.clear();
         self.slots.resize_with(area.len(), || Slot::Blank);
 
@@ -419,8 +433,6 @@ impl Layout {
             }
 
             self.write_grapheme(&grapheme);
-
-            // Here we will add linking logic for multiline slots
         }
 
         // A virtual glyph one past the last byte, so the cursor always has somewhere to be,
@@ -484,35 +496,51 @@ mod tests {
     fn wide_glyph_wraps_whole() {
         // Width 5: "abcd" leaves one col, too little for 漢, so it starts the next row
         let layout = layout("abcd漢e", 5, 3);
-        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 1)));
+        assert_eq!(
+            layout.find_byte(4),
+            Some(SlotPosition::new(2, 1)),
+            "漢 starts after the ↩ marker"
+        );
         assert!(
             matches!(layout.slot(4), Some(Slot::Blank)),
             "the gap is blank"
         );
         assert_eq!(
-            layout.row(0).map(|row| (row.meta.to_byte, row.meta.len)),
+            layout
+                .row(0)
+                .map(|row| (row.metadata.to_byte, row.metadata.len)),
             Some((4, 4)),
             "the gap is not part of the row"
         );
-        assert_eq!(layout.find_byte(7), Some(SlotPosition::new(4, 1)));
+        assert_eq!(
+            layout.find_byte(7),
+            Some(SlotPosition::new(4, 1)),
+            "e follows 漢's tail"
+        );
     }
 
     #[test]
     fn wrapped_rows() {
         // Width 4: "abcd" then "↩ ef"
         let layout = layout("abcdef", 4, 3);
-        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 1)));
+        assert_eq!(
+            layout.find_byte(4),
+            Some(SlotPosition::new(2, 1)),
+            "e starts after the ↩ marker"
+        );
         assert_eq!(
             layout
                 .edge_glyph(1, Direction::Forward)
                 .map(|glyph| glyph.from_byte),
-            Some(4)
+            Some(4),
+            "the wrapped row starts on e"
         );
         assert_eq!(
             layout
                 .edge_glyph(0, Direction::Backward)
                 .map(|glyph| glyph.from_byte),
-            Some(3)
+            Some(3),
+            "the first row ends on d"
         );
     }
 
@@ -520,17 +548,33 @@ mod tests {
     fn skips_wrapped_rows() {
         // Width 4: "abcd" then "↩ ef", start on the second
         let layout = scrolled_layout("abcdef", 4, 3, ScrollOffset::new(0, 1));
-        assert_eq!(layout.find_byte(4), Some(SlotPosition::new(2, 0)));
+        assert_eq!(
+            layout.find_byte(4),
+            Some(SlotPosition::new(2, 0)),
+            "after the marker, on top"
+        );
         assert_eq!(layout.find_byte(0), None, "the skipped row is off screen");
-        assert_eq!(layout.scroll_offset(), ScrollOffset::new(0, 1));
+        assert_eq!(
+            layout.scroll_offset(),
+            ScrollOffset::new(0, 1),
+            "one row was skipped"
+        );
     }
 
     #[test]
     fn offset_of_row_counts_wrapped_rows() {
         // Width 4: "abcd", "↩ e\n", then "xy"
         let layout = layout("abcde\nxy", 4, 4);
-        assert_eq!(layout.offset_of_row(1), Some(ScrollOffset::new(0, 1)));
-        assert_eq!(layout.offset_of_row(2), Some(ScrollOffset::new(1, 0)));
+        assert_eq!(
+            layout.offset_of_row(1),
+            Some(ScrollOffset::new(0, 1)),
+            "line 0's wrapped row"
+        );
+        assert_eq!(
+            layout.offset_of_row(2),
+            Some(ScrollOffset::new(1, 0)),
+            "line 1's first row"
+        );
         assert_eq!(layout.offset_of_row(3), None, "past the end of the buffer");
 
         let layout = scrolled_layout("abcde\nxy", 4, 4, ScrollOffset::new(0, 1));
@@ -539,8 +583,16 @@ mod tests {
             Some(ScrollOffset::new(0, 1)),
             "the top row keeps the rows already skipped"
         );
-        assert_eq!(layout.offset_of_row(1), Some(ScrollOffset::new(1, 0)));
-        assert_eq!(layout.last_row(), Some(1));
+        assert_eq!(
+            layout.offset_of_row(1),
+            Some(ScrollOffset::new(1, 0)),
+            "line 1 follows"
+        );
+        assert_eq!(
+            layout.last_row(),
+            Some(1),
+            "line 1 is the last row with text"
+        );
     }
 
     #[test]
@@ -566,7 +618,7 @@ mod tests {
             "its last row is on top"
         );
         assert_eq!(
-            layout.row(1).map(|row| row.meta.line),
+            layout.row(1).map(|row| row.metadata.line),
             Some(1),
             "the next line follows it"
         );

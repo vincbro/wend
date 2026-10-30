@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crop::Rope;
+use crop::{Rope, RopeBuilder};
 
 use crate::grapheme::Grapheme;
 
@@ -14,7 +14,7 @@ pub use change::Change;
 mod error;
 pub use error::{Error, Result};
 
-/// The text of a file, plus its clean state.
+/// Holds the text of a file, plus its clean state.
 ///
 /// There is no undo history. `clean` is the text as it was last loaded or saved, and
 /// undoing reverts to it. crop shares tree nodes between clones, so keeping it around only
@@ -37,7 +37,7 @@ impl Buffer {
         let content = fs::read(path)?;
         let content = str::from_utf8(&content).map_err(|_| Error::InvalidUtf8)?;
 
-        let mut rope_builder = crop::RopeBuilder::new();
+        let mut rope_builder = RopeBuilder::new();
         rope_builder.append(content);
 
         Ok(Self::from_rope(
@@ -65,7 +65,7 @@ impl Buffer {
         &self.rope
     }
 
-    /// If the text differs from the last load or save.
+    /// Returns whether the text differs from the last load or save.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
         self.dirty

@@ -11,7 +11,7 @@ pub struct Cell {
     pub z_index: u8,
 }
 
-/// A cell in the frame, which covers the whole terminal, not just one view.
+/// Locates a cell in the frame, which covers the whole terminal, not just one view.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CellPosition {
     pub col: u16,
@@ -25,7 +25,7 @@ impl CellPosition {
     }
 }
 
-/// What the editor shows, one cell per terminal cell.
+/// Holds what the editor shows, one cell per terminal cell.
 ///
 /// The cells are stored row by row and there are always exactly `area.len()` of them,
 /// which every lookup by position relies on.
@@ -34,13 +34,13 @@ pub struct Frame {
     area: Area,
     cells: Box<[Cell]>,
     mode: Mode,
-    cursor: CellPosition,
+    cursor: Option<CellPosition>,
 }
 
 impl Frame {
-    /// A frame of blank cells.
+    /// Creates a frame of blank cells.
     #[must_use]
-    pub fn new(area: Area, mode: Mode, cursor: CellPosition) -> Self {
+    pub fn new(area: Area, mode: Mode, cursor: Option<CellPosition>) -> Self {
         Self {
             area,
             cells: vec![Cell::default(); area.len()].into_boxed_slice(),
@@ -59,8 +59,9 @@ impl Frame {
         self.mode
     }
 
+    /// Returns where the cursor is, none when the area is empty and can't show it.
     #[must_use]
-    pub fn cursor(&self) -> CellPosition {
+    pub fn cursor(&self) -> Option<CellPosition> {
         self.cursor
     }
 
