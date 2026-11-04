@@ -1,7 +1,7 @@
 use std::{mem, ops};
 
 use crate::{
-    buffer::Buffer,
+    buffer::{self, Buffer},
     frame::{self, Cell, CellPosition, Frame, Grapheme, Rect},
 };
 
@@ -52,6 +52,21 @@ impl View {
             scroll_margin: 10,
             desired_col: 0,
         }
+    }
+
+    #[must_use]
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    /// Takes in the file's new contents. The selection keeps its bytes as far as the new
+    /// text reaches, the same way a revert does.
+    pub fn update(&mut self, bytes: &[u8]) -> buffer::Result<()> {
+        self.buffer.update(bytes)?;
+        self.layout_dirty = true;
+        self.set_selection(self.selection, ColumnPolicy::Sync);
+        self.check_invariants();
+        Ok(())
     }
 
     /// Returns where the head is in the frame, scrolling first so it is on screen, none if
@@ -308,6 +323,20 @@ pub(crate) mod tests {
                 "end of the grapheme starting at {start}"
             );
         }
+    }
+
+    #[test]
+    fn update_to_shorter_text_keeps_the_selection_inside() {
+        let mut view = view("hello world", 20, 5);
+        view.set_selection(Selection::new(6, 10), ColumnPolicy::Sync);
+        view.update(b"hi").unwrap();
+
+        assert_eq!(view.buffer.rope().to_string(), "hi");
+        assert_eq!(
+            (view.selection.anchor(), view.selection.head()),
+            (2, 2),
+            "both ends move back to the end of the new text"
+        );
     }
 
     #[test]

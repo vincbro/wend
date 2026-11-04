@@ -38,7 +38,7 @@ impl CellPosition {
 #[derive(Debug, Clone)]
 pub struct Frame {
     area: Area,
-    cells: Box<[Cell]>,
+    cells: Vec<Cell>,
     cursor: Option<CellPosition>,
 }
 
@@ -48,7 +48,7 @@ impl Frame {
     pub fn new(area: Area, cursor: Option<CellPosition>) -> Self {
         Self {
             area,
-            cells: vec![Cell::default(); area.len()].into_boxed_slice(),
+            cells: vec![Cell::default(); area.len()],
             cursor,
         }
     }
@@ -59,11 +59,26 @@ impl Frame {
         self.cursor
     }
 
+    pub fn set_cursor(&mut self, cursor: Option<CellPosition>) {
+        self.cursor = cursor;
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (CellPosition, &Cell)> {
         let Area { cols, rows } = self.area;
         (0..rows)
             .flat_map(move |row| (0..cols).map(move |col| CellPosition::new(col, row)))
             .zip(self.cells.iter())
+    }
+
+    pub fn resize(&mut self, area: Area) {
+        self.area = area;
+        self.cells.clear();
+        self.cells.resize(area.len(), Cell::default());
+    }
+
+    #[must_use]
+    pub fn area(&self) -> Area {
+        self.area
     }
 
     fn index(&self, pos: CellPosition) -> usize {
@@ -82,7 +97,8 @@ impl Frame {
     ///
     /// If `pos` is outside the frame's area.
     pub fn write(&mut self, pos: CellPosition, cell: Cell) {
-        self.cells[self.index(pos)] = cell;
+        let index = self.index(pos);
+        self.cells[index] = cell;
     }
 
     /// # Panics

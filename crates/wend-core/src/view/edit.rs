@@ -1,4 +1,6 @@
-use std::ops;
+use std::{ops, path::PathBuf};
+
+use crop::Rope;
 
 use super::{ColumnPolicy, Selection, View};
 use crate::buffer::{self, Change};
@@ -69,7 +71,7 @@ impl View {
         self.check_invariants();
     }
 
-    pub fn save(&mut self) -> buffer::Result<()> {
+    pub fn save(&mut self) -> buffer::Result<(PathBuf, Rope)> {
         self.buffer.save()
     }
 }

@@ -1,11 +1,10 @@
 use std::{
-    fs::{self, File},
-    io::{BufWriter, Write},
     ops,
     path::{Path, PathBuf},
 };
 
 use crop::{Rope, RopeBuilder};
+use tree_sitter::Tree;
 
 mod change;
 pub use change::Change;
@@ -21,8 +20,13 @@ pub use error::{Error, Result};
 pub struct Buffer {
     path: Option<PathBuf>,
     rope: Rope,
-    clean: Rope,
-    dirty: bool,
+    clean_rope: Rope,
+    is_dirty: bool,
+    #[allow(
+        dead_code,
+        reason = "tree-sitter parsing is being built, nothing reads it yet"
+    )]
+    tree: Option<Tree>,
 }
 
 impl Buffer {
@@ -31,25 +35,33 @@ impl Buffer {
         Self::from_rope(None, Rope::new())
     }
 
-    pub fn from_path(path: &Path) -> Result<Self> {
-        let content = fs::read(path)?;
-        let content = str::from_utf8(&content).map_err(|_| Error::InvalidUtf8)?;
-
+    pub fn from_bytes(path: PathBuf, bytes: &[u8]) -> Result<Self> {
+        let content = str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let mut rope_builder = RopeBuilder::new();
+
         rope_builder.append(content);
 
-        Ok(Self::from_rope(
-            Some(path.to_path_buf()),
-            rope_builder.build(),
-        ))
+        Ok(Self::from_rope(Some(path), rope_builder.build()))
+    }
+
+    pub fn update(&mut self, bytes: &[u8]) -> Result<()> {
+        let content = str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
+        let mut rope_builder = RopeBuilder::new();
+        rope_builder.append(content);
+        self.clean_rope = rope_builder.build();
+        if !self.is_dirty {
+            self.rope = self.clean_rope.clone();
+        }
+        Ok(())
     }
 
     fn from_rope(path: Option<PathBuf>, rope: Rope) -> Self {
         Self {
             path,
-            clean: rope.clone(),
+            clean_rope: rope.clone(),
             rope,
-            dirty: false,
+            is_dirty: false,
+            tree: None,
         }
     }
 
@@ -66,7 +78,7 @@ impl Buffer {
     /// Returns whether the text differs from the last load or save.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.is_dirty
     }
 
     /// Replaces `range` with `text`, the only way the text changes.
@@ -90,32 +102,26 @@ impl Buffer {
         }
 
         self.rope.replace(range, text);
-        self.dirty = true;
+        self.is_dirty = true;
         change
     }
 
     /// Throws away every edit since the last load or save.
     pub fn revert(&mut self) {
         // Copy, not swap, a swap would make the edits the new clean state
-        self.rope = self.clean.clone();
-        self.dirty = false;
+        self.rope = self.clean_rope.clone();
+        self.is_dirty = false;
     }
 
-    /// Writes the text to `path` and makes it the new clean state.
-    pub fn save(&mut self) -> Result<()> {
+    /// Makes the text the new clean state, and returns the path and text to write.
+    pub fn save(&mut self) -> Result<(PathBuf, Rope)> {
         let Some(path) = &self.path else {
             return Err(Error::NoPath);
         };
 
-        let mut file = BufWriter::new(File::create(path)?);
-        for chunk in self.rope.chunks() {
-            file.write_all(chunk.as_bytes())?;
-        }
-        file.flush()?;
-
-        self.clean = self.rope.clone();
-        self.dirty = false;
-        Ok(())
+        self.clean_rope = self.rope.clone();
+        self.is_dirty = false;
+        Ok((path.clone(), self.rope.clone()))
     }
 }
 
@@ -133,8 +139,6 @@ impl From<&str> for Buffer {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, process};
-
     use super::*;
 
     #[test]
@@ -176,11 +180,7 @@ mod tests {
 
     #[test]
     fn non_utf8_file_is_an_error() {
-        let path = env::temp_dir().join(format!("wend-latin1-{}.txt", process::id()));
-        fs::write(&path, b"caf\xe9").unwrap();
-
-        let result = Buffer::from_path(&path);
-        fs::remove_file(&path).unwrap();
+        let result = Buffer::from_bytes(PathBuf::from("latin1.txt"), b"caf\xe9");
         assert!(
             matches!(result, Err(Error::InvalidUtf8)),
             "a latin-1 file is refused, not a panic"
@@ -194,18 +194,24 @@ mod tests {
     }
 
     #[test]
-    fn save_then_revert_keeps_saved_text() {
-        let path = env::temp_dir().join(format!("wend-save-{}.txt", process::id()));
-        fs::write(&path, "abc").unwrap();
+    fn save_returns_the_text_to_write() {
+        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        buffer.edit(3..3, "d");
+        let (path, rope) = buffer.save().unwrap();
 
-        let mut buffer = Buffer::from_path(&path).unwrap();
+        assert_eq!(path, PathBuf::from("a.txt"));
+        assert_eq!(rope.to_string(), "abcd");
+        assert!(!buffer.is_dirty(), "the saved text is the clean state");
+    }
+
+    #[test]
+    fn save_then_revert_keeps_saved_text() {
+        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
         buffer.edit(3..3, "d");
         buffer.save().unwrap();
         buffer.edit(0..1, "X");
         buffer.revert();
 
         assert_eq!(buffer.rope().to_string(), "abcd");
-        assert_eq!(fs::read_to_string(&path).unwrap(), "abcd");
-        fs::remove_file(&path).unwrap();
     }
 }

@@ -17,6 +17,7 @@ bench = false
 [dependencies]
 crop.workspace = true
 thiserror.workspace = true
+tree-sitter.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]

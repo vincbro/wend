@@ -3,5 +3,5 @@
 # come with it. The oldest Rust wend builds on is rust-version in Cargo.toml.
 [toolchain]
 channel = "1.99.0"
-components = ["clippy", "rustfmt"]
+components = ["clippy", "rustfmt", "rust-analyzer", "rust-src"]
 profile = "minimal"

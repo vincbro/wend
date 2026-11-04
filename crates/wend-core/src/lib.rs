@@ -5,4 +5,6 @@
 pub mod buffer;
 pub mod editor;
 pub mod frame;
+pub mod input;
+pub mod output;
 pub mod view;

@@ -8,7 +8,7 @@ pub(crate) fn terminal_coordinate(value: usize) -> u16 {
     u16::try_from(value).expect("an area is measured in u16, so positions inside it fit")
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Area {
     pub cols: u16,
     pub rows: u16,

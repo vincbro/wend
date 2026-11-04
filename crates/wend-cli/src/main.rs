@@ -1,24 +1,30 @@
 //! The `wend` binary: the terminal frontend for `wend-core`.
 
 use std::{
-    io::{self, Write},
-    mem,
-    ops::ControlFlow,
+    fs::{self, File},
+    io::{self, BufWriter, Write},
     panic,
-    path::Path,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::mpsc,
+    thread,
 };
 
 use anyhow::{Context, Result, bail};
 use crossterm::{
     QueueableCommand, cursor,
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyEvent, KeyEventKind, KeyModifiers},
     style::{self, Attribute},
     terminal::{self},
 };
 use wend_core::{
-    editor::{Editor, Mode},
+    editor::Editor,
     frame::{Area, Cell, CellPosition, Frame},
-    view::{Direction, Motion},
+    input::{
+        Input,
+        key::{Key, KeyCode, Modifiers},
+    },
+    output,
 };
 
 use crate::theme::MELLOW;
@@ -100,121 +106,87 @@ fn main() -> Result<()> {
         default_hook(panic_info);
     }));
 
+    let (otx, orx) = mpsc::channel();
+    let (itx, irx) = mpsc::channel();
+
     let _guard = TerminalGuard::enter().context("failed to set up the terminal")?;
     let mut stdout = io::stdout();
 
     let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
-    let mut editor = Editor::new(area);
-    editor
-        .open_file(Path::new(&args.file))
-        .with_context(|| format!("failed to open {}", args.file))?;
-    let mut frame = editor.frame();
-    draw(&mut editor, &mut frame, &mut stdout)?;
+    let editor = Editor::new(area);
 
-    // Set by the first key of a two-key binding, like the g in gs
-    let mut pending_g = false;
+    let path = PathBuf::from_str(&args.file)?;
+    let bytes = fs::read(&path)?.into_boxed_slice();
+    itx.send(Input::File { path, bytes })?;
 
-    loop {
-        let event = event::read().context("failed to read a terminal event")?;
-        if handle_event(&mut editor, &event, &mut pending_g).is_break() {
-            break;
+    thread::spawn(move || editor.run(&irx, &otx));
+
+    let terminal_tx = itx.clone();
+    thread::spawn(move || {
+        while let Ok(event) = event::read() {
+            let Some(input) = to_input(&event) else {
+                continue;
+            };
+            // The editor is gone, nobody is left to read input
+            if terminal_tx.send(input).is_err() {
+                break;
+            }
         }
-        draw(&mut editor, &mut frame, &mut stdout)?;
+    });
+
+    for output in orx {
+        match output {
+            output::Output::Frame(frame) => {
+                render_frame(&frame, &mut stdout)?;
+                itx.send(Input::Drawn(frame))?;
+            }
+            output::Output::Quit => break,
+            output::Output::Write { path, rope } => write_file(&path, rope.chunks())?,
+        }
     }
+
     Ok(())
 }
 
-fn draw(editor: &mut Editor, frame: &mut Frame, writer: &mut impl Write) -> Result<()> {
-    editor.update_frame(frame);
-    render_frame(frame, writer).context("failed to draw the frame")
-}
-
-fn handle_event(editor: &mut Editor, event: &Event, pending_g: &mut bool) -> ControlFlow<()> {
+/// Turns a terminal event into an input for the editor, none for events it has no use for.
+fn to_input(event: &Event) -> Option<Input> {
     match *event {
-        Event::Resize(cols, rows) => editor.resize(Area::new(cols, rows)),
-        Event::Key(key) if editor.is_insert() => insert_key(editor, key.code),
-        Event::Key(key) => return normal_key(editor, key.code, pending_g),
-        _ => {}
-    }
-    ControlFlow::Continue(())
-}
-
-fn insert_key(editor: &mut Editor, code: KeyCode) {
-    match code {
-        KeyCode::Esc => editor.set_mode(Mode::Normal),
-        KeyCode::Backspace => editor.view_mut().delete(),
-        KeyCode::Tab => editor.view_mut().insert('\t'),
-        KeyCode::Enter => editor.view_mut().insert('\n'),
-        KeyCode::Char(c) => editor.view_mut().insert(c),
-        _ => {}
-    }
-}
-
-/// Normal and Select share one keymap, Select only makes motions extend.
-fn normal_key(editor: &mut Editor, code: KeyCode, pending_g: &mut bool) -> ControlFlow<()> {
-    let extend = editor.is_select();
-
-    if mem::take(pending_g) {
-        if let Some(motion) = g_motion(code) {
-            editor.view_mut().move_selection(motion, extend);
+        Event::Resize(cols, rows) => Some(Input::Resize(Area::new(cols, rows))),
+        Event::Key(key_event) if key_event.kind != KeyEventKind::Release => {
+            to_key(key_event).map(Input::Key)
         }
-        return ControlFlow::Continue(());
-    }
-    if code.is_esc() {
-        editor.set_mode(Mode::Normal);
-        return ControlFlow::Continue(());
-    }
-    let Some(c) = code.as_char() else {
-        return ControlFlow::Continue(());
-    };
-    if let Some(motion) = motion(c) {
-        editor.view_mut().move_selection(motion, extend);
-        return ControlFlow::Continue(());
-    }
-
-    match c {
-        'g' => *pending_g = true,
-        'd' => editor.view_mut().delete_selection(),
-        'u' => editor.view_mut().revert(),
-        // TODO: show the error once there is a status line
-        's' => drop(editor.view_mut().save()),
-        'i' => editor.set_mode(Mode::Insert),
-        'o' => {
-            editor.view_mut().new_line();
-            editor.set_mode(Mode::Insert);
-        }
-        'v' => editor.set_mode(if extend { Mode::Normal } else { Mode::Select }),
-        'q' => return ControlFlow::Break(()),
-        _ => {}
-    }
-    ControlFlow::Continue(())
-}
-
-fn motion(c: char) -> Option<Motion> {
-    let motion = match c {
-        'h' => Motion::Horizontal(Direction::Backward),
-        'l' => Motion::Horizontal(Direction::Forward),
-        'j' => Motion::Vertical(Direction::Forward),
-        'k' => Motion::Vertical(Direction::Backward),
-        'w' => Motion::Word(Direction::Forward),
-        'b' => Motion::Word(Direction::Backward),
-        'H' => Motion::Line(Direction::Backward),
-        'L' => Motion::Line(Direction::Forward),
-        'J' => Motion::Page(Direction::Forward),
-        'K' => Motion::Page(Direction::Backward),
-        _ => return None,
-    };
-    Some(motion)
-}
-
-/// The motion for the key after a g.
-fn g_motion(code: KeyCode) -> Option<Motion> {
-    match code.as_char()? {
-        's' => Some(Motion::File(Direction::Backward)),
-        'e' => Some(Motion::File(Direction::Forward)),
         _ => None,
     }
+}
+
+fn to_key(key_event: KeyEvent) -> Option<Key> {
+    let code = match key_event.code {
+        event::KeyCode::Backspace => KeyCode::Backspace,
+        event::KeyCode::Enter => KeyCode::Enter,
+        event::KeyCode::Esc => KeyCode::Esc,
+        event::KeyCode::Tab | event::KeyCode::BackTab => KeyCode::Tab,
+        event::KeyCode::Char(c) => KeyCode::Char(c),
+        _ => return None,
+    };
+    let is_shifted = key_event.modifiers.contains(KeyModifiers::SHIFT)
+        || key_event.code == event::KeyCode::BackTab;
+    let modifiers = Modifiers {
+        alt: key_event.modifiers.contains(KeyModifiers::ALT),
+        control: key_event.modifiers.contains(KeyModifiers::CONTROL),
+        // A character is already the shifted one, and the keymap binds it that way
+        shift: is_shifted && !matches!(code, KeyCode::Char(_)),
+    };
+    Some(Key { code, modifiers })
+}
+
+/// Writes the text chunk by chunk, so it is never copied into one string first.
+fn write_file<'a>(path: &Path, chunks: impl Iterator<Item = &'a str>) -> io::Result<()> {
+    let mut file = BufWriter::new(File::create(path)?);
+    for chunk in chunks {
+        file.write_all(chunk.as_bytes())?;
+    }
+    file.flush()
 }
 
 fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
@@ -248,4 +220,57 @@ fn queue_cell(cell: &Cell, pos: CellPosition, writer: &mut impl Write) -> Result
         .queue(style::Print(cell.grapheme.as_str_sanitize()))?
         .queue(style::SetAttribute(Attribute::Reset))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key_event(code: event::KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn shifted_characters_drop_shift() {
+        let key = to_key(key_event(event::KeyCode::Char('H'), KeyModifiers::SHIFT)).unwrap();
+        assert_eq!(
+            key,
+            Key::plain(KeyCode::Char('H')),
+            "the keymap binds H, not shift and H"
+        );
+    }
+
+    #[test]
+    fn back_tab_is_shift_tab() {
+        let key = to_key(key_event(event::KeyCode::BackTab, KeyModifiers::SHIFT)).unwrap();
+        assert_eq!(key.code, KeyCode::Tab);
+        assert!(
+            key.modifiers.shift,
+            "shift stays on keys that aren't characters"
+        );
+    }
+
+    #[test]
+    fn control_stays_on_characters() {
+        let key = to_key(key_event(event::KeyCode::Char('s'), KeyModifiers::CONTROL)).unwrap();
+        assert!(key.modifiers.control);
+    }
+
+    #[test]
+    fn resize_becomes_an_input() {
+        assert!(matches!(
+            to_input(&Event::Resize(80, 24)),
+            Some(Input::Resize(Area { cols: 80, rows: 24 }))
+        ));
+    }
+
+    #[test]
+    fn key_releases_are_dropped() {
+        let mut release = key_event(event::KeyCode::Char('j'), KeyModifiers::NONE);
+        release.kind = KeyEventKind::Release;
+        assert!(
+            to_input(&Event::Key(release)).is_none(),
+            "or j would move twice"
+        );
+    }
 }
