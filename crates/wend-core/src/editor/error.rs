@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::{result, sync::mpsc};
 
 use crate::{buffer, output::Output};
 
@@ -7,5 +7,7 @@ pub enum Error {
     #[error("buffer operation failed")]
     Buffer(#[from] buffer::Error),
     #[error("failed to send output")]
-    SendError(#[from] mpsc::SendError<Output>),
+    Send(#[from] mpsc::SendError<Output>),
 }
+
+pub type Result<T> = result::Result<T, Error>;

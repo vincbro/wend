@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::input::action::Action;
 
-/// A keymap: each key leads to the actions it runs, or to a node of keys that continue the
-/// combo. A key is never both, so a combo is done the moment it reaches a leaf.
+/// A tree of key combos: each key leads to the actions it runs, or to a node of keys that
+/// continue the combo. A key is never both, so a combo is done the moment it reaches a leaf.
 #[derive(Debug, Clone)]
 pub enum KeyTree {
     Leaf(Vec<Action>),
@@ -15,7 +15,7 @@ pub enum KeyTree {
 
 impl KeyTree {
     #[must_use]
-    pub fn node(description: &str, children: Vec<(Key, Self)>) -> Self {
+    pub fn from_children(description: &str, children: Vec<(Key, Self)>) -> Self {
         Self::Node {
             description: description.to_owned(),
             children: children.into_iter().collect(),
@@ -41,7 +41,7 @@ pub struct Key {
 
 impl Key {
     #[must_use]
-    pub fn plain(code: KeyCode) -> Self {
+    pub fn new(code: KeyCode) -> Self {
         Self {
             code,
             modifiers: Modifiers::default(),
@@ -74,17 +74,20 @@ mod tests {
     use crate::input::action::Action;
 
     fn key(c: char) -> Key {
-        Key::plain(KeyCode::Char(c))
+        Key::new(KeyCode::Char(c))
     }
 
     fn tree() -> KeyTree {
-        KeyTree::node(
+        KeyTree::from_children(
             "root",
             vec![
                 (key('q'), KeyTree::Leaf(vec![Action::Quit])),
                 (
                     key('g'),
-                    KeyTree::node("goto", vec![(key('s'), KeyTree::Leaf(vec![Action::Save]))]),
+                    KeyTree::from_children(
+                        "goto",
+                        vec![(key('s'), KeyTree::Leaf(vec![Action::Save]))],
+                    ),
                 ),
             ],
         )

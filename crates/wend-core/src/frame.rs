@@ -70,6 +70,8 @@ impl Frame {
             .zip(self.cells.iter())
     }
 
+    /// Fits the frame to `area` and blanks every cell, since at a new width the old cells
+    /// would land on other positions.
     pub fn resize(&mut self, area: Area) {
         self.area = area;
         self.cells.clear();
@@ -108,5 +110,29 @@ impl Frame {
     pub fn row(&self, row: u16) -> &[Cell] {
         let start = self.index(CellPosition::new(0, row));
         &self.cells[start..start + self.area.width()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_blanks_every_cell() {
+        let mut frame = Frame::new(Area::new(4, 2), None);
+        frame.write(
+            CellPosition::new(3, 0),
+            Cell {
+                selected: true,
+                ..Cell::default()
+            },
+        );
+        frame.resize(Area::new(2, 4));
+
+        assert_eq!(frame.area(), Area::new(2, 4));
+        assert!(
+            frame.iter().all(|(_, cell)| !cell.selected),
+            "nothing from the old width shows up at another position"
+        );
     }
 }

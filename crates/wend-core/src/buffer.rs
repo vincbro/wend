@@ -44,6 +44,8 @@ impl Buffer {
         Ok(Self::from_rope(Some(path), rope_builder.build()))
     }
 
+    /// Takes in the file's new contents as the clean state. Without unsaved edits the text
+    /// becomes them too, with unsaved edits it stays as it is.
     pub fn update(&mut self, bytes: &[u8]) -> Result<()> {
         let content = str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let mut rope_builder = RopeBuilder::new();
@@ -213,5 +215,39 @@ mod tests {
         buffer.revert();
 
         assert_eq!(buffer.rope().to_string(), "abcd");
+    }
+
+    #[test]
+    fn update_without_edits_takes_the_new_text() {
+        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        buffer.update(b"xyz").unwrap();
+        assert_eq!(buffer.rope().to_string(), "xyz");
+        assert!(!buffer.is_dirty());
+    }
+
+    #[test]
+    fn update_with_edits_keeps_them() {
+        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        buffer.edit(3..3, "d");
+        buffer.update(b"xyz").unwrap();
+        assert_eq!(
+            buffer.rope().to_string(),
+            "abcd",
+            "unsaved edits aren't thrown away"
+        );
+
+        buffer.revert();
+        assert_eq!(
+            buffer.rope().to_string(),
+            "xyz",
+            "the new contents are the clean state"
+        );
+    }
+
+    #[test]
+    fn update_with_invalid_utf8_is_an_error() {
+        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        assert!(matches!(buffer.update(b"caf\xe9"), Err(Error::InvalidUtf8)));
+        assert_eq!(buffer.rope().to_string(), "abc", "the text is left alone");
     }
 }

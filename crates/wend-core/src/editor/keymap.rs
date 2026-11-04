@@ -75,40 +75,46 @@ impl Default for Keymap {
 }
 
 fn key(c: char) -> Key {
-    Key::plain(KeyCode::Char(c))
+    Key::new(KeyCode::Char(c))
 }
 
 fn leaf(action: Action) -> KeyTree {
     KeyTree::Leaf(vec![action])
 }
 
-fn motion(motion: Motion) -> KeyTree {
+fn motion_leaf(motion: Motion) -> KeyTree {
     leaf(Action::Motion(motion))
 }
 
-/// Normal and select mode share one tree, select only makes motions extend. `v` toggles
-/// between them, so it goes to `toggle`, the other mode.
-fn command_tree(description: &str, toggle: Mode) -> KeyTree {
-    KeyTree::node(
+/// Normal and select mode share one tree, select only makes motions extend. `v` switches
+/// to `other_mode`.
+fn command_tree(description: &str, other_mode: Mode) -> KeyTree {
+    KeyTree::from_children(
         description,
         vec![
-            (key('h'), motion(Motion::Horizontal(Direction::Backward))),
-            (key('l'), motion(Motion::Horizontal(Direction::Forward))),
-            (key('j'), motion(Motion::Vertical(Direction::Forward))),
-            (key('k'), motion(Motion::Vertical(Direction::Backward))),
-            (key('w'), motion(Motion::Word(Direction::Forward))),
-            (key('b'), motion(Motion::Word(Direction::Backward))),
-            (key('H'), motion(Motion::Line(Direction::Backward))),
-            (key('L'), motion(Motion::Line(Direction::Forward))),
-            (key('J'), motion(Motion::Page(Direction::Forward))),
-            (key('K'), motion(Motion::Page(Direction::Backward))),
+            (
+                key('h'),
+                motion_leaf(Motion::Horizontal(Direction::Backward)),
+            ),
+            (
+                key('l'),
+                motion_leaf(Motion::Horizontal(Direction::Forward)),
+            ),
+            (key('j'), motion_leaf(Motion::Vertical(Direction::Forward))),
+            (key('k'), motion_leaf(Motion::Vertical(Direction::Backward))),
+            (key('w'), motion_leaf(Motion::Word(Direction::Forward))),
+            (key('b'), motion_leaf(Motion::Word(Direction::Backward))),
+            (key('H'), motion_leaf(Motion::Line(Direction::Backward))),
+            (key('L'), motion_leaf(Motion::Line(Direction::Forward))),
+            (key('J'), motion_leaf(Motion::Page(Direction::Forward))),
+            (key('K'), motion_leaf(Motion::Page(Direction::Backward))),
             (
                 key('g'),
-                KeyTree::node(
+                KeyTree::from_children(
                     "goto",
                     vec![
-                        (key('s'), motion(Motion::File(Direction::Backward))),
-                        (key('e'), motion(Motion::File(Direction::Forward))),
+                        (key('s'), motion_leaf(Motion::File(Direction::Backward))),
+                        (key('e'), motion_leaf(Motion::File(Direction::Forward))),
                     ],
                 ),
             ),
@@ -120,9 +126,9 @@ fn command_tree(description: &str, toggle: Mode) -> KeyTree {
                 key('o'),
                 KeyTree::Leaf(vec![Action::OpenLine, Action::Mode(Mode::Insert)]),
             ),
-            (key('v'), leaf(Action::Mode(toggle))),
+            (key('v'), leaf(Action::Mode(other_mode))),
             (key('q'), leaf(Action::Quit)),
-            (Key::plain(KeyCode::Esc), leaf(Action::Mode(Mode::Normal))),
+            (Key::new(KeyCode::Esc), leaf(Action::Mode(Mode::Normal))),
         ],
     )
 }
@@ -130,13 +136,13 @@ fn command_tree(description: &str, toggle: Mode) -> KeyTree {
 /// Only the keys that don't type themselves: the editor types any character the tree
 /// doesn't bind.
 fn insert_tree() -> KeyTree {
-    KeyTree::node(
+    KeyTree::from_children(
         "insert",
         vec![
-            (Key::plain(KeyCode::Esc), leaf(Action::Mode(Mode::Normal))),
-            (Key::plain(KeyCode::Backspace), leaf(Action::Delete)),
-            (Key::plain(KeyCode::Enter), leaf(Action::Insert('\n'))),
-            (Key::plain(KeyCode::Tab), leaf(Action::Insert('\t'))),
+            (Key::new(KeyCode::Esc), leaf(Action::Mode(Mode::Normal))),
+            (Key::new(KeyCode::Backspace), leaf(Action::Delete)),
+            (Key::new(KeyCode::Enter), leaf(Action::Insert('\n'))),
+            (Key::new(KeyCode::Tab), leaf(Action::Insert('\t'))),
         ],
     )
 }

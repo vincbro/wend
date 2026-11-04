@@ -1,7 +1,14 @@
+use std::path::PathBuf;
+
 use wend_core::{
     buffer::Buffer,
     editor::{Editor, Mode},
     frame::{Area, CellPosition, Frame},
+    input::{
+        Input,
+        key::{Key, KeyCode},
+    },
+    output::Output,
     view::{Direction, Motion},
 };
 
@@ -130,6 +137,45 @@ mod tests {
             editor.frame().cursor(),
             Some(CellPosition::new(0, 0)),
             "back on the first grapheme"
+        );
+    }
+
+    /// Applies `input` and returns the frames it sent, the way a frontend sees them.
+    fn send(editor: &mut Editor, input: Input) -> Vec<Frame> {
+        editor.apply(input).unwrap();
+        editor
+            .drain_outputs()
+            .filter_map(|output| match output {
+                Output::Frame(frame) => Some(frame),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn keys_in_frame_out() {
+        let mut editor = Editor::new(Area::new(20, 3));
+        let file = Input::File {
+            path: PathBuf::from("a.txt"),
+            bytes: b"abc".as_slice().into(),
+        };
+        let opened = send(&mut editor, file);
+        assert_eq!(
+            row_text(&opened[0], 0),
+            "abc",
+            "the file shows once it arrives"
+        );
+        send(
+            &mut editor,
+            Input::Drawn(opened.into_iter().next().unwrap()),
+        );
+
+        send(&mut editor, Input::Key(Key::new(KeyCode::Char('i'))));
+        let typed = send(&mut editor, Input::Key(Key::new(KeyCode::Char('x'))));
+        assert_eq!(
+            row_text(typed.last().unwrap(), 0),
+            "xabc",
+            "typed in front of the cursor"
         );
     }
 }

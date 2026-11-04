@@ -1,6 +1,5 @@
 use std::{
     path::PathBuf,
-    result,
     sync::mpsc::{Receiver, Sender},
     vec::Drain,
 };
@@ -16,8 +15,7 @@ use crate::{
 mod keymap;
 use keymap::Keymap;
 mod error;
-pub use error::Error;
-pub type Result<T> = result::Result<T, Error>;
+pub use error::{Error, Result};
 
 /// The widest the view gets, wider terminals center it.
 const MAX_VIEW_COLS: u16 = 100;
@@ -37,6 +35,9 @@ pub enum Mode {
     Insert,
 }
 
+/// The frames the editor can draw into. A frame goes out with `Output::Frame` and comes
+/// back with `Input::Drawn`, so only `count` frames ever exist and none is allocated
+/// after startup. An empty pool means the frontend is still drawing.
 #[derive(Debug)]
 struct FramePool {
     spares: Vec<Frame>,
@@ -45,10 +46,10 @@ struct FramePool {
 
 impl FramePool {
     #[must_use]
-    pub(crate) fn new(size: usize, area: Area) -> Self {
+    pub(crate) fn new(count: usize, area: Area) -> Self {
         Self {
             area,
-            spares: vec![Frame::new(area, None); size],
+            spares: vec![Frame::new(area, None); count],
         }
     }
 
@@ -106,10 +107,12 @@ impl Editor {
         }
     }
 
+    /// Applies every input and sends the outputs, until the input channel closes or an
+    /// input fails.
     pub fn run(mut self, inputs: &Receiver<Input>, outputs: &Sender<Output>) -> Result<()> {
         for input in inputs {
             self.apply(input)?;
-            for output in self.outputs() {
+            for output in self.drain_outputs() {
                 outputs.send(output)?;
             }
         }
@@ -117,13 +120,15 @@ impl Editor {
         Ok(())
     }
 
+    /// Applies `input`, then draws a frame if the screen is out of date and a spare frame is
+    /// in the pool. Inputs that arrive while every frame is out share the next frame.
     pub fn apply(&mut self, input: Input) -> Result<()> {
         let changed = !matches!(input, Input::Drawn(_));
         match input {
             Input::Action(action) => self.perform(action)?,
             Input::Key(key) => self.key_press(key)?,
             Input::Resize(area) => self.resize(area),
-            Input::File { path, bytes } => self.create_buffer(path, &bytes)?,
+            Input::File { path, bytes } => self.show_file(path, &bytes)?,
             Input::Drawn(frame) => self.frame_pool.place(frame),
         }
 
@@ -165,7 +170,7 @@ impl Editor {
         Ok(())
     }
 
-    pub fn outputs(&mut self) -> Drain<'_, Output> {
+    pub fn drain_outputs(&mut self) -> Drain<'_, Output> {
         self.outputs.drain(..)
     }
 
@@ -185,7 +190,7 @@ impl Editor {
 
     /// Shows the file at `path`, reusing its buffer if it's among the open buffers. The buffer
     /// shown before joins them.
-    fn create_buffer(&mut self, path: PathBuf, bytes: &[u8]) -> buffer::Result<()> {
+    fn show_file(&mut self, path: PathBuf, bytes: &[u8]) -> buffer::Result<()> {
         if self.view.buffer().path() == Some(path.as_path()) {
             self.view.update(bytes)?;
         } else if let Some(index) = self
@@ -257,7 +262,7 @@ mod tests {
                 '\u{8}' => KeyCode::Backspace,
                 c => KeyCode::Char(c),
             };
-            editor.apply(Input::Key(Key::plain(code))).unwrap();
+            editor.apply(Input::Key(Key::new(code))).unwrap();
         }
     }
 
@@ -314,15 +319,40 @@ mod tests {
         press(&mut editor, "q");
         assert!(
             editor
-                .outputs()
+                .drain_outputs()
                 .any(|output| matches!(output, Output::Quit))
+        );
+    }
+
+    #[test]
+    fn a_file_opens_and_then_updates() {
+        let mut editor = Editor::new(Area::new(80, 24));
+        let path = PathBuf::from("a.txt");
+        let file = |bytes: &[u8]| Input::File {
+            path: path.clone(),
+            bytes: bytes.into(),
+        };
+
+        editor.apply(file(b"abc")).unwrap();
+        assert_eq!(text(&editor), "abc");
+        assert_eq!(editor.view().buffer().path(), Some(path.as_path()));
+
+        editor.apply(file(b"xyz")).unwrap();
+        assert_eq!(
+            text(&editor),
+            "xyz",
+            "the same path updates the shown buffer"
+        );
+        assert!(
+            editor.buffers.iter().all(|buffer| buffer.path().is_none()),
+            "only the empty buffer the editor started with, no second copy of the file"
         );
     }
 
     /// Takes the outputs and returns the frames among them.
     fn frames(editor: &mut Editor) -> Vec<Frame> {
         editor
-            .outputs()
+            .drain_outputs()
             .filter_map(|output| match output {
                 Output::Frame(frame) => Some(frame),
                 _ => None,

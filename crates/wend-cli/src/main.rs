@@ -106,8 +106,8 @@ fn main() -> Result<()> {
         default_hook(panic_info);
     }));
 
-    let (otx, orx) = mpsc::channel();
-    let (itx, irx) = mpsc::channel();
+    let (output_tx, output_rx) = mpsc::channel();
+    let (input_tx, input_rx) = mpsc::channel();
 
     let _guard = TerminalGuard::enter().context("failed to set up the terminal")?;
     let mut stdout = io::stdout();
@@ -118,11 +118,11 @@ fn main() -> Result<()> {
 
     let path = PathBuf::from_str(&args.file)?;
     let bytes = fs::read(&path)?.into_boxed_slice();
-    itx.send(Input::File { path, bytes })?;
+    input_tx.send(Input::File { path, bytes })?;
 
-    thread::spawn(move || editor.run(&irx, &otx));
+    thread::spawn(move || editor.run(&input_rx, &output_tx));
 
-    let terminal_tx = itx.clone();
+    let terminal_tx = input_tx.clone();
     thread::spawn(move || {
         while let Ok(event) = event::read() {
             let Some(input) = to_input(&event) else {
@@ -135,11 +135,11 @@ fn main() -> Result<()> {
         }
     });
 
-    for output in orx {
+    for output in output_rx {
         match output {
             output::Output::Frame(frame) => {
                 render_frame(&frame, &mut stdout)?;
-                itx.send(Input::Drawn(frame))?;
+                input_tx.send(Input::Drawn(frame))?;
             }
             output::Output::Quit => break,
             output::Output::Write { path, rope } => write_file(&path, rope.chunks())?,
@@ -235,7 +235,7 @@ mod tests {
         let key = to_key(key_event(event::KeyCode::Char('H'), KeyModifiers::SHIFT)).unwrap();
         assert_eq!(
             key,
-            Key::plain(KeyCode::Char('H')),
+            Key::new(KeyCode::Char('H')),
             "the keymap binds H, not shift and H"
         );
     }
