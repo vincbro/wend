@@ -3,10 +3,12 @@ use std::{mem, ops};
 use crate::{
     buffer::{self, Buffer},
     frame::{self, Cell, CellPosition, Frame, Grapheme, Rect},
-    syntax::{self, Syntax},
+    syntax::{self, Highlight, Syntax},
 };
 
 mod edit;
+mod highlight;
+use highlight::Highlighter;
 mod layout;
 use layout::{Glyph, Layout, ScrollOffset, Slot, SlotPosition};
 mod motion;
@@ -35,6 +37,8 @@ pub struct View {
     layout: Layout,
     layout_dirty: bool,
     selection: Selection,
+    /// Scratch space for `render`, kept so that its memory is reused.
+    open_highlights: Vec<(usize, Highlight)>,
 
     scroll_margin: usize,
     desired_col: usize,
@@ -49,6 +53,7 @@ impl View {
             layout: Layout::new(rect.area, ScrollOffset::default()),
             layout_dirty: true,
             selection: Selection::point(0),
+            open_highlights: vec![],
 
             scroll_margin: 10,
             desired_col: 0,
@@ -243,12 +248,31 @@ impl View {
     /// # Panics
     ///
     /// If the view's rect reaches outside `frame`.
-    pub fn render(&mut self, frame: &mut Frame) {
+    pub fn render(&mut self, frame: &mut Frame, syntax: &mut Syntax) {
         self.refresh_layout();
         let selected = self.selection_range();
+        let mut open = mem::take(&mut self.open_highlights);
+        let spans = self.buffer.highlights(syntax, self.visible_bytes());
+        let mut highlighter = Highlighter::new(spans, &mut open);
         for (pos, slot) in self.layout.slots() {
-            frame.write(self.cell_position(pos), self.cell(slot, pos, &selected));
+            let mut cell = self.cell(slot, pos, &selected);
+            // Tails are blanks, only the glyph itself has a color
+            if let Slot::Glyph(glyph) = slot {
+                cell.highlight = highlighter.at(glyph.from_byte);
+            }
+            frame.write(self.cell_position(pos), cell);
         }
+        self.open_highlights = open;
+    }
+
+    /// The bytes of the text the layout shows, from the first row's start to the last row's end.
+    fn visible_bytes(&self) -> ops::Range<usize> {
+        let mut rows = self.layout.rows();
+        let Some(first) = rows.next() else {
+            return 0..0;
+        };
+        let last = rows.last().unwrap_or(first);
+        first.metadata.from_byte..last.metadata.to_byte
     }
 
     /// The cell the slot at `pos` renders as. `selected` is the selection's byte range.
@@ -282,6 +306,8 @@ impl View {
             cursor: glyph.to_range().contains(&self.selection.head()),
             selected: selected.contains(&glyph.from_byte),
             covered,
+            // Set by render, which walks the cells in order
+            highlight: None,
         }
     }
 }
@@ -289,7 +315,7 @@ impl View {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::frame::Area;
+    use crate::{frame::Area, syntax::LanguageTag};
 
     pub(crate) fn view(text: &str, cols: u16, rows: u16) -> View {
         let mut view = View::new(Rect::new(0, 0, Area::new(cols, rows)));
@@ -364,7 +390,7 @@ pub(crate) mod tests {
     fn render_covers_wide_tails_only() {
         let mut view = view("a😀b\tc", 20, 2);
         let mut frame = Frame::new(Area::new(20, 2), None);
-        view.render(&mut frame);
+        view.render(&mut frame, &mut Syntax::new().unwrap());
         let cell = |col: u16| frame.get(CellPosition::new(col, 0));
 
         assert_eq!(cell(1).grapheme.as_str(), "😀");
@@ -378,5 +404,30 @@ pub(crate) mod tests {
             "tab tails print blanks"
         );
         assert_eq!(cell(8).grapheme.as_str(), "c");
+    }
+
+    #[test]
+    fn render_colors_the_highlighted_text() {
+        let mut syntax = Syntax::new().unwrap();
+        syntax
+            .load(
+                LanguageTag::new("rust"),
+                include_bytes!("../../../tree-sitter-rust.wasm"),
+                include_bytes!("../../../highlights.scm"),
+            )
+            .unwrap();
+        let mut view = view("fn main() {}", 20, 2);
+        view.buffer_mut()
+            .set_language(Some(LanguageTag::new("rust")));
+        view.reparse(&mut syntax).unwrap();
+        let mut frame = Frame::new(Area::new(20, 2), None);
+
+        view.render(&mut frame, &mut syntax);
+
+        let highlight = |col: u16| frame.get(CellPosition::new(col, 0)).highlight;
+        assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
+        assert_eq!(highlight(1), Some(Highlight::Keyword), "the n of fn");
+        assert_eq!(highlight(2), None, "the space");
+        assert_eq!(highlight(3), Some(Highlight::Function), "the m of main");
     }
 }

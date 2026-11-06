@@ -11,7 +11,7 @@ pub use change::Change;
 mod error;
 pub use error::{Error, Result};
 
-use crate::syntax::{self, LanguageTag, Syntax};
+use crate::syntax::{self, Highlight, LanguageTag, Syntax};
 
 /// Holds the text of a file, plus its clean state.
 ///
@@ -61,6 +61,21 @@ impl Buffer {
         self.tree = Some(tree);
         self.is_tree_stale = false;
         Ok(())
+    }
+
+    /// The highlighted stretches of the text that touch `bytes`, see `Syntax::highlights`.
+    /// There are none for plain text, or until the grammar is loaded and has parsed the text.
+    pub fn highlights<'a>(
+        &'a self,
+        syntax: &'a mut Syntax,
+        bytes: ops::Range<usize>,
+    ) -> impl Iterator<Item = (ops::Range<usize>, Highlight)> + 'a {
+        let spans = self
+            .language
+            .as_ref()
+            .zip(self.tree.as_ref())
+            .and_then(|(language, tree)| syntax.highlights(language, tree, &self.rope, bytes).ok());
+        spans.into_iter().flatten()
     }
 
     pub fn from_bytes(path: PathBuf, bytes: &[u8]) -> Result<Self> {
@@ -231,7 +246,7 @@ mod tests {
     fn empty_edit_stays_clean() {
         let mut buffer = Buffer::from("abc");
         buffer.edit(1..1, "");
-        assert!(!buffer.is_dirty());
+        assert!(!buffer.is_dirty(), "nothing was inserted or removed");
     }
 
     #[test]

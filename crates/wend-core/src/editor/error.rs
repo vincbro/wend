@@ -8,7 +8,7 @@ pub enum Error {
     Buffer(#[from] buffer::Error),
     #[error("failed to send output")]
     Send(#[from] mpsc::SendError<Output>),
-    #[error("")]
+    #[error("syntax failed")]
     Syntax(#[from] syntax::Error),
 }
 

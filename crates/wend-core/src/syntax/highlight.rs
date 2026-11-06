@@ -44,3 +44,31 @@ impl Highlight {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dotted_name_highlights_as_its_first_part() {
+        assert_eq!(
+            Highlight::from_capture("function.macro"),
+            Some(Highlight::Function)
+        );
+        assert_eq!(
+            Highlight::from_capture("punctuation.bracket"),
+            Some(Highlight::Punctuation)
+        );
+        assert_eq!(
+            Highlight::from_capture("keyword"),
+            Some(Highlight::Keyword),
+            "a name with no dot works too"
+        );
+    }
+
+    #[test]
+    fn names_about_something_else_than_color_highlight_nothing() {
+        assert_eq!(Highlight::from_capture("injection.language"), None);
+        assert_eq!(Highlight::from_capture("_hidden"), None);
+    }
+}

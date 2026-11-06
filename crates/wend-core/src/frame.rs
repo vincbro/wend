@@ -4,6 +4,8 @@ pub use area::{Area, Rect};
 mod grapheme;
 pub use grapheme::Grapheme;
 
+use crate::syntax::Highlight;
+
 /// Holds what to draw in one terminal cell.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Cell {
@@ -15,6 +17,9 @@ pub struct Cell {
     /// Drawn by the wide grapheme to its left, so there is nothing to print. Printing
     /// into half of a wide grapheme makes the terminal blank all of it.
     pub covered: bool,
+    /// None for plain text, and on the cells that aren't a glyph's own, such as its tails
+    /// and markers.
+    pub highlight: Option<Highlight>,
 }
 
 /// Locates a cell in the frame, which covers the whole terminal, not just one view.

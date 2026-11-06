@@ -114,8 +114,11 @@ mod tests {
     #[test]
     fn unbound_key_is_none() {
         let tree = tree();
-        assert!(tree.get(&[key('x')]).is_none());
-        assert!(tree.get(&[key('g'), key('x')]).is_none());
+        assert!(tree.get(&[key('x')]).is_none(), "nothing binds x");
+        assert!(
+            tree.get(&[key('g'), key('x')]).is_none(),
+            "g binds a node, but not x under it"
+        );
     }
 
     #[test]
@@ -137,6 +140,9 @@ mod tests {
                 ..Modifiers::default()
             },
         };
-        assert!(tree.get(&[control_q]).is_none());
+        assert!(
+            tree.get(&[control_q]).is_none(),
+            "q is bound, control and q is not"
+        );
     }
 }

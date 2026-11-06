@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, ops::Range, result, sync::Arc};
+use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
 use crop::Rope;
 use tree_sitter::{
@@ -7,11 +7,12 @@ use tree_sitter::{
 };
 
 mod error;
-pub use error::Error;
+pub use error::{Error, Result};
 mod highlight;
 pub use highlight::Highlight;
-pub type Result<T> = result::Result<T, Error>;
 
+/// Names a language, like `rust`. It is what a buffer is tagged with and what the frontend is
+/// asked to provide the grammar for.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LanguageTag(Arc<str>);
 
@@ -28,15 +29,19 @@ impl LanguageTag {
 }
 
 struct Grammar {
+    tag: LanguageTag,
     language: Language,
     highlights: Query,
     /// What each of the query's captures highlights as, by capture index.
-    captures: Vec<Option<Highlight>>,
+    captures: Box<[Option<Highlight>]>,
 }
 
+/// Parses text and finds what to highlight in it, for every language whose grammar was loaded.
+///
+/// Parsing and querying both need the parser and cursor to themselves, so they take `&mut self`.
 pub struct Syntax {
     parser: Parser,
-    grammars: HashMap<LanguageTag, Grammar>,
+    grammars: HashMap<LanguageTag, Arc<Grammar>>,
     cursor: QueryCursor,
 }
 
@@ -53,12 +58,17 @@ impl Syntax {
         })
     }
 
-    pub fn load(&mut self, tag: LanguageTag, language: &[u8], highlights: &[u8]) -> Result<()> {
+    /// Loads the grammar of `tag` from its compiled wasm and the source of its highlights
+    /// query, replacing the grammar that was loaded for `tag` before.
+    ///
+    /// Fails when the wasm isn't a grammar this tree-sitter can run, or when the query
+    /// doesn't fit the grammar.
+    pub fn load(&mut self, tag: LanguageTag, wasm: &[u8], highlights: &[u8]) -> Result<()> {
         let mut store = self
             .parser
             .take_wasm_store()
             .ok_or(Error::MissingWasmStore)?;
-        let language = store.load_language(tag.as_str(), language)?;
+        let language = store.load_language(tag.as_str(), wasm)?;
         self.parser.set_wasm_store(store)?;
 
         let highlights = str::from_utf8(highlights)?;
@@ -70,12 +80,14 @@ impl Syntax {
             .collect();
 
         self.grammars.insert(
-            tag,
+            tag.clone(),
             Grammar {
+                tag,
                 language,
                 highlights,
                 captures,
-            },
+            }
+            .into(),
         );
         Ok(())
     }
@@ -104,8 +116,6 @@ impl Syntax {
     ///
     /// Stretches nest and overlap, an escape inside a string for one, and the one that
     /// comes later is the more specific. The first ones can start before `bytes`.
-    /// `cursor` is scratch space that the caller keeps around between calls, so that
-    /// tree-sitter doesn't allocate a new one for every frame.
     pub fn highlights<'a>(
         &'a mut self,
         tag: &LanguageTag,
@@ -201,9 +211,8 @@ mod tests {
         let rope = Rope::from(text);
         let tree = syntax.parse(&tag, &rope, None).unwrap();
 
-        let mut cursor = QueryCursor::new();
         let found: Vec<_> = syntax
-            .highlights(&mut cursor, &tag, &tree, &rope, 0..text.len())
+            .highlights(&tag, &tree, &rope, 0..text.len())
             .unwrap()
             .map(|(bytes, highlight)| (&text[bytes], highlight))
             .collect();
@@ -221,10 +230,9 @@ mod tests {
         let rope = Rope::from(text);
         let tree = syntax.parse(&tag, &rope, None).unwrap();
 
-        let mut cursor = QueryCursor::new();
         let second_line = 10..text.len();
         let names: Vec<_> = syntax
-            .highlights(&mut cursor, &tag, &tree, &rope, second_line)
+            .highlights(&tag, &tree, &rope, second_line)
             .unwrap()
             .map(|(bytes, _)| &text[bytes])
             .collect();
@@ -261,8 +269,8 @@ mod tests {
     #[test]
     fn the_end_is_empty() {
         let rope = Rope::from("ab");
-        assert!(text_from(&rope, 2).is_empty());
-        assert!(text_from(&rope, 10).is_empty(), "past the end too");
-        assert!(text_from(&Rope::new(), 0).is_empty());
+        assert_eq!(text_from(&rope, 2), b"", "at the end");
+        assert_eq!(text_from(&rope, 10), b"", "past the end too");
+        assert_eq!(text_from(&Rope::new(), 0), b"", "an empty rope");
     }
 }

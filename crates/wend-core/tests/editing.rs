@@ -9,11 +9,12 @@ use wend_core::{
         key::{Key, KeyCode},
     },
     output::Output,
+    syntax::{Highlight, LanguageTag},
     view::{Direction, Motion},
 };
 
 fn editor(text: &str, cols: u16, rows: u16) -> Editor {
-    let mut editor = Editor::new(Area::new(cols, rows));
+    let mut editor = Editor::new(Area::new(cols, rows)).expect("the wasm engine starts");
     editor.view_mut().open_buffer(Buffer::from(text));
     editor
 }
@@ -154,11 +155,11 @@ mod tests {
 
     #[test]
     fn keys_in_frame_out() {
-        let mut editor = Editor::new(Area::new(20, 3));
+        let mut editor = Editor::new(Area::new(20, 3)).unwrap();
         let file = Input::File {
             path: PathBuf::from("a.txt"),
             bytes: b"abc".as_slice().into(),
-            language: todo!(),
+            language: None,
         };
         let opened = send(&mut editor, file);
         assert_eq!(
@@ -178,5 +179,36 @@ mod tests {
             "xabc",
             "typed in front of the cursor"
         );
+    }
+
+    #[test]
+    fn highlights_reach_the_frame_once_the_grammar_loads() {
+        let mut editor = Editor::new(Area::new(20, 3)).unwrap();
+        let file = Input::File {
+            path: PathBuf::from("a.rs"),
+            bytes: b"fn main() {}".as_slice().into(),
+            language: Some(LanguageTag::new("rust")),
+        };
+        let plain = send(&mut editor, file);
+        assert_eq!(
+            plain[0].get(CellPosition::new(0, 0)).highlight,
+            None,
+            "no colors until the grammar is there"
+        );
+
+        let loaded = send(
+            &mut editor,
+            Input::Language {
+                tag: LanguageTag::new("rust"),
+                wasm: include_bytes!("../../../tree-sitter-rust.wasm")
+                    .as_slice()
+                    .into(),
+                highlights: include_bytes!("../../../highlights.scm").as_slice().into(),
+            },
+        );
+
+        let highlight = |col: u16| loaded[0].get(CellPosition::new(col, 0)).highlight;
+        assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
+        assert_eq!(highlight(3), Some(Highlight::Function), "the m of main");
     }
 }

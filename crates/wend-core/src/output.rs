@@ -15,6 +15,8 @@ pub enum Output {
     /// The screen to draw. Send it back with `Input::Drawn` once it is drawn, the editor
     /// has no other frames to draw into.
     Frame(Frame),
+    /// Asks for the grammar of this language, which the frontend answers with
+    /// `Input::Language`. Until it does, the text is shown as plain text.
     Language(LanguageTag),
     Quit,
 }

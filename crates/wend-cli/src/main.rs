@@ -115,15 +115,19 @@ fn main() -> Result<()> {
 
     let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
-    let editor = Editor::new(area)?;
+    let editor = Editor::new(area).context("failed to start the editor")?;
 
-    let path = PathBuf::from_str(&args.file)?;
-    let bytes = fs::read(&path)?.into_boxed_slice();
-    input_tx.send(Input::File {
-        path,
-        bytes,
-        language: Some(LanguageTag::new("rust")),
-    })?;
+    let path = PathBuf::from_str(&args.file).context("not a valid path")?;
+    let bytes = fs::read(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?
+        .into_boxed_slice();
+    input_tx
+        .send(Input::File {
+            path,
+            bytes,
+            language: Some(LanguageTag::new("rust")),
+        })
+        .context("the editor stopped before the file was sent")?;
 
     thread::spawn(move || editor.run(&input_rx, &output_tx));
 
@@ -143,16 +147,21 @@ fn main() -> Result<()> {
     for output in output_rx {
         match output {
             output::Output::Frame(frame) => {
-                render_frame(&frame, &mut stdout)?;
-                input_tx.send(Input::Drawn(frame))?;
+                render_frame(&frame, &mut stdout).context("failed to draw the screen")?;
+                input_tx
+                    .send(Input::Drawn(frame))
+                    .context("the editor stopped")?;
             }
             output::Output::Quit => break,
-            output::Output::Write { path, rope } => write_file(&path, rope.chunks())?,
-            output::Output::Language(tag) => input_tx.send(Input::Language {
-                tag,
-                language: Box::from(include_bytes!("../../../tree-sitter-rust.wasm").as_slice()),
-                highlights: Box::from(include_bytes!("../../../highlights.scm").as_slice()),
-            })?,
+            output::Output::Write { path, rope } => write_file(&path, rope.chunks())
+                .with_context(|| format!("failed to save {}", path.display()))?,
+            output::Output::Language(tag) => input_tx
+                .send(Input::Language {
+                    tag,
+                    wasm: Box::from(include_bytes!("../../../tree-sitter-rust.wasm").as_slice()),
+                    highlights: Box::from(include_bytes!("../../../highlights.scm").as_slice()),
+                })
+                .context("the editor stopped")?,
         }
     }
 
@@ -221,7 +230,7 @@ fn queue_cell(cell: &Cell, pos: CellPosition, writer: &mut impl Write) -> Result
     } else if cell.selected {
         (MELLOW.selection_background, MELLOW.selection_foreground)
     } else {
-        (MELLOW.background, MELLOW.foreground)
+        (MELLOW.background, MELLOW.foreground_of(cell.highlight))
     };
     writer
         .queue(style::SetBackgroundColor(background))?

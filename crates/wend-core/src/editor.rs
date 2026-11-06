@@ -47,7 +47,7 @@ struct FramePool {
 
 impl FramePool {
     #[must_use]
-    pub(crate) fn new(count: usize, area: Area) -> Self {
+    fn new(count: usize, area: Area) -> Self {
         Self {
             area,
             spares: vec![Frame::new(area, None); count],
@@ -55,18 +55,18 @@ impl FramePool {
     }
 
     #[must_use]
-    pub(crate) fn take(&mut self) -> Option<Frame> {
+    fn take(&mut self) -> Option<Frame> {
         self.spares.pop()
     }
 
-    pub(crate) fn place(&mut self, mut frame: Frame) {
+    fn place(&mut self, mut frame: Frame) {
         if frame.area() != self.area {
             frame.resize(self.area);
         }
         self.spares.push(frame);
     }
 
-    pub(crate) fn resize(&mut self, area: Area) {
+    fn resize(&mut self, area: Area) {
         self.area = area;
         self.spares
             .iter_mut()
@@ -141,9 +141,9 @@ impl Editor {
             Input::Drawn(frame) => self.frame_pool.place(frame),
             Input::Language {
                 tag,
-                language,
+                wasm,
                 highlights,
-            } => self.syntax.load(tag, &language, &highlights)?,
+            } => self.syntax.load(tag, &wasm, &highlights)?,
         }
 
         self.is_stale |= changed;
@@ -252,7 +252,7 @@ impl Editor {
     ///
     /// If `frame` is smaller than the view reaches, as one from before a resize can be.
     pub fn update_frame(&mut self, frame: &mut Frame) {
-        self.view.render(frame);
+        self.view.render(frame, &mut self.syntax);
     }
 
     /// Fits the editor to a new terminal size, keeping the view capped and centered.
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn insert_types_and_esc_leaves() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "iab\u{8}c\u{1b}");
         assert_eq!(text(&editor), "ac", "backspace deletes the b");
         assert_eq!(editor.mode(), Mode::Normal);
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn o_opens_a_line_and_inserts() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "ia\u{1b}ob");
         assert_eq!(text(&editor), "a\nb");
         assert_eq!(editor.mode(), Mode::Insert);
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn v_toggles_select() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "v");
         assert_eq!(editor.mode(), Mode::Select);
         press(&mut editor, "v");
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn select_then_delete_removes_the_selection() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "iab cd\u{1b}gsvwd");
         assert_eq!(
             text(&editor),
@@ -336,14 +336,14 @@ mod tests {
 
     #[test]
     fn revert_drops_unsaved_edits() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "iab\u{1b}u");
         assert_eq!(text(&editor), "");
     }
 
     #[test]
     fn q_asks_to_quit() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "q");
         assert!(
             editor
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn a_file_opens_and_then_updates() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         let path = PathBuf::from("a.txt");
         let file = |bytes: &[u8]| Input::File {
             path: path.clone(),
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn a_drawn_frame_alone_draws_nothing() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "i");
         let mut sent = frames(&mut editor);
         assert_eq!(sent.len(), 1);
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn inputs_while_every_frame_is_out_share_one_frame() {
-        let mut editor = Editor::new(Area::new(80, 24));
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
         press(&mut editor, "i");
         press(&mut editor, "a");
         let drawing = frames(&mut editor);

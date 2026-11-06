@@ -86,8 +86,16 @@ mod tests {
         let mut view = tests::view("hello world", 20, 5);
         view.set_selection(Selection::new(0, 4), ColumnPolicy::Sync);
         view.delete_selection();
-        assert_eq!(view.buffer.rope().to_string(), " world");
-        assert_eq!(view.selection, Selection::point(0));
+        assert_eq!(
+            view.buffer.rope().to_string(),
+            " world",
+            "the selected hello is gone"
+        );
+        assert_eq!(
+            view.selection,
+            Selection::point(0),
+            "the cursor takes its place"
+        );
     }
 
     #[test]
@@ -95,7 +103,11 @@ mod tests {
         let mut view = tests::view("a😀b", 20, 5);
         view.set_selection(Selection::point(1), ColumnPolicy::Sync);
         view.delete_selection();
-        assert_eq!(view.buffer.rope().to_string(), "ab");
-        assert_eq!(view.selection, Selection::point(1));
+        assert_eq!(
+            view.buffer.rope().to_string(),
+            "ab",
+            "the whole emoji is deleted, not half of it"
+        );
+        assert_eq!(view.selection, Selection::point(1), "the cursor stays on b");
     }
 }

@@ -69,7 +69,8 @@ fn text(len: usize) -> String {
 ///
 /// Returning the frame avoids allocating a second frame in `phase()`.
 fn opened(text: &str) -> (Editor, Frame) {
-    let mut editor = Editor::new(Area::new(COLS, ROWS));
+    let mut editor = Editor::new(Area::new(COLS, ROWS))
+        .expect("the wasm engine starts on every supported platform");
     editor.view_mut().open_buffer(Buffer::from(text));
 
     let mut frame = editor.frame();

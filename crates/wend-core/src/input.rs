@@ -24,9 +24,11 @@ pub enum Input {
     /// A frame from `Output::Frame`, handed back once it is on screen so the editor can
     /// draw into it again.
     Drawn(Frame),
+    /// The grammar for `tag`, as the frontend's answer to `Output::Language`. `wasm` is the
+    /// compiled tree-sitter grammar and `highlights` the source of its highlights query.
     Language {
         tag: LanguageTag,
-        language: Box<[u8]>,
+        wasm: Box<[u8]>,
         highlights: Box<[u8]>,
     },
 }
