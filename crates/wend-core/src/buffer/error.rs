@@ -8,6 +8,8 @@ pub enum Error {
     NoPath,
     #[error("file i/o failed")]
     Io(#[from] io::Error),
+    #[error("tree-sitter language failed")]
+    Language(#[from] tree_sitter::LanguageError),
 }
 
 pub type Result<T> = result::Result<T, Error>;

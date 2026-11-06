@@ -25,6 +25,7 @@ use wend_core::{
         key::{Key, KeyCode, Modifiers},
     },
     output,
+    syntax::LanguageTag,
 };
 
 use crate::theme::MELLOW;
@@ -114,11 +115,15 @@ fn main() -> Result<()> {
 
     let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
-    let editor = Editor::new(area);
+    let editor = Editor::new(area)?;
 
     let path = PathBuf::from_str(&args.file)?;
     let bytes = fs::read(&path)?.into_boxed_slice();
-    input_tx.send(Input::File { path, bytes })?;
+    input_tx.send(Input::File {
+        path,
+        bytes,
+        language: Some(LanguageTag::new("rust")),
+    })?;
 
     thread::spawn(move || editor.run(&input_rx, &output_tx));
 
@@ -143,6 +148,11 @@ fn main() -> Result<()> {
             }
             output::Output::Quit => break,
             output::Output::Write { path, rope } => write_file(&path, rope.chunks())?,
+            output::Output::Language(tag) => input_tx.send(Input::Language {
+                tag,
+                language: Box::from(include_bytes!("../../../tree-sitter-rust.wasm").as_slice()),
+                highlights: Box::from(include_bytes!("../../../highlights.scm").as_slice()),
+            })?,
         }
     }
 

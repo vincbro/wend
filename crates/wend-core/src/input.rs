@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::{
     frame::{Area, Frame},
     input::{action::Action, key::Key},
+    syntax::LanguageTag,
 };
 
 pub mod action;
@@ -18,8 +19,14 @@ pub enum Input {
     File {
         path: PathBuf,
         bytes: Box<[u8]>,
+        language: Option<LanguageTag>,
     },
     /// A frame from `Output::Frame`, handed back once it is on screen so the editor can
     /// draw into it again.
     Drawn(Frame),
+    Language {
+        tag: LanguageTag,
+        language: Box<[u8]>,
+        highlights: Box<[u8]>,
+    },
 }

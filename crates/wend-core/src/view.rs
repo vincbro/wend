@@ -3,6 +3,7 @@ use std::{mem, ops};
 use crate::{
     buffer::{self, Buffer},
     frame::{self, Cell, CellPosition, Frame, Grapheme, Rect},
+    syntax::{self, Syntax},
 };
 
 mod edit;
@@ -57,6 +58,17 @@ impl View {
     #[must_use]
     pub fn buffer(&self) -> &Buffer {
         &self.buffer
+    }
+
+    #[must_use]
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
+        &mut self.buffer
+    }
+
+    /// Brings the buffer's tree up to date with its text. The layout doesn't depend on the
+    /// tree, so nothing else changes.
+    pub fn reparse(&mut self, syntax: &mut Syntax) -> syntax::Result<()> {
+        self.buffer.reparse(syntax)
     }
 
     /// Takes in the file's new contents. The selection keeps its bytes as far as the new

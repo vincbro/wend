@@ -9,6 +9,7 @@ use crate::{
     frame::{Area, Frame, Rect},
     input::{Input, action::Action, key::Key},
     output::Output,
+    syntax::{self, Syntax},
     view::View,
 };
 
@@ -90,12 +91,12 @@ pub struct Editor {
     keymap: Keymap,
     frame_pool: FramePool,
     is_stale: bool,
+    syntax: Syntax,
 }
 
 impl Editor {
-    #[must_use]
-    pub fn new(area: Area) -> Self {
-        Self {
+    pub fn new(area: Area) -> Result<Self> {
+        Ok(Self {
             area,
             buffers: vec![],
             view: View::new(view_rect(area)),
@@ -104,7 +105,8 @@ impl Editor {
             keymap: Keymap::default(),
             frame_pool: FramePool::new(2, area),
             is_stale: false,
-        }
+            syntax: Syntax::new()?,
+        })
     }
 
     /// Applies every input and sends the outputs, until the input channel closes or an
@@ -128,14 +130,28 @@ impl Editor {
             Input::Action(action) => self.perform(action)?,
             Input::Key(key) => self.key_press(key)?,
             Input::Resize(area) => self.resize(area),
-            Input::File { path, bytes } => self.show_file(path, &bytes)?,
+            Input::File {
+                path,
+                bytes,
+                language,
+            } => {
+                self.show_file(path, &bytes)?;
+                self.view.buffer_mut().set_language(language);
+            }
             Input::Drawn(frame) => self.frame_pool.place(frame),
+            Input::Language {
+                tag,
+                language,
+                highlights,
+            } => self.syntax.load(tag, &language, &highlights)?,
         }
 
         self.is_stale |= changed;
         if self.is_stale
             && let Some(mut frame) = self.frame_pool.take()
         {
+            // Parsed only when a frame is drawn, so a batch of inputs costs one parse
+            self.reparse()?;
             // Scroll to the cursor before rendering, so the frame shows where the cursor is
             frame.set_cursor(self.view.cursor_position());
             self.update_frame(&mut frame);
@@ -143,6 +159,18 @@ impl Editor {
             self.is_stale = false;
         }
         Ok(())
+    }
+
+    /// Reparses the shown buffer if its text changed, and asks for its language when the
+    /// grammar isn't loaded. The buffer stays plain text until `Input::Language` brings it.
+    fn reparse(&mut self) -> Result<()> {
+        match self.view.reparse(&mut self.syntax) {
+            Err(syntax::Error::MissingLanguage(language)) => {
+                self.outputs.push(Output::Language(language));
+                Ok(())
+            }
+            result => Ok(result?),
+        }
     }
 
     fn key_press(&mut self, key: Key) -> Result<()> {
@@ -331,6 +359,7 @@ mod tests {
         let file = |bytes: &[u8]| Input::File {
             path: path.clone(),
             bytes: bytes.into(),
+            language: None,
         };
 
         editor.apply(file(b"abc")).unwrap();

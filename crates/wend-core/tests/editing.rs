@@ -158,6 +158,7 @@ mod tests {
         let file = Input::File {
             path: PathBuf::from("a.txt"),
             bytes: b"abc".as_slice().into(),
+            language: todo!(),
         };
         let opened = send(&mut editor, file);
         assert_eq!(
