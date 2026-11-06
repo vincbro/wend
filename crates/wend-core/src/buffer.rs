@@ -1,21 +1,21 @@
 use std::{
     ops,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use crop::{Rope, RopeBuilder};
-use tree_sitter::{InputEdit, Point, Tree};
 
 mod change;
 pub use change::Change;
 mod error;
 pub use error::{Error, Result};
 
-use crate::syntax::{self, Highlight, LanguageTag, Syntax};
+use crate::syntax::{Grammar, Highlight, LanguageTag, Syntax};
 
 /// Holds the text of a file, plus its clean state.
 ///
-/// There is no undo history. `clean` is the text as it was last loaded or saved, and
+/// There is no undo history. `clean_rope` is the text as it was last loaded or saved, and
 /// undoing reverts to it. crop shares tree nodes between clones, so keeping it around only
 /// costs the parts that differ.
 #[derive(Debug, Clone)]
@@ -24,11 +24,10 @@ pub struct Buffer {
     rope: Rope,
     clean_rope: Rope,
     is_dirty: bool,
+    /// The language the text is written in, whether or not its grammar is loaded yet.
     language: Option<LanguageTag>,
-    tree: Option<Tree>,
-    /// Set when the text or language changed since the last parse, so the tree doesn't
-    /// describe the text yet.
-    is_tree_stale: bool,
+    /// None for plain text, and until the grammar of `language` is attached.
+    syntax: Option<Syntax>,
 }
 
 impl Buffer {
@@ -37,45 +36,49 @@ impl Buffer {
         Self::from_rope(None, Rope::new())
     }
 
-    /// Sets the language to parse the text as. A different language drops the tree, which
-    /// came from the old grammar.
+    /// Sets the language the text is written in. A different language drops the syntax, which
+    /// came from the old grammar, until the grammar of the new one is attached.
     pub fn set_language(&mut self, language: Option<LanguageTag>) {
         if language != self.language {
-            self.tree = None;
-            self.is_tree_stale = true;
+            self.syntax = None;
         }
         self.language = language;
     }
 
-    /// Brings the tree up to date with the text, and does nothing when it already is. Plain
-    /// text has no tree. While the language's grammar isn't loaded the tree stays stale, so
-    /// the next call tries again.
-    pub fn reparse(&mut self, syntax: &mut Syntax) -> syntax::Result<()> {
-        let Some(language) = &self.language else {
-            return Ok(());
-        };
-        if !self.is_tree_stale {
-            return Ok(());
+    /// Gives the buffer `grammar` to parse and highlight with, if it is the grammar of the
+    /// buffer's language. Anything else, and the grammar the buffer already has, changes
+    /// nothing.
+    pub(crate) fn attach(&mut self, grammar: &Arc<Grammar>) {
+        if self.language.as_ref() != Some(grammar.tag()) {
+            return;
         }
-        let tree = syntax.parse(language, &self.rope, self.tree.as_ref())?;
-        self.tree = Some(tree);
-        self.is_tree_stale = false;
-        Ok(())
+        if self
+            .syntax
+            .as_ref()
+            .is_some_and(|syntax| syntax.is_of(grammar))
+        {
+            return;
+        }
+        self.syntax = Some(Syntax::new(Arc::clone(grammar)));
+    }
+
+    #[must_use]
+    pub(crate) fn syntax_mut(&mut self) -> Option<&mut Syntax> {
+        self.syntax.as_mut()
     }
 
     /// The highlighted stretches of the text that touch `bytes`, see `Syntax::highlights`.
-    /// There are none for plain text, or until the grammar is loaded and has parsed the text.
-    pub fn highlights<'a>(
-        &'a self,
-        syntax: &'a mut Syntax,
+    /// There are none for plain text, or before the first parse.
+    pub(crate) fn highlights(
+        &mut self,
         bytes: ops::Range<usize>,
-    ) -> impl Iterator<Item = (ops::Range<usize>, Highlight)> + 'a {
-        let spans = self
-            .language
-            .as_ref()
-            .zip(self.tree.as_ref())
-            .and_then(|(language, tree)| syntax.highlights(language, tree, &self.rope, bytes).ok());
-        spans.into_iter().flatten()
+    ) -> impl Iterator<Item = (ops::Range<usize>, Highlight)> + '_ {
+        let rope = &self.rope;
+        self.syntax
+            .as_mut()
+            .map(|syntax| syntax.highlights(rope, bytes))
+            .into_iter()
+            .flatten()
     }
 
     pub fn from_bytes(path: PathBuf, bytes: &[u8]) -> Result<Self> {
@@ -95,8 +98,9 @@ impl Buffer {
         if !self.is_dirty {
             self.rope = self.clean_rope.clone();
             // The whole text is new, there is no edit for the tree to follow
-            self.tree = None;
-            self.is_tree_stale = true;
+            if let Some(syntax) = &mut self.syntax {
+                syntax.reset();
+            }
         }
         Ok(())
     }
@@ -107,9 +111,8 @@ impl Buffer {
             clean_rope: rope.clone(),
             rope,
             is_dirty: false,
-            tree: None,
             language: None,
-            is_tree_stale: true,
+            syntax: None,
         }
     }
 
@@ -149,13 +152,12 @@ impl Buffer {
             return change;
         }
 
-        // Measured before the replace, the old end only exists in the old text
-        if let Some(tree) = &mut self.tree {
-            tree.edit(&input_edit(&self.rope, &range, text));
+        // Before the replace, the old end of the range only exists in the old text
+        if let Some(syntax) = &mut self.syntax {
+            syntax.edit(&self.rope, &range, text);
         }
         self.rope.replace(range, text);
         self.is_dirty = true;
-        self.is_tree_stale = true;
         change
     }
 
@@ -165,8 +167,9 @@ impl Buffer {
         self.rope = self.clean_rope.clone();
         self.is_dirty = false;
         // The edits being undone weren't recorded, so the tree can't follow them back
-        self.tree = None;
-        self.is_tree_stale = true;
+        if let Some(syntax) = &mut self.syntax {
+            syntax.reset();
+        }
     }
 
     /// Makes the text the new clean state, and returns the path and text to write.
@@ -178,38 +181,6 @@ impl Buffer {
         self.clean_rope = self.rope.clone();
         self.is_dirty = false;
         Ok((path.clone(), self.rope.clone()))
-    }
-}
-
-/// Describes replacing `range` of `rope` with `text` the way tree-sitter needs it, in rows
-/// and columns as well as bytes. Takes the rope from before the replace.
-fn input_edit(rope: &Rope, range: &ops::Range<usize>, text: &str) -> InputEdit {
-    let start_position = point(rope, range.start);
-    InputEdit {
-        start_byte: range.start,
-        old_end_byte: range.end,
-        new_end_byte: range.start + text.len(),
-        start_position,
-        old_end_position: point(rope, range.end),
-        new_end_position: end_point(start_position, text),
-    }
-}
-
-/// The row and column of `byte` the way tree-sitter counts them: rows end at `\n`, and the
-/// column is in bytes from the start of the row.
-fn point(rope: &Rope, byte: usize) -> Point {
-    let row = rope.line_of_byte(byte);
-    Point::new(row, byte - rope.byte_of_line(row))
-}
-
-/// Where `text` ends once it's inserted at `start`.
-fn end_point(start: Point, text: &str) -> Point {
-    match text.rfind('\n') {
-        None => Point::new(start.row, start.column + text.len()),
-        Some(last_break) => Point::new(
-            start.row + text.matches('\n').count(),
-            text.len() - last_break - 1,
-        ),
     }
 }
 
@@ -228,6 +199,7 @@ impl From<&str> for Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::syntax;
 
     #[test]
     fn edit_applies_and_dirties() {
@@ -338,61 +310,104 @@ mod tests {
     }
 
     #[test]
-    fn input_edit_inside_a_line() {
-        // "ab|cd\nef" insert "XY" at 2
-        let rope = Rope::from("abcd\nef");
-        let edit = input_edit(&rope, &(2..2), "XY");
-        assert_eq!(
-            (edit.start_byte, edit.old_end_byte, edit.new_end_byte),
-            (2, 2, 4)
+    fn attach_takes_only_the_grammar_of_the_buffers_language() {
+        let (_, grammar) = syntax::tests::rust();
+        let mut buffer = Buffer::from("fn a() {}");
+
+        buffer.attach(&grammar);
+        assert!(
+            buffer.syntax.is_none(),
+            "a buffer with no language takes none"
         );
-        assert_eq!(edit.start_position, Point::new(0, 2));
-        assert_eq!(edit.old_end_position, Point::new(0, 2));
-        assert_eq!(edit.new_end_position, Point::new(0, 4));
-    }
 
-    #[test]
-    fn input_edit_adding_lines() {
-        // "ab|cd" insert "X\nYZ\nW" at 2: the end moves two rows down, one byte in
-        let rope = Rope::from("abcd");
-        let edit = input_edit(&rope, &(2..2), "X\nYZ\nW");
-        assert_eq!(edit.new_end_position, Point::new(2, 1));
-    }
-
-    #[test]
-    fn input_edit_removing_lines() {
-        // "a[b\ncd\ne]f" delete b..e, the old end is on the third row
-        let rope = Rope::from("ab\ncd\nef");
-        let edit = input_edit(&rope, &(1..7), "");
-        assert_eq!(edit.start_position, Point::new(0, 1));
-        assert_eq!(
-            edit.old_end_position,
-            Point::new(2, 1),
-            "measured in the old text"
+        buffer.set_language(Some(LanguageTag::new("python")));
+        buffer.attach(&grammar);
+        assert!(
+            buffer.syntax.is_none(),
+            "nor the grammar of another language"
         );
-        assert_eq!(edit.new_end_position, Point::new(0, 1));
+
+        buffer.set_language(Some(LanguageTag::new("rust")));
+        buffer.attach(&grammar);
+        assert!(buffer.syntax.is_some(), "its own language's grammar fits");
     }
 
     #[test]
-    fn input_edit_at_the_end_after_a_line_break() {
-        let rope = Rope::from("ab\n");
-        let edit = input_edit(&rope, &(3..3), "c");
-        assert_eq!(
-            edit.start_position,
-            Point::new(1, 0),
-            "after the last break is the start of an empty row"
+    fn attaching_the_same_grammar_again_keeps_the_tree() {
+        let text = "fn a() {}";
+        let (loader, mut buffer) = syntax::tests::rust_buffer(text);
+        let grammar = Arc::clone(loader.grammar(&LanguageTag::new("rust")).unwrap());
+
+        buffer.attach(&grammar);
+
+        assert_ne!(
+            buffer.highlights(0..text.len()).count(),
+            0,
+            "the parsed tree is still there"
         );
-        assert_eq!(edit.new_end_position, Point::new(1, 1));
     }
 
     #[test]
-    fn columns_count_bytes() {
-        // é is two bytes
-        let rope = Rope::from("éa");
+    fn a_newer_load_of_the_language_replaces_the_syntax() {
+        let text = "fn a() {}";
+        let (mut loader, mut buffer) = syntax::tests::rust_buffer(text);
+        let newer = loader
+            .load(
+                LanguageTag::new("rust"),
+                syntax::tests::RUST_WASM,
+                syntax::tests::RUST_HIGHLIGHTS,
+            )
+            .unwrap();
+
+        buffer.attach(&newer);
+
         assert_eq!(
-            point(&rope, 2),
-            Point::new(0, 2),
-            "tree-sitter columns are bytes, not chars"
+            buffer.highlights(0..text.len()).count(),
+            0,
+            "the old tree came from the old grammar, the new one has to parse"
+        );
+    }
+
+    #[test]
+    fn changing_the_language_drops_the_syntax_and_keeping_it_does_not() {
+        let text = "fn a() {}";
+        let (_, mut buffer) = syntax::tests::rust_buffer(text);
+
+        buffer.set_language(Some(LanguageTag::new("rust")));
+        assert_ne!(
+            buffer.highlights(0..text.len()).count(),
+            0,
+            "the same language keeps its tree"
+        );
+
+        buffer.set_language(Some(LanguageTag::new("python")));
+        assert_eq!(
+            buffer.highlights(0..text.len()).count(),
+            0,
+            "another language starts without one"
+        );
+    }
+
+    #[test]
+    fn a_revert_and_a_new_file_both_leave_the_tree_to_a_new_parse() {
+        let text = "fn a() {}";
+        let (mut loader, mut buffer) = syntax::tests::rust_buffer(text);
+
+        buffer.edit(0..0, "x");
+        buffer.revert();
+        assert_eq!(
+            buffer.highlights(0..text.len()).count(),
+            0,
+            "the undone edits weren't recorded, so the tree can't follow them"
+        );
+        loader.parse(&mut buffer).unwrap();
+        assert_ne!(buffer.highlights(0..text.len()).count(), 0, "parsed again");
+
+        buffer.update(b"fn b() {}").unwrap();
+        assert_eq!(
+            buffer.highlights(0..text.len()).count(),
+            0,
+            "the new text has no edit for the tree to follow either"
         );
     }
 }

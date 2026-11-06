@@ -211,4 +211,130 @@ mod tests {
         assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
         assert_eq!(highlight(3), Some(Highlight::Function), "the m of main");
     }
+
+    fn rust_file() -> Input {
+        Input::File {
+            path: PathBuf::from("a.rs"),
+            bytes: b"fn main() {}".as_slice().into(),
+            language: Some(LanguageTag::new("rust")),
+        }
+    }
+
+    #[test]
+    fn the_grammar_is_asked_for_once() {
+        let mut editor = Editor::new(Area::new(20, 3)).expect("the wasm engine starts");
+        editor.apply(rust_file()).unwrap();
+        for c in ['i', 'x', 'y'] {
+            editor
+                .apply(Input::Key(Key::new(KeyCode::Char(c))))
+                .unwrap();
+        }
+
+        let requests = editor
+            .drain_outputs()
+            .filter(|output| matches!(output, Output::Language(_)))
+            .count();
+
+        assert_eq!(
+            requests, 1,
+            "typing while the grammar is on its way doesn't ask again"
+        );
+    }
+
+    #[test]
+    fn a_grammar_that_fails_to_load_leaves_the_text_plain() {
+        let mut editor = Editor::new(Area::new(20, 3)).expect("the wasm engine starts");
+        let opened = send(&mut editor, rust_file());
+        send(
+            &mut editor,
+            Input::Drawn(opened.into_iter().next().unwrap()),
+        );
+
+        let frames = send(
+            &mut editor,
+            Input::Language {
+                tag: LanguageTag::new("rust"),
+                wasm: b"not wasm".as_slice().into(),
+                highlights: b"".as_slice().into(),
+            },
+        );
+
+        assert_eq!(
+            row_text(&frames[0], 0),
+            "fn main() {}",
+            "the text is still there"
+        );
+        assert_eq!(
+            frames[0].get(CellPosition::new(0, 0)).highlight,
+            None,
+            "without a grammar it is plain text"
+        );
+        send(
+            &mut editor,
+            Input::Drawn(frames.into_iter().next().unwrap()),
+        );
+        send(&mut editor, Input::Key(Key::new(KeyCode::Char('i'))));
+        let typed = send(&mut editor, Input::Key(Key::new(KeyCode::Char('x'))));
+        assert_eq!(
+            row_text(typed.last().unwrap(), 0),
+            "xfn main() {}",
+            "the editor keeps taking input"
+        );
+    }
+
+    fn rust_language() -> Input {
+        Input::Language {
+            tag: LanguageTag::new("rust"),
+            wasm: include_bytes!("../../../tree-sitter-rust.wasm")
+                .as_slice()
+                .into(),
+            highlights: include_bytes!("../../../highlights.scm").as_slice().into(),
+        }
+    }
+
+    /// Applies `input` and hands the frames back the way a frontend does once they are drawn.
+    /// Returns everything the editor sent.
+    fn exchange(editor: &mut Editor, input: Input) -> Vec<Output> {
+        editor.apply(input).unwrap();
+        let outputs: Vec<Output> = editor.drain_outputs().collect();
+        for output in &outputs {
+            if let Output::Frame(frame) = output {
+                editor.apply(Input::Drawn(frame.clone())).unwrap();
+            }
+        }
+        outputs
+    }
+
+    #[test]
+    fn a_second_file_of_a_loaded_language_is_highlighted_without_asking_again() {
+        let mut editor = Editor::new(Area::new(20, 3)).expect("the wasm engine starts");
+        exchange(&mut editor, rust_file());
+        exchange(&mut editor, rust_language());
+
+        let second = Input::File {
+            path: PathBuf::from("b.rs"),
+            bytes: b"fn other() {}".as_slice().into(),
+            language: Some(LanguageTag::new("rust")),
+        };
+        let outputs = exchange(&mut editor, second);
+
+        assert!(
+            !outputs
+                .iter()
+                .any(|output| matches!(output, Output::Language(_))),
+            "the grammar is already here, nobody needs to send it again"
+        );
+        let frame = outputs
+            .into_iter()
+            .find_map(|output| match output {
+                Output::Frame(frame) => Some(frame),
+                _ => None,
+            })
+            .expect("a frame is drawn for the new file");
+        assert_eq!(
+            frame.get(CellPosition::new(0, 0)).highlight,
+            Some(Highlight::Keyword),
+            "the fn of the second file"
+        );
+    }
 }

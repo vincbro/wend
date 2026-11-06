@@ -1,4 +1,6 @@
 use std::{
+    collections::HashSet,
+    iter,
     path::PathBuf,
     sync::mpsc::{Receiver, Sender},
     vec::Drain,
@@ -9,7 +11,7 @@ use crate::{
     frame::{Area, Frame, Rect},
     input::{Input, action::Action, key::Key},
     output::Output,
-    syntax::{self, Syntax},
+    syntax::{LanguageTag, Loader},
     view::View,
 };
 
@@ -77,7 +79,8 @@ impl FramePool {
     }
 }
 
-/// Holds the whole editor: the terminal's area, the view and the mode.
+/// Holds the whole editor: the terminal's area, the view and the mode, with the buffers that
+/// aren't shown and the loader of the grammars they are written in.
 ///
 /// `buffers` holds every open buffer except the one the view shows, so each open file
 /// lives in exactly one place.
@@ -91,7 +94,10 @@ pub struct Editor {
     keymap: Keymap,
     frame_pool: FramePool,
     is_stale: bool,
-    syntax: Syntax,
+    loader: Loader,
+    /// The languages whose grammar was asked for and hasn't come yet, so a buffer opened
+    /// meanwhile doesn't ask again.
+    requested_languages: HashSet<LanguageTag>,
 }
 
 impl Editor {
@@ -105,7 +111,8 @@ impl Editor {
             keymap: Keymap::default(),
             frame_pool: FramePool::new(2, area),
             is_stale: false,
-            syntax: Syntax::new()?,
+            loader: Loader::new()?,
+            requested_languages: HashSet::new(),
         })
     }
 
@@ -136,14 +143,14 @@ impl Editor {
                 language,
             } => {
                 self.show_file(path, &bytes)?;
-                self.view.buffer_mut().set_language(language);
+                self.set_language(language);
             }
             Input::Drawn(frame) => self.frame_pool.place(frame),
             Input::Language {
                 tag,
                 wasm,
                 highlights,
-            } => self.syntax.load(tag, &wasm, &highlights)?,
+            } => self.load_language(tag, &wasm, &highlights),
         }
 
         self.is_stale |= changed;
@@ -151,7 +158,7 @@ impl Editor {
             && let Some(mut frame) = self.frame_pool.take()
         {
             // Parsed only when a frame is drawn, so a batch of inputs costs one parse
-            self.reparse()?;
+            self.reparse();
             // Scroll to the cursor before rendering, so the frame shows where the cursor is
             frame.set_cursor(self.view.cursor_position());
             self.update_frame(&mut frame);
@@ -161,15 +168,37 @@ impl Editor {
         Ok(())
     }
 
-    /// Reparses the shown buffer if its text changed, and asks for its language when the
-    /// grammar isn't loaded. The buffer stays plain text until `Input::Language` brings it.
-    fn reparse(&mut self) -> Result<()> {
-        match self.view.reparse(&mut self.syntax) {
-            Err(syntax::Error::MissingLanguage(language)) => {
-                self.outputs.push(Output::Language(language));
-                Ok(())
-            }
-            result => Ok(result?),
+    /// Reparses the shown buffer if its text changed. A buffer whose parse fails goes back to
+    /// plain text, so one bad grammar doesn't stop the editor.
+    fn reparse(&mut self) {
+        if self.loader.parse(self.view.buffer_mut()).is_err() {
+            self.view.buffer_mut().set_language(None);
+        }
+    }
+
+    /// Sets the language of the shown buffer, and gives it the grammar if that is loaded. If
+    /// it isn't, asks the frontend for it, once, and the buffer stays plain text until then.
+    fn set_language(&mut self, language: Option<LanguageTag>) {
+        self.view.buffer_mut().set_language(language.clone());
+        let Some(tag) = language else {
+            return;
+        };
+        if let Some(grammar) = self.loader.grammar(&tag) {
+            self.view.buffer_mut().attach(grammar);
+        } else if self.requested_languages.insert(tag.clone()) {
+            self.outputs.push(Output::Language(tag));
+        }
+    }
+
+    /// Loads the grammar the frontend sent and gives it to every buffer written in its
+    /// language. A grammar that fails to load leaves those buffers as plain text.
+    fn load_language(&mut self, tag: LanguageTag, wasm: &[u8], highlights: &[u8]) {
+        self.requested_languages.remove(&tag);
+        let Ok(grammar) = self.loader.load(tag, wasm, highlights) else {
+            return;
+        };
+        for buffer in iter::once(self.view.buffer_mut()).chain(&mut self.buffers) {
+            buffer.attach(&grammar);
         }
     }
 
@@ -252,7 +281,7 @@ impl Editor {
     ///
     /// If `frame` is smaller than the view reaches, as one from before a resize can be.
     pub fn update_frame(&mut self, frame: &mut Frame) {
-        self.view.render(frame, &mut self.syntax);
+        self.view.render(frame);
     }
 
     /// Fits the editor to a new terminal size, keeping the view capped and centered.
@@ -280,7 +309,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::key::KeyCode;
+    use crate::{input::key::KeyCode, syntax};
 
     fn press(editor: &mut Editor, keys: &str) {
         for c in keys.chars() {
@@ -427,6 +456,28 @@ mod tests {
                 .iter()
                 .any(|(_, cell)| cell.grapheme.as_str() == "d"),
             "the frame has the latest text"
+        );
+    }
+
+    #[test]
+    fn a_loaded_grammar_reaches_the_buffers_that_are_not_shown() {
+        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let text = "fn a() {}";
+        let mut hidden = Buffer::from(text);
+        hidden.set_language(Some(LanguageTag::new("rust")));
+        editor.buffers.push(hidden);
+
+        editor.load_language(
+            LanguageTag::new("rust"),
+            syntax::tests::RUST_WASM,
+            syntax::tests::RUST_HIGHLIGHTS,
+        );
+        editor.loader.parse(&mut editor.buffers[0]).unwrap();
+
+        assert_ne!(
+            editor.buffers[0].highlights(0..text.len()).count(),
+            0,
+            "the buffer got the grammar while it was out of sight"
         );
     }
 }

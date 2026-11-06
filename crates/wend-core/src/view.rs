@@ -3,7 +3,7 @@ use std::{mem, ops};
 use crate::{
     buffer::{self, Buffer},
     frame::{self, Cell, CellPosition, Frame, Grapheme, Rect},
-    syntax::{self, Highlight, Syntax},
+    syntax::Highlight,
 };
 
 mod edit;
@@ -70,12 +70,6 @@ impl View {
         &mut self.buffer
     }
 
-    /// Brings the buffer's tree up to date with its text. The layout doesn't depend on the
-    /// tree, so nothing else changes.
-    pub fn reparse(&mut self, syntax: &mut Syntax) -> syntax::Result<()> {
-        self.buffer.reparse(syntax)
-    }
-
     /// Takes in the file's new contents. The selection keeps its bytes as far as the new
     /// text reaches, the same way a revert does.
     pub fn update(&mut self, bytes: &[u8]) -> buffer::Result<()> {
@@ -91,7 +85,7 @@ impl View {
     pub fn cursor_position(&mut self) -> Option<CellPosition> {
         self.ensure_cursor_visible();
         let pos = self.head_position()?;
-        Some(self.cell_position(pos))
+        Some(Self::cell_position(self.rect, pos))
     }
 
     /// Returns the slot the head is in, none if it is off screen.
@@ -100,10 +94,10 @@ impl View {
     }
 
     /// Returns where a slot of the layout ends up in the frame.
-    fn cell_position(&self, pos: SlotPosition) -> CellPosition {
+    fn cell_position(rect: Rect, pos: SlotPosition) -> CellPosition {
         CellPosition::new(
-            self.rect.col + frame::terminal_coordinate(pos.col),
-            self.rect.row + frame::terminal_coordinate(pos.row),
+            rect.col + frame::terminal_coordinate(pos.col),
+            rect.row + frame::terminal_coordinate(pos.row),
         )
     }
 
@@ -248,19 +242,21 @@ impl View {
     /// # Panics
     ///
     /// If the view's rect reaches outside `frame`.
-    pub fn render(&mut self, frame: &mut Frame, syntax: &mut Syntax) {
+    pub fn render(&mut self, frame: &mut Frame) {
         self.refresh_layout();
         let selected = self.selection_range();
         let mut open = mem::take(&mut self.open_highlights);
-        let spans = self.buffer.highlights(syntax, self.visible_bytes());
+        // The highlights borrow the buffer for as long as the loop runs, so the loop only
+        // reads the other fields, and doesn't call methods that take the whole view
+        let spans = self.buffer.highlights(self.visible_bytes());
         let mut highlighter = Highlighter::new(spans, &mut open);
         for (pos, slot) in self.layout.slots() {
-            let mut cell = self.cell(slot, pos, &selected);
+            let mut cell = Self::cell(&self.layout, self.selection, slot, pos, &selected);
             // Tails are blanks, only the glyph itself has a color
             if let Slot::Glyph(glyph) = slot {
                 cell.highlight = highlighter.at(glyph.from_byte);
             }
-            frame.write(self.cell_position(pos), cell);
+            frame.write(Self::cell_position(self.rect, pos), cell);
         }
         self.open_highlights = open;
     }
@@ -276,12 +272,21 @@ impl View {
     }
 
     /// The cell the slot at `pos` renders as. `selected` is the selection's byte range.
-    fn cell(&self, slot: Slot, pos: SlotPosition, selected: &ops::Range<usize>) -> Cell {
+    ///
+    /// Takes the parts of the view it reads instead of the view, so `render` can keep the
+    /// buffer borrowed meanwhile.
+    fn cell(
+        layout: &Layout,
+        selection: Selection,
+        slot: Slot,
+        pos: SlotPosition,
+        selected: &ops::Range<usize>,
+    ) -> Cell {
         let blank = Cell {
             grapheme: Grapheme::blank(),
             ..Cell::default()
         };
-        let Some(glyph) = self.layout.glyph(slot) else {
+        let Some(glyph) = layout.glyph(slot) else {
             return match slot {
                 Slot::Marker(c) => Cell {
                     grapheme: Grapheme::from_char(c),
@@ -295,7 +300,7 @@ impl View {
         // a too long grapheme shown as U+FFFD) print as blanks
         let (grapheme, covered) = match slot {
             Slot::Tail(head_index) => {
-                let offset = self.layout.slot_index(pos) - head_index;
+                let offset = layout.slot_index(pos) - head_index;
                 (Grapheme::blank(), offset < glyph.grapheme.width())
             }
             _ => (glyph.grapheme, false),
@@ -303,7 +308,7 @@ impl View {
 
         Cell {
             grapheme,
-            cursor: glyph.to_range().contains(&self.selection.head()),
+            cursor: glyph.to_range().contains(&selection.head()),
             selected: selected.contains(&glyph.from_byte),
             covered,
             // Set by render, which walks the cells in order
@@ -315,7 +320,10 @@ impl View {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{frame::Area, syntax::LanguageTag};
+    use crate::{
+        frame::Area,
+        syntax::{self, LanguageTag},
+    };
 
     pub(crate) fn view(text: &str, cols: u16, rows: u16) -> View {
         let mut view = View::new(Rect::new(0, 0, Area::new(cols, rows)));
@@ -390,7 +398,7 @@ pub(crate) mod tests {
     fn render_covers_wide_tails_only() {
         let mut view = view("a😀b\tc", 20, 2);
         let mut frame = Frame::new(Area::new(20, 2), None);
-        view.render(&mut frame, &mut Syntax::new().unwrap());
+        view.render(&mut frame);
         let cell = |col: u16| frame.get(CellPosition::new(col, 0));
 
         assert_eq!(cell(1).grapheme.as_str(), "😀");
@@ -408,21 +416,15 @@ pub(crate) mod tests {
 
     #[test]
     fn render_colors_the_highlighted_text() {
-        let mut syntax = Syntax::new().unwrap();
-        syntax
-            .load(
-                LanguageTag::new("rust"),
-                include_bytes!("../../../tree-sitter-rust.wasm"),
-                include_bytes!("../../../highlights.scm"),
-            )
-            .unwrap();
+        let (mut loader, grammar) = syntax::tests::rust();
         let mut view = view("fn main() {}", 20, 2);
         view.buffer_mut()
             .set_language(Some(LanguageTag::new("rust")));
-        view.reparse(&mut syntax).unwrap();
+        view.buffer_mut().attach(&grammar);
+        loader.parse(view.buffer_mut()).unwrap();
         let mut frame = Frame::new(Area::new(20, 2), None);
 
-        view.render(&mut frame, &mut syntax);
+        view.render(&mut frame);
 
         let highlight = |col: u16| frame.get(CellPosition::new(col, 0)).highlight;
         assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");

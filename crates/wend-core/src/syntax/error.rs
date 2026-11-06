@@ -14,8 +14,8 @@ pub enum Error {
     Language(#[from] tree_sitter::LanguageError),
     #[error("the highlights query is invalid")]
     Query(#[from] tree_sitter::QueryError),
-    #[error("no grammar is loaded for {}", .0.as_str())]
-    MissingLanguage(LanguageTag),
+    /// `Loader::new` gives the parser a store and `load` always puts it back, so this only
+    /// happens if one of them is wrong.
     #[error("the parser has no wasm store")]
     MissingWasmStore,
     #[error("the highlights query is not valid utf-8")]
