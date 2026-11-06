@@ -214,6 +214,11 @@ impl Layout {
         })
     }
 
+    #[must_use]
+    pub(super) fn row_metadata(&self, index: usize) -> Option<RowMetadata> {
+        self.row_metadata.get(index).copied()?
+    }
+
     pub(super) fn rows(&self) -> impl Iterator<Item = Row<'_>> {
         (0..self.area.height()).filter_map(|row| self.row(row))
     }

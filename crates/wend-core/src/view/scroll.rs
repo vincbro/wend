@@ -92,7 +92,7 @@ impl View {
             };
             left -= row + 1;
             line = above;
-            row = Layout::last_row_of_line(&self.buffer, self.rect.area.cols, line);
+            row = Layout::last_row_of_line(&self.buffer, self.text_rect().area.cols, line);
         }
         (ScrollOffset::new(line, row - left), rows)
     }
@@ -108,11 +108,16 @@ impl View {
         // Edits and reverts can make the buffer shorter than where we scrolled to, the
         // layout clamps the row the same way
         let line = scroll_offset.line.min(self.buffer.rope().line_len());
+
+        let text_area = self.text_rect().area;
+
         self.layout.rebuild(
             &self.buffer,
-            self.rect.area,
+            text_area,
             ScrollOffset::new(line, scroll_offset.row),
         );
+        // A gutter that grew with the line count took columns from the text
+        self.desired_col = self.desired_col.min(text_area.width().saturating_sub(1));
         self.layout_dirty = false;
     }
 }

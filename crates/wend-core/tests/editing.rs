@@ -19,10 +19,16 @@ fn editor(text: &str, cols: u16, rows: u16) -> Editor {
     editor
 }
 
+/// The columns the line numbers take in front of the text, for a file that is short: three
+/// digits and a space.
+const GUTTER: u16 = 4;
+
+/// What a row shows to the right of the gutter.
 fn row_text(frame: &Frame, row: u16) -> String {
     let text: String = frame
         .row(row)
         .iter()
+        .skip(usize::from(GUTTER))
         .filter(|cell| !cell.covered)
         .map(|cell| cell.grapheme.as_str_sanitize())
         .collect();
@@ -45,7 +51,7 @@ mod tests {
         assert_eq!(row_text(&frame, 0), "hello world");
         assert_eq!(
             frame.cursor(),
-            Some(CellPosition::new(6, 0)),
+            Some(CellPosition::new(GUTTER + 6, 0)),
             "the cursor stays on the w it started on"
         );
     }
@@ -62,7 +68,7 @@ mod tests {
 
         assert_eq!(
             editor.frame().cursor(),
-            Some(CellPosition::new(1, 1)),
+            Some(CellPosition::new(GUTTER + 1, 1)),
             "on the h of three"
         );
     }
@@ -81,7 +87,7 @@ mod tests {
             "world",
             "the word and its space are gone"
         );
-        assert_eq!(frame.cursor(), Some(CellPosition::new(0, 0)));
+        assert_eq!(frame.cursor(), Some(CellPosition::new(GUTTER, 0)));
     }
 
     #[test]
@@ -109,7 +115,7 @@ mod tests {
             "49",
             "the cursor's row shows the last line"
         );
-        assert_eq!(cursor.col, 1, "on the last grapheme, the 9");
+        assert_eq!(cursor.col, GUTTER + 1, "on the last grapheme, the 9");
     }
 
     #[test]
@@ -136,7 +142,7 @@ mod tests {
         editor.resize(Area::new(20, 3));
         assert_eq!(
             editor.frame().cursor(),
-            Some(CellPosition::new(0, 0)),
+            Some(CellPosition::new(GUTTER, 0)),
             "back on the first grapheme"
         );
     }
@@ -191,7 +197,7 @@ mod tests {
         };
         let plain = send(&mut editor, file);
         assert_eq!(
-            plain[0].get(CellPosition::new(0, 0)).highlight,
+            plain[0].get(CellPosition::new(GUTTER, 0)).highlight,
             None,
             "no colors until the grammar is there"
         );
@@ -207,7 +213,7 @@ mod tests {
             },
         );
 
-        let highlight = |col: u16| loaded[0].get(CellPosition::new(col, 0)).highlight;
+        let highlight = |col: u16| loaded[0].get(CellPosition::new(GUTTER + col, 0)).highlight;
         assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
         assert_eq!(highlight(3), Some(Highlight::Function), "the m of main");
     }
@@ -265,7 +271,7 @@ mod tests {
             "the text is still there"
         );
         assert_eq!(
-            frames[0].get(CellPosition::new(0, 0)).highlight,
+            frames[0].get(CellPosition::new(GUTTER, 0)).highlight,
             None,
             "without a grammar it is plain text"
         );
@@ -332,7 +338,7 @@ mod tests {
             })
             .expect("a frame is drawn for the new file");
         assert_eq!(
-            frame.get(CellPosition::new(0, 0)).highlight,
+            frame.get(CellPosition::new(GUTTER, 0)).highlight,
             Some(Highlight::Keyword),
             "the fn of the second file"
         );

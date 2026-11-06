@@ -54,4 +54,33 @@ impl Rect {
     pub fn new(col: u16, row: u16, area: Area) -> Self {
         Self { col, row, area }
     }
+
+    /// Splits off the left `cols` columns, which is all of the rect when it is narrower. The
+    /// second rect is what is left to the right of them.
+    #[must_use]
+    pub fn split_left(&self, cols: u16) -> (Self, Self) {
+        let left = Self::new(
+            self.col,
+            self.row,
+            Area::new(self.area.cols.min(cols), self.area.rows),
+        );
+        // A rect narrower than `cols` has nothing left, and starts where it ends
+        let right = Self::new(
+            self.col + cols.min(self.area.cols),
+            self.row,
+            Area::new(self.area.cols.saturating_sub(cols), self.area.rows),
+        );
+
+        (left, right)
+    }
+
+    /// Leaves out the right `cols` columns.
+    #[must_use]
+    pub fn pad_right(&self, cols: u16) -> Self {
+        Self::new(
+            self.col,
+            self.row,
+            Area::new(self.area.cols.saturating_sub(cols), self.area.rows),
+        )
+    }
 }
