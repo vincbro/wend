@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::mpsc::{Receiver, Sender},
-    vec::Drain,
-};
+use std::{collections::HashSet, path::PathBuf, vec::Drain};
 
 use crate::{
     buffer::{self, Buffer},
@@ -67,19 +62,6 @@ impl Editor {
             loader: Loader::new()?,
             requested_languages: HashSet::new(),
         })
-    }
-
-    /// Applies every input and sends the outputs, until the input channel closes or an
-    /// input fails.
-    pub fn run(mut self, inputs: &Receiver<Input>, outputs: &Sender<Output>) -> Result<()> {
-        for input in inputs {
-            self.apply(input)?;
-            for output in self.drain_outputs() {
-                outputs.send(output)?;
-            }
-        }
-
-        Ok(())
     }
 
     /// Applies `input`, then draws a frame if the screen is out of date and a spare frame is

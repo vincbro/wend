@@ -10,7 +10,7 @@ use std::{
     thread,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use crossterm::{event, terminal};
 use wend_core::{editor::Editor, frame::Area, input::Input, output, syntax::LanguageTag};
 
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
 
     let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
-    let editor = Editor::new(area).context("failed to start the editor")?;
+    let mut editor = Editor::new(area).context("failed to start the editor")?;
 
     let path = PathBuf::from_str(&args.file).context("not a valid path")?;
     let bytes = fs::read(&path)
@@ -60,7 +60,16 @@ fn main() -> Result<()> {
         })
         .context("the editor stopped before the file was sent")?;
 
-    thread::spawn(move || editor.run(&input_rx, &output_tx));
+    let editor_thread = thread::spawn(move || -> Result<()> {
+        for input in input_rx {
+            editor.apply(input).context("the editor failed")?;
+            for output in editor.drain_outputs() {
+                output_tx.send(output).context("the screen stopped")?;
+            }
+        }
+
+        Ok(())
+    });
 
     let terminal_tx = input_tx.clone();
     thread::spawn(move || {
@@ -94,6 +103,14 @@ fn main() -> Result<()> {
                 })
                 .context("the editor stopped")?,
         }
+    }
+
+    // The loop above also ends when the editor thread fails and drops its sender, and then
+    // its error is the reason. After a quit the thread is still waiting for input.
+    if editor_thread.is_finished() {
+        editor_thread
+            .join()
+            .map_err(|_| anyhow!("the editor thread panicked"))??;
     }
 
     Ok(())

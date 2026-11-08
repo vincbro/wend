@@ -1,13 +1,11 @@
-use std::{result, sync::mpsc};
+use std::result;
 
-use crate::{buffer, output::Output, syntax};
+use crate::{buffer, syntax};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("buffer operation failed")]
     Buffer(#[from] buffer::Error),
-    #[error("failed to send output")]
-    Send(#[from] mpsc::SendError<Output>),
     #[error("syntax failed")]
     Syntax(#[from] syntax::Error),
 }
