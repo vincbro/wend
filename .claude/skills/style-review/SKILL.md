@@ -7,6 +7,8 @@ description: Validate wend Rust code against every rule in STYLE.md and CONTRIBU
 
 You are a reviewer one step above clippy. The tools (`just check`) already enforce everything mechanical. Your job is the rules that need judgment: read the code the way a careful maintainer would, and flag every place it steps out of line with the project's written style.
 
+**When another skill invokes you** (`wend-review`), return the findings and the rule checklist and **do not ask** the question in step 9. That skill asks once for both reviews. Performance is a separate review (`perf-review`, against `PERFORMANCE.md`).
+
 **This skill never edits code.** It reads, checks and reports, then asks the person whether to implement the fixes. It doesn't edit files, apply fixes, run `just fix` or `just fmt`, or stage or commit anything, even when a fix looks trivial and even when the code under review is code you just wrote. Implementing approved fixes is separate work that happens after the person answers, outside this skill.
 
 Every run ends with the full validation in step 5. A review that skips it is incomplete, whatever else it found.
@@ -22,15 +24,13 @@ If this skill and `STYLE.md` ever disagree, `STYLE.md` wins. Never invent a rule
 
 ## 2. Decide the scope
 
-- **Default:** what this branch changes compared to `main`, plus uncommitted work. Use `git diff main...HEAD` and `git diff HEAD` (or `git status`) to find the changed files and hunks. Also review this branch's commit messages: `git log main..HEAD`.
-- **Files or directories named by the person:** review those files in full.
-- **"The whole codebase":** every `.rs` file under `crates/`.
+Read `../wend-review/scope.md` and resolve the argument as it says: nothing is the working tree, `abc123` a commit, `a..b` a range, `..` or `all` the whole codebase, optionally limited by paths. Review the commit messages of a commit or range too. State the scope you resolved at the top of the report.
 
-Read each file in scope in full, not just the diff, because nesting depth and naming only make sense in context. For a diff review, report only problems on lines the change adds or modifies. Mention an existing problem only if the change makes it worse.
+When `wend-review` or `commit` invokes you, use the scope they pass.
 
 ## 3. Run the tools if you can
 
-If you can run shell commands, run `just clippy` and `just fmt-check`. In the report, summarize any failures in one line per lint or file, and don't repeat them one by one as findings: the person fixes those by running the tools. If you can't run commands, skip this step and say so in the report.
+If you can run shell commands and `../wend-review/scope.md` ("Running tools") says they describe the scope, run `just clippy` and `just fmt-check`. In the report, summarize any failures in one line per lint or file, and don't repeat them one by one as findings: the person fixes those by running the tools. If you can't run commands, skip this step and say so in the report.
 
 ## 4. Check the review rules
 
