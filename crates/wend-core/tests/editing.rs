@@ -35,6 +35,16 @@ fn row_text(frame: &Frame, row: u16) -> String {
     text.trim_end().to_owned()
 }
 
+/// What a row shows in the gutter, the line numbers in front of the text.
+fn gutter_text(frame: &Frame, row: u16) -> String {
+    frame
+        .row(row)
+        .iter()
+        .take(usize::from(GUTTER))
+        .map(|cell| cell.grapheme.as_str_sanitize())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +80,24 @@ mod tests {
             editor.frame().cursor(),
             Some(CellPosition::new(GUTTER + 1, 1)),
             "on the h of three"
+        );
+    }
+
+    #[test]
+    fn the_gutter_counts_rows_from_the_cursor() {
+        let mut editor = editor("a\nb\nc\nd", 20, 4);
+        for _ in 0..2 {
+            editor
+                .view_mut()
+                .move_selection(Motion::Vertical(Direction::Forward), false);
+        }
+
+        let frame = editor.frame();
+        let shown: Vec<_> = (0..4).map(|row| gutter_text(&frame, row)).collect();
+        assert_eq!(
+            shown,
+            ["  2 ", "  1 ", "  3 ", "  1 "],
+            "the cursor is on line 3, the other rows are their distance away"
         );
     }
 

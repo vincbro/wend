@@ -17,6 +17,7 @@ mod scroll;
 mod selection;
 pub use selection::Selection;
 mod gutter;
+use gutter::Gutter;
 
 /// Decides what a selection change does to the column up and down aim for.
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +36,7 @@ enum ColumnPolicy {
 pub struct View {
     buffer: Buffer,
     rect: Rect,
+    gutter: Gutter,
     layout: Layout,
     layout_dirty: bool,
     selection: Selection,
@@ -48,8 +50,10 @@ pub struct View {
 impl View {
     #[must_use]
     pub fn new(rect: Rect) -> Self {
+        let buffer = Buffer::new();
         Self {
-            buffer: Buffer::new(),
+            gutter: Self::gutter_for(&buffer, rect),
+            buffer,
             rect,
             layout: Layout::new(rect.area, ScrollOffset::default()),
             layout_dirty: true,
@@ -196,26 +200,24 @@ impl View {
 
     pub fn resize(&mut self, rect: Rect) {
         self.rect = rect;
+        self.gutter = Self::gutter_for(&self.buffer, rect);
         self.desired_col = self
             .desired_col
             .min(self.text_rect().area.width().saturating_sub(1));
         self.layout_dirty = true;
     }
 
-    /// Returns how many columns the gutter takes from the left of the view. It grows with the
-    /// largest number it has to show, which is a line number or a row distance, and takes at
-    /// most half of the view so the text always has room.
-    fn gutter_width(&self) -> u16 {
+    /// Returns the gutter `buffer` needs in a view at `rect`.
+    fn gutter_for(buffer: &Buffer, rect: Rect) -> Gutter {
         // The cursor can sit on the empty line after a final line break, which the rope does
         // not count, so the last line number is one more
-        let line_count = self.buffer.rope().line_len() + 1;
-        let largest = line_count.max(self.rect.area.height());
-        gutter::width(largest).min(self.rect.area.cols / 2)
+        let line_count = buffer.rope().line_len() + 1;
+        Gutter::new(line_count.max(rect.area.height()), rect.area.cols)
     }
 
     /// Returns the part of the view the text is laid out in, to the right of the gutter.
     fn text_rect(&self) -> Rect {
-        self.rect.split_left(self.gutter_width()).1
+        self.gutter.split(self.rect).1
     }
 
     /// Shows `new_buffer` from its start and returns the buffer shown until now.
@@ -263,7 +265,7 @@ impl View {
     /// If the view's rect reaches outside `frame`.
     pub fn render(&mut self, frame: &mut Frame) {
         self.refresh_layout();
-        let (gutter_rect, text_rect) = self.rect.split_left(self.gutter_width());
+        let text_rect = self.text_rect();
         let rows_with_text = self.layout.last_row().map_or(0, |row| row + 1);
         let head = self.head_position().and_then(|slot| {
             let metadata = self.layout.row_metadata(slot.row)?;
@@ -272,7 +274,7 @@ impl View {
                 line: metadata.line,
             })
         });
-        gutter::render(frame, gutter_rect, rows_with_text, head);
+        self.gutter.render(frame, self.rect, rows_with_text, head);
 
         let selected = self.selection_range();
         let mut open = mem::take(&mut self.open_highlights);
@@ -361,7 +363,7 @@ pub(crate) mod tests {
         // Wide enough that the gutter takes what it wants, whatever `cols` is
         let mut view = View::new(Rect::new(0, 0, Area::new(cols + 100, rows)));
         view.open_buffer(Buffer::from(text));
-        let gutter = view.gutter_width();
+        let gutter = gutter_width(&view);
         view.resize(Rect::new(0, 0, Area::new(cols + gutter, rows)));
         view.refresh_layout();
         view
@@ -374,9 +376,14 @@ pub(crate) mod tests {
         frame
     }
 
+    /// How many columns the view's gutter takes.
+    fn gutter_width(view: &View) -> u16 {
+        view.gutter.split(view.rect).0.area.cols
+    }
+
     /// What the gutter shows on `row` of `frame`.
     fn gutter_text(view: &View, frame: &Frame, row: u16) -> String {
-        frame.row(row)[..usize::from(view.gutter_width())]
+        frame.row(row)[..usize::from(gutter_width(view))]
             .iter()
             .map(|cell| cell.grapheme.as_str_sanitize())
             .collect()
@@ -449,7 +456,7 @@ pub(crate) mod tests {
     fn render_covers_wide_tails_only() {
         let mut view = view("a😀b\tc", 20, 2);
         let frame = rendered(&mut view);
-        let gutter = view.gutter_width();
+        let gutter = gutter_width(&view);
         let cell = |col: u16| frame.get(CellPosition::new(gutter + col, 0));
 
         assert_eq!(cell(1).grapheme.as_str(), "😀");
@@ -476,7 +483,7 @@ pub(crate) mod tests {
 
         let frame = rendered(&mut view);
 
-        let gutter = view.gutter_width();
+        let gutter = gutter_width(&view);
         let highlight = |col: u16| frame.get(CellPosition::new(gutter + col, 0)).highlight;
         assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
         assert_eq!(highlight(1), Some(Highlight::Keyword), "the n of fn");
@@ -541,7 +548,7 @@ pub(crate) mod tests {
     #[test]
     fn the_terminal_cursor_sits_in_the_text_and_not_the_gutter() {
         let mut view = view("abc", 20, 3);
-        let gutter = view.gutter_width();
+        let gutter = gutter_width(&view);
 
         assert_eq!(
             view.cursor_position(),
@@ -559,12 +566,12 @@ pub(crate) mod tests {
     #[test]
     fn the_gutter_widens_past_999_lines_and_the_text_gives_up_a_column() {
         let mut view = view(&"a\n".repeat(998), 20, 5);
-        assert_eq!(view.gutter_width(), 4, "999 lines fit three digits");
+        assert_eq!(gutter_width(&view), 4, "999 lines fit three digits");
         assert_eq!(view.text_rect().area.cols, 20);
 
         view.new_line();
 
-        assert_eq!(view.gutter_width(), 5, "1000 lines need a fourth digit");
+        assert_eq!(gutter_width(&view), 5, "1000 lines need a fourth digit");
         assert_eq!(view.text_rect().area.cols, 19, "the text gave up a column");
     }
 
@@ -573,7 +580,7 @@ pub(crate) mod tests {
         let mut view = View::new(Rect::new(0, 0, Area::new(6, 3)));
         view.open_buffer(Buffer::from("abc"));
 
-        assert_eq!(view.gutter_width(), 3, "half of 6, not the 4 it wants");
+        assert_eq!(gutter_width(&view), 3, "half of 6, not the 4 it wants");
         assert_eq!(view.text_rect().area.cols, 3);
         assert!(view.cursor_position().is_some());
     }

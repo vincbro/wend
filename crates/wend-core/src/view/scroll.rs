@@ -109,6 +109,8 @@ impl View {
         // layout clamps the row the same way
         let line = scroll_offset.line.min(self.buffer.rope().line_len());
 
+        // The line count may have changed, and with it the gutter
+        self.gutter = Self::gutter_for(&self.buffer, self.rect);
         let text_area = self.text_rect().area;
 
         self.layout.rebuild(
