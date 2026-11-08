@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    iter,
     path::PathBuf,
     sync::mpsc::{Receiver, Sender},
     vec::Drain,
@@ -15,9 +14,12 @@ use crate::{
     view::View,
 };
 
+mod frame_pool;
+use frame_pool::FramePool;
 mod keymap;
 use keymap::Keymap;
 mod error;
+mod language;
 pub use error::{Error, Result};
 
 /// The widest the view gets, wider terminals center it.
@@ -36,47 +38,6 @@ pub enum Mode {
     /// Works like normal, except motions extend the selection instead of moving it.
     Select,
     Insert,
-}
-
-/// The frames the editor can draw into. A frame goes out with `Output::Frame` and comes
-/// back with `Input::Drawn`, so only `count` frames ever exist and none is allocated
-/// after startup. An empty pool means the frontend is still drawing.
-#[derive(Debug)]
-struct FramePool {
-    spares: Vec<Frame>,
-    area: Area,
-}
-
-impl FramePool {
-    #[must_use]
-    fn new(count: usize, area: Area) -> Self {
-        Self {
-            area,
-            spares: vec![Frame::new(area, None); count],
-        }
-    }
-
-    #[must_use]
-    fn take(&mut self) -> Option<Frame> {
-        self.spares.pop()
-    }
-
-    fn place(&mut self, mut frame: Frame) {
-        if frame.area() != self.area {
-            frame.resize(self.area);
-        }
-        self.spares.push(frame);
-    }
-
-    fn resize(&mut self, area: Area) {
-        self.area = area;
-        self.spares
-            .iter_mut()
-            .filter(|frame| frame.area() != area)
-            .for_each(|frame| {
-                frame.resize(area);
-            });
-    }
 }
 
 /// Holds the whole editor: the terminal's area, the view and the mode, with the buffers that
@@ -166,40 +127,6 @@ impl Editor {
             self.is_stale = false;
         }
         Ok(())
-    }
-
-    /// Reparses the shown buffer if its text changed. A buffer whose parse fails goes back to
-    /// plain text, so one bad grammar doesn't stop the editor.
-    fn reparse(&mut self) {
-        if self.loader.parse(self.view.buffer_mut()).is_err() {
-            self.view.buffer_mut().set_language(None);
-        }
-    }
-
-    /// Sets the language of the shown buffer, and gives it the grammar if that is loaded. If
-    /// it isn't, asks the frontend for it, once, and the buffer stays plain text until then.
-    fn set_language(&mut self, language: Option<LanguageTag>) {
-        self.view.buffer_mut().set_language(language.clone());
-        let Some(tag) = language else {
-            return;
-        };
-        if let Some(grammar) = self.loader.grammar(&tag) {
-            self.view.buffer_mut().attach(grammar);
-        } else if self.requested_languages.insert(tag.clone()) {
-            self.outputs.push(Output::Language(tag));
-        }
-    }
-
-    /// Loads the grammar the frontend sent and gives it to every buffer written in its
-    /// language. A grammar that fails to load leaves those buffers as plain text.
-    fn load_language(&mut self, tag: LanguageTag, wasm: &[u8], highlights: &[u8]) {
-        self.requested_languages.remove(&tag);
-        let Ok(grammar) = self.loader.load(tag, wasm, highlights) else {
-            return;
-        };
-        for buffer in iter::once(self.view.buffer_mut()).chain(&mut self.buffers) {
-            buffer.attach(&grammar);
-        }
     }
 
     fn key_press(&mut self, key: Key) -> Result<()> {
