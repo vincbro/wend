@@ -199,11 +199,13 @@ pub use error::{Error, Result};
 
 Callers refer to them through the module, `buffer::Error` and `buffer::Result<T>`, the same way std has `io::Error` and `io::Result<T>`. Inside the module, `Result<T>` means the module's own alias. A leaf module that gains errors becomes `foo.rs` plus `foo/error.rs` (see S-MOD-FILES).
 
+A module returns only its own `Error`, never another module's. An error from a lower module is wrapped in a variant with `#[from]`, so a failure arrives with the layers it passed through: a `syntax::Error` raised while a buffer parses reaches the caller as `buffer::Error::Syntax`, and one level up as `editor::Error::Buffer`.
+
 `wend-core` returns these typed errors. The `wend` binary uses `anyhow`: it adds `.context("…")` and returns from `main` when it reaches a state it can't recover from.
 
-*Why:* typed errors let the code that can do something about a failure `match` on exactly what went wrong. The alias keeps signatures short and makes the error a function returns follow from the module it lives in. The binary is where errors stop being handled and start being shown, and that's what `anyhow` is good at. One file per module means you always know where a module's failure modes are listed.
+*Why:* typed errors let the code that can do something about a failure `match` on exactly what went wrong. Wrapping at every module boundary adds that module's context, so an error says where it came from as well as what it was. The alias keeps signatures short and makes the error a function returns follow from the module it lives in. The binary is where errors stop being handled and start being shown, and that's what `anyhow` is good at. One file per module means you always know where a module's failure modes are listed.
 
-*Enforced:* deps (cargo-deny allows `anyhow` only as a dependency of `wend`). Review checks that each error lives in `error.rs`, is named `Error`, and comes with the re-exported `Result` alias.
+*Enforced:* deps (cargo-deny allows `anyhow` only as a dependency of `wend`). Review checks that each error lives in `error.rs`, is named `Error`, comes with the re-exported `Result` alias, and that no function returns another module's `Error` or `Result`.
 
 ### S-ERROR-TEXT: Error messages are lowercase, with no trailing period
 

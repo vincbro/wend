@@ -73,6 +73,7 @@ Go through every rule in `STYLE.md` whose *Enforced* line includes "review". The
 - A module that can fail without a `foo/error.rs` holding `pub enum Error` and `pub type Result<T> = result::Result<T, Error>`, both re-exported (`pub use error::{Error, Result}`) so callers write `foo::Error` and `foo::Result<T>`.
 - A signature spelling out `Result<T, foo::Error>` where `foo::Result<T>` exists.
 - Errors defined elsewhere.
+- A function that returns another module's `Error` or `Result` instead of its own, with no `#[from]` variant wrapping it.
 - Ad-hoc `io::Error::other("...")` or string errors in `wend-core`.
 - Error messages that are capitalized or end with a period.
 
