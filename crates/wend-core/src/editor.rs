@@ -399,7 +399,7 @@ mod tests {
             syntax::tests::RUST_WASM,
             syntax::tests::RUST_HIGHLIGHTS,
         );
-        editor.loader.parse(&mut editor.buffers[0]).unwrap();
+        editor.buffers[0].reparse(&mut editor.loader).unwrap();
 
         assert_ne!(
             editor.buffers[0].highlights(0..text.len()).count(),

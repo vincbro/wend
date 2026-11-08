@@ -7,7 +7,7 @@ impl Editor {
     /// Reparses the shown buffer if its text changed. A buffer whose parse fails goes back to
     /// plain text, so one bad grammar doesn't stop the editor.
     pub(super) fn reparse(&mut self) {
-        if self.loader.parse(self.view.buffer_mut()).is_err() {
+        if self.view.buffer_mut().reparse(&mut self.loader).is_err() {
             self.view.buffer_mut().set_language(None);
         }
     }

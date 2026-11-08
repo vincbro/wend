@@ -1,5 +1,7 @@
 use std::{io, result};
 
+use crate::syntax;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("file is not valid utf-8")]
@@ -8,6 +10,8 @@ pub enum Error {
     NoPath,
     #[error("file i/o failed")]
     Io(#[from] io::Error),
+    #[error("failed to parse the text")]
+    Syntax(#[from] syntax::Error),
 }
 
 pub type Result<T> = result::Result<T, Error>;

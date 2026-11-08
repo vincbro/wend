@@ -219,7 +219,7 @@ pub(crate) mod tests {
         let mut buffer = Buffer::from(text);
         buffer.set_language(Some(LanguageTag::new("rust")));
         buffer.attach(&grammar);
-        loader.parse(&mut buffer).unwrap();
+        buffer.reparse(&mut loader).unwrap();
         (loader, buffer)
     }
 
@@ -257,7 +257,7 @@ pub(crate) mod tests {
         let (mut loader, mut buffer) = rust_buffer("fn a() {}");
 
         buffer.edit(3..4, "bb");
-        loader.parse(&mut buffer).unwrap();
+        buffer.reparse(&mut loader).unwrap();
 
         let text = buffer.rope().to_string();
         let names: Vec<_> = buffer

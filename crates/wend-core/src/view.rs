@@ -318,7 +318,7 @@ pub(crate) mod tests {
         view.buffer_mut()
             .set_language(Some(LanguageTag::new("rust")));
         view.buffer_mut().attach(&grammar);
-        loader.parse(view.buffer_mut()).unwrap();
+        view.buffer_mut().reparse(&mut loader).unwrap();
 
         let frame = rendered(&mut view);
 

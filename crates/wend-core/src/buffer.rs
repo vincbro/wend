@@ -11,7 +11,7 @@ pub use change::Change;
 mod error;
 pub use error::{Error, Result};
 
-use crate::syntax::{Grammar, Highlight, LanguageTag, Syntax};
+use crate::syntax::{Grammar, Highlight, LanguageTag, Loader, Syntax};
 
 /// Holds the text of a file, plus its clean state.
 ///
@@ -60,11 +60,6 @@ impl Buffer {
             return;
         }
         self.syntax = Some(Syntax::new(Arc::clone(grammar)));
-    }
-
-    #[must_use]
-    pub(crate) fn syntax_mut(&mut self) -> Option<&mut Syntax> {
-        self.syntax.as_mut()
     }
 
     /// The highlighted stretches of the text that touch `bytes`, see `Syntax::highlights`.
@@ -181,6 +176,15 @@ impl Buffer {
         self.clean_rope = self.rope.clone();
         self.is_dirty = false;
         Ok((path.clone(), self.rope.clone()))
+    }
+
+    /// Brings the tree up to date with the text. Does nothing for plain text, or when the tree
+    /// already is.
+    pub(crate) fn reparse(&mut self, loader: &mut Loader) -> Result<()> {
+        if let Some(syntax) = &mut self.syntax {
+            loader.parse(&self.rope, syntax)?;
+        }
+        Ok(())
     }
 }
 
@@ -400,7 +404,7 @@ mod tests {
             0,
             "the undone edits weren't recorded, so the tree can't follow them"
         );
-        loader.parse(&mut buffer).unwrap();
+        buffer.reparse(&mut loader).unwrap();
         assert_ne!(buffer.highlights(0..text.len()).count(), 0, "parsed again");
 
         buffer.update(b"fn b() {}").unwrap();

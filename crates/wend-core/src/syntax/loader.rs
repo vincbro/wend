@@ -1,12 +1,12 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
+use crop::Rope;
 use tree_sitter::{
     Parser, Query, WasmStore,
     wasmtime::{self, Engine},
 };
 
-use super::{Error, Grammar, Highlight, LanguageTag, Result};
-use crate::buffer::Buffer;
+use super::{Error, Grammar, Highlight, LanguageTag, Result, Syntax};
 
 /// Loads grammars and parses with them. It is the one parser that every buffer's tree comes
 /// from, and it knows every grammar it loaded.
@@ -73,16 +73,10 @@ impl Loader {
         self.grammars.get(tag)
     }
 
-    /// Brings the tree of `buffer` up to date with its text. Does nothing for a buffer with no
-    /// syntax, or whose tree already is.
-    pub fn parse(&mut self, buffer: &mut Buffer) -> Result<()> {
-        // Copying a rope only shares its nodes. It lets the syntax be borrowed from the buffer
-        // while the text is read.
-        let rope = buffer.rope().clone();
-        let Some(syntax) = buffer.syntax_mut() else {
-            return Ok(());
-        };
-        syntax.parse(&mut self.parser, &rope)
+    /// Brings the tree of `syntax` up to date with `rope`, the text it describes. Does nothing
+    /// when the tree already is.
+    pub(crate) fn parse(&mut self, rope: &Rope, syntax: &mut Syntax) -> Result<()> {
+        syntax.parse(&mut self.parser, rope)
     }
 }
 
@@ -97,7 +91,7 @@ impl fmt::Debug for Loader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syntax::tests;
+    use crate::{buffer::Buffer, syntax::tests};
 
     #[test]
     fn a_failed_load_leaves_the_loader_working() {
@@ -123,8 +117,8 @@ mod tests {
         let mut buffer = Buffer::from("fn a() {}");
         buffer.set_language(Some(tag));
         buffer.attach(&grammar);
-        loader
-            .parse(&mut buffer)
+        buffer
+            .reparse(&mut loader)
             .expect("the wasm store survived the failed loads");
     }
 
@@ -132,7 +126,7 @@ mod tests {
     fn plain_text_parses_to_nothing() {
         let (mut loader, _) = tests::rust();
         let mut buffer = Buffer::from("fn a() {}");
-        loader.parse(&mut buffer).unwrap();
+        buffer.reparse(&mut loader).unwrap();
         assert_eq!(buffer.highlights(0..9).count(), 0, "no syntax, no colors");
     }
 }
