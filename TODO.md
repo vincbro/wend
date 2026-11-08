@@ -4,11 +4,13 @@ In order. Things that only touch the core come first, and anything that needs do
 outside processes (grammars, LSP) comes last. Each step says why it sits where it does.
 
 - [ ] **0. Debts and file splits.** Cheap now, and they touch the same files as everything below.
-  - [ ] Break the `buffer`↔`syntax` cycle: `Loader::parse` takes `&Rope` and `&mut Syntax`, not `&mut Buffer`.
-  - [ ] Break the `input`↔`editor` cycle: `Mode` moves to `input`, and `Direction` out of `view::motion` into a leaf both `layout` and `motion` use.
-  - [ ] Move `Editor::run` and its channels to the frontend, and report errors from the editor thread (they are dropped silently today).
-  - [ ] Drop the unused `dirs` workspace dependency and the never-produced `buffer::Error::Io`.
-  - [ ] Split the big files into submodules (`main.rs`, `editor.rs`, `view.rs`, `view/layout.rs`, `view/motion.rs`, `syntax.rs`, `editor/keymap.rs`).
+  - [x] Break the `buffer`↔`syntax` cycle: `Loader::parse` takes `&Rope` and `&mut Syntax`, not `&mut Buffer`.
+  - [x] Break the `input`↔`editor` cycle: `Mode` moves to `input`.
+  - [x] Move `Editor::run` and its channels to the frontend, and report errors from the editor thread (they are dropped silently today).
+  - [ ] Give `view` its own `Error` wrapping `buffer::Error`, so `View::update` and `View::save` stop returning another module's error (S-ERRORS), and `Editor::show_file` returns `editor::Result`.
+  - [ ] Drop the unused `dirs` workspace dependency, fix the `anyhow` ban wrapper in `deny.toml`, and remove the never-produced `buffer::Error::Io`.
+  - [x] Split the big files into submodules (`main.rs`, `editor.rs`, `view.rs`, `view/layout.rs`, `view/motion.rs`, `syntax.rs`, `editor/keymap.rs`).
+- [ ] **0b. Performance pass.** The known opportunities in `PERFORMANCE.md`, each as its own measured change (P-MEASURE): buffer the frame output, `Keymap::press` into a caller's buffer, `Layout::last_row_of_line` without a new `Layout`, boxed slices for fixed data, and a smaller `Slot`. Add `dhat-rs` tests for P-NO-ALLOC-HOT.
 - [ ] **1. Styles.** `Cell { grapheme, style }` with a flat `Style` enum (`Plain`, `Text(Highlight)`, `Selection`, `Cursor`, `LineNumber`, `CurrentLineNumber`, `Border`, `Marker`) and a pure `Theme::colors(style)`. `covered` stays a field. Everything after this draws with styles.
 - [ ] **2. Config.** A core `Config` type. The frontend reads TOML and sends it in as an event, because the core never touches the disk. Includes the keymap, so keys are rebindable.
 - [ ] **3. Themes.** Theme files loaded through config, Mellow built in, and a way to create and select themes. After config because themes load from it, and after styles because they color `Style`.
