@@ -42,7 +42,7 @@ A key press and a frame allocate no memory once the editor has started. `FramePo
 
 *Why:* an allocation is a lock, a search for a free block and later a free, and it scatters the data the next frame reads. The book measured about 1% from removing ten allocations per million instructions in a compiler, and wend does the same work on every key.
 
-*Enforced:* review and the benchmarks. A test with `dhat-rs` that fails when a key press or a frame allocates is the intended check. It needs a dev-dependency and isn't added yet.
+*Enforced:* review and the benchmarks.
 
 ### P-BORROW: A hot function that returns existing data returns a borrow
 

@@ -8,9 +8,11 @@ outside processes (grammars, LSP) comes last. Each step says why it sits where i
   - [x] Break the `input`↔`editor` cycle: `Mode` moves to `input`.
   - [x] Move `Editor::run` and its channels to the frontend, and report errors from the editor thread (they are dropped silently today).
   - [ ] Give `view` its own `Error` wrapping `buffer::Error`, so `View::update` and `View::save` stop returning another module's error (S-ERRORS), and `Editor::show_file` returns `editor::Result`.
-  - [ ] Drop the unused `dirs` workspace dependency, fix the `anyhow` ban wrapper in `deny.toml`, and remove the never-produced `buffer::Error::Io`.
+  - [x] Drop the unused `dirs` workspace dependency and fix the `anyhow` ban wrapper in `deny.toml`.
+  - [ ] Remove the never-produced `buffer::Error::Io`.
   - [x] Split the big files into submodules (`main.rs`, `editor.rs`, `view.rs`, `view/layout.rs`, `view/motion.rs`, `syntax.rs`, `editor/keymap.rs`).
-- [ ] **0b. Performance pass.** The known opportunities in `PERFORMANCE.md`, each as its own measured change (P-MEASURE): buffer the frame output, `Keymap::press` into a caller's buffer, `Layout::last_row_of_line` without a new `Layout`, boxed slices for fixed data, and a smaller `Slot`. Add `dhat-rs` tests for P-NO-ALLOC-HOT.
+- [ ] **0b. Performance pass.** The known opportunities in `PERFORMANCE.md`, each as its own measured change (P-MEASURE): buffer the frame output, `Keymap::press` returning a borrowed slice, `Layout::last_row_of_line` without a new `Layout`, boxed slices for fixed data, and a smaller `Slot`.
+- [ ] **0c. Number conversions.** Use the `az` crate (`saturating_cast`, `checked_cast`) in place of `frame::terminal_coordinate` and the scattered `try_from` calls, with a thin `exact` that panics in debug builds and saturates in release, since `az` has no such cast (`az::Cast` wraps in release). Add the dependency in the same change that uses it, or `cargo machete` fails.
 - [ ] **1. Styles.** `Cell { grapheme, style }` with a flat `Style` enum (`Plain`, `Text(Highlight)`, `Selection`, `Cursor`, `LineNumber`, `CurrentLineNumber`, `Border`, `Marker`) and a pure `Theme::colors(style)`. `covered` stays a field. Everything after this draws with styles.
 - [ ] **2. Config.** A core `Config` type. The frontend reads TOML and sends it in as an event, because the core never touches the disk. Includes the keymap, so keys are rebindable.
 - [ ] **3. Themes.** Theme files loaded through config, Mellow built in, and a way to create and select themes. After config because themes load from it, and after styles because they color `Style`.
