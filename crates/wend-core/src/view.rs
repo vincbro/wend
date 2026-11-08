@@ -1,18 +1,20 @@
-use std::{mem, ops};
+use std::mem;
 
 use crate::{
     buffer::{self, Buffer},
-    frame::{self, Cell, CellPosition, Frame, Grapheme, Rect},
+    frame::{self, CellPosition, Rect},
     syntax::Highlight,
 };
 
 mod edit;
+mod grapheme;
 mod highlight;
 use highlight::Highlighter;
 mod layout;
 use layout::{Glyph, Layout, ScrollOffset, Slot, SlotPosition};
 mod motion;
 pub use motion::{Direction, Motion};
+mod render;
 mod scroll;
 mod selection;
 pub use selection::Selection;
@@ -106,68 +108,6 @@ impl View {
         )
     }
 
-    /// Returns the glyph holding `byte`, none if it is off screen or the layout is out of date.
-    fn glyph_on_screen(&self, byte: usize) -> Option<Glyph> {
-        if self.layout_dirty {
-            return None;
-        }
-        self.layout.glyph_at(self.layout.find_byte(byte)?)
-    }
-
-    /// Returns where the grapheme holding `byte` starts, the buffer's end for anything past it.
-    fn grapheme_start(&self, byte: usize) -> usize {
-        self.glyph_on_screen(byte)
-            .map_or_else(|| self.rope_grapheme_start(byte), |glyph| glyph.from_byte)
-    }
-
-    /// Walks the line from its start, so this costs as much as the line is long.
-    fn rope_grapheme_start(&self, byte: usize) -> usize {
-        let rope = self.buffer.rope();
-        let mut byte = byte.min(rope.byte_len());
-        // Line lookups need a char boundary, back up to one, at most 3 bytes in UTF-8
-        while !rope.is_char_boundary(byte) {
-            byte -= 1;
-        }
-        let mut start = rope.byte_of_line(rope.line_of_byte(byte));
-        for grapheme in rope.byte_slice(start..).graphemes() {
-            let end = start + grapheme.len();
-            if end > byte {
-                return start;
-            }
-            start = end;
-        }
-        start
-    }
-
-    /// Returns where the grapheme starting at `start` ends. The end of buffer slot is one byte
-    /// wide, see `Layout::rebuild`.
-    fn grapheme_end(&self, start: usize) -> usize {
-        self.glyph_on_screen(start)
-            .map_or_else(|| self.rope_grapheme_end(start), |glyph| glyph.to_byte)
-    }
-
-    /// Returns where the grapheme starting at `start` ends, inside the text even for the end
-    /// of buffer slot.
-    fn clamped_grapheme_end(&self, start: usize) -> usize {
-        self.grapheme_end(start).min(self.buffer.rope().byte_len())
-    }
-
-    fn rope_grapheme_end(&self, start: usize) -> usize {
-        let len = self
-            .buffer
-            .rope()
-            .byte_slice(start..)
-            .graphemes()
-            .next()
-            .map_or(1, |grapheme| grapheme.len());
-        start + len
-    }
-
-    /// Returns the bytes the selection covers, from its first grapheme through its last.
-    fn selection_range(&self) -> ops::Range<usize> {
-        self.selection.start()..self.clamped_grapheme_end(self.selection.end())
-    }
-
     /// The only way the selection changes. Snaps both ends to graphemes, scrolls so the
     /// head is visible and updates the column up and down aim for.
     fn set_selection(&mut self, selection: Selection, policy: ColumnPolicy) {
@@ -185,16 +125,6 @@ impl View {
     fn sync_desired_col(&mut self) {
         if let Some(pos) = self.head_position() {
             self.desired_col = pos.col;
-        }
-    }
-
-    /// Returns where the text of `line` ends, before its line break.
-    fn line_end(&self, line: usize) -> usize {
-        let rope = self.buffer.rope();
-        if line < rope.line_len() {
-            rope.byte_of_line(line) + rope.line(line).byte_len()
-        } else {
-            rope.byte_len()
         }
     }
 
@@ -257,104 +187,13 @@ impl View {
             self.desired_col
         );
     }
-
-    /// Writes the view's cells into `frame`, leaving the rest of it alone.
-    ///
-    /// # Panics
-    ///
-    /// If the view's rect reaches outside `frame`.
-    pub fn render(&mut self, frame: &mut Frame) {
-        self.refresh_layout();
-        let text_rect = self.text_rect();
-        let rows_with_text = self.layout.last_row().map_or(0, |row| row + 1);
-        let head = self.head_position().and_then(|slot| {
-            let metadata = self.layout.row_metadata(slot.row)?;
-            Some(gutter::Head {
-                row: slot.row,
-                line: metadata.line,
-            })
-        });
-        self.gutter.render(frame, self.rect, rows_with_text, head);
-
-        let selected = self.selection_range();
-        let mut open = mem::take(&mut self.open_highlights);
-        // The highlights borrow the buffer for as long as the loop runs, so the loop only
-        // reads the other fields, and doesn't call methods that take the whole view
-        let spans = self.buffer.highlights(self.visible_bytes());
-        let mut highlighter = Highlighter::new(spans, &mut open);
-        for (pos, slot) in self.layout.slots() {
-            let mut cell = Self::cell(&self.layout, self.selection, slot, pos, &selected);
-            // Tails are blanks, only the glyph itself has a color
-            if let Slot::Glyph(glyph) = slot {
-                cell.highlight = highlighter.at(glyph.from_byte);
-            }
-            frame.write(Self::cell_position(text_rect, pos), cell);
-        }
-
-        self.open_highlights = open;
-    }
-
-    /// The bytes of the text the layout shows, from the first row's start to the last row's end.
-    fn visible_bytes(&self) -> ops::Range<usize> {
-        let mut rows = self.layout.rows();
-        let Some(first) = rows.next() else {
-            return 0..0;
-        };
-        let last = rows.last().unwrap_or(first);
-        first.metadata.from_byte..last.metadata.to_byte
-    }
-
-    /// The cell the slot at `pos` renders as. `selected` is the selection's byte range.
-    ///
-    /// Takes the parts of the view it reads instead of the view, so `render` can keep the
-    /// buffer borrowed meanwhile.
-    fn cell(
-        layout: &Layout,
-        selection: Selection,
-        slot: Slot,
-        pos: SlotPosition,
-        selected: &ops::Range<usize>,
-    ) -> Cell {
-        let blank = Cell {
-            grapheme: Grapheme::blank(),
-            ..Cell::default()
-        };
-        let Some(glyph) = layout.glyph(slot) else {
-            return match slot {
-                Slot::Marker(c) => Cell {
-                    grapheme: Grapheme::from_char(c),
-                    ..blank
-                },
-                _ => blank,
-            };
-        };
-
-        // A tail is covered when the head prints wide enough to reach it, the rest (a tab,
-        // a too long grapheme shown as U+FFFD) print as blanks
-        let (grapheme, covered) = match slot {
-            Slot::Tail(head_index) => {
-                let offset = layout.slot_index(pos) - head_index;
-                (Grapheme::blank(), offset < glyph.grapheme.width())
-            }
-            _ => (glyph.grapheme, false),
-        };
-
-        Cell {
-            grapheme,
-            cursor: glyph.to_range().contains(&selection.head()),
-            selected: selected.contains(&glyph.from_byte),
-            covered,
-            // Set by render, which walks the cells in order
-            highlight: None,
-        }
-    }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::{
-        frame::Area,
+        frame::{Area, Frame},
         syntax::{self, LanguageTag},
     };
 
