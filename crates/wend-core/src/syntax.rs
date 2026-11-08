@@ -2,7 +2,8 @@ use std::{fmt, ops::Range, sync::Arc};
 
 use crop::Rope;
 use tree_sitter::{
-    InputEdit, Language, Node, Parser, Point, Query, QueryCursor, StreamingIterator, Tree,
+    InputEdit, Language, Node, Parser, Point, Query, QueryCursor, QueryMatch, StreamingIterator,
+    Tree,
 };
 
 mod error;
@@ -142,9 +143,7 @@ impl Syntax {
                 cursor
                     .captures(&grammar.query, tree.root_node(), text)
                     .filter_map(move |(query_match, index)| {
-                        let capture = query_match.captures()[*index];
-                        let highlight = grammar.captures[capture.index as usize]?;
-                        Some((capture.node.byte_range(), highlight))
+                        capture_highlight(grammar, query_match, *index)
                     })
                     .cloned()
             })
@@ -180,6 +179,18 @@ impl fmt::Debug for Grammar {
             .field("tag", &self.tag)
             .finish_non_exhaustive()
     }
+}
+
+/// The stretch of text and highlight of capture `index` of `query_match`, none for a capture
+/// without a highlight.
+fn capture_highlight(
+    grammar: &Grammar,
+    query_match: &QueryMatch<'_, '_>,
+    index: usize,
+) -> Option<(Range<usize>, Highlight)> {
+    let capture = query_match.captures()[index];
+    let highlight = grammar.captures[capture.index as usize]?;
+    Some((capture.node.byte_range(), highlight))
 }
 
 /// The text from `byte` to the end of the chunk it's in, which is what tree-sitter asks

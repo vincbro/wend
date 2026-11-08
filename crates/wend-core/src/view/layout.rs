@@ -244,16 +244,28 @@ impl Layout {
     #[must_use]
     pub(super) fn find_byte(&self, byte: usize) -> Option<SlotPosition> {
         self.rows().enumerate().find_map(|(row, layout_row)| {
-            if !(layout_row.metadata.from_byte..layout_row.metadata.to_byte).contains(&byte) {
-                return None;
-            }
-            // The first slot of a glyph is its head, tails come after it
-            let col = layout_row.slots.iter().position(|slot| {
-                self.glyph(*slot)
-                    .is_some_and(|glyph| glyph.to_range().contains(&byte))
-            })?;
-            Some(SlotPosition::new(col, row))
+            Some(SlotPosition::new(
+                self.column_of_byte(&layout_row, byte)?,
+                row,
+            ))
         })
+    }
+
+    /// Returns the column of the glyph holding `byte` in `row`, none if the row doesn't show
+    /// the byte.
+    fn column_of_byte(&self, row: &Row<'_>, byte: usize) -> Option<usize> {
+        if !(row.metadata.from_byte..row.metadata.to_byte).contains(&byte) {
+            return None;
+        }
+        // The first slot of a glyph is its head, tails come after it
+        row.slots
+            .iter()
+            .position(|slot| self.slot_holds_byte(*slot, byte))
+    }
+
+    fn slot_holds_byte(&self, slot: Slot, byte: usize) -> bool {
+        self.glyph(slot)
+            .is_some_and(|glyph| glyph.to_range().contains(&byte))
     }
 
     /// Returns the next glyph from `pos` in a direction within the row, skipping the tails of the
