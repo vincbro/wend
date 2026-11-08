@@ -8,7 +8,7 @@ use std::{
 use crate::{
     buffer::{self, Buffer},
     frame::{Area, Frame, Rect},
-    input::{Input, action::Action, key::Key},
+    input::{Input, Mode, action::Action, key::Key},
     output::Output,
     syntax::{LanguageTag, Loader},
     view::View,
@@ -30,14 +30,6 @@ fn view_rect(area: Area) -> Rect {
     let width = area.cols.min(MAX_VIEW_COLS);
     let left_col = (area.cols - width) / 2;
     Rect::new(left_col, 0, Area::new(width, area.rows))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    Normal,
-    /// Works like normal, except motions extend the selection instead of moving it.
-    Select,
-    Insert,
 }
 
 /// Holds the whole editor: the terminal's area, the view and the mode, with the buffers that

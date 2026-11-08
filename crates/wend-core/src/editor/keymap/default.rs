@@ -1,6 +1,6 @@
 use crate::{
-    editor::Mode,
     input::{
+        Mode,
         action::Action,
         key::{Key, KeyCode, KeyTree},
     },

@@ -8,6 +8,8 @@ use crate::{
 
 pub mod action;
 pub mod key;
+mod mode;
+pub use mode::Mode;
 
 /// Everything that reaches the editor from outside: user actions, the terminal and files.
 #[derive(Debug, Clone)]

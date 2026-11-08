@@ -1,4 +1,4 @@
-use crate::{editor::Mode, view::Motion};
+use crate::{input::Mode, view::Motion};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Action {

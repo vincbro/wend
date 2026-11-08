@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use wend_core::{
     buffer::Buffer,
-    editor::{Editor, Mode},
+    editor::Editor,
     frame::{Area, CellPosition, Frame},
     input::{
-        Input,
+        Input, Mode,
         key::{Key, KeyCode},
     },
     output::Output,

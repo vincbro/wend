@@ -1,12 +1,10 @@
 mod default;
 use default::{command_tree, insert_tree};
 
-use crate::{
-    editor::Mode,
-    input::{
-        action::Action,
-        key::{Key, KeyCode, KeyTree},
-    },
+use crate::input::{
+    Mode,
+    action::Action,
+    key::{Key, KeyCode, KeyTree},
 };
 
 /// Turns keys into actions, one key at a time, with a key tree for each mode.
