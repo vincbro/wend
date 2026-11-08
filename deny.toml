@@ -41,10 +41,12 @@ include-path-dependencies = true
 unused = "deny"
 
 # S-ERRORS: wend-core returns typed thiserror errors. anyhow is for the
-# binary, where errors stop being handled and start being shown.
+# binary, where errors stop being handled and start being shown. The two
+# wasmtime crates come with tree-sitter's wasm feature, which loads grammars,
+# and use anyhow inside: wend-core never sees it.
 [[bans.deny]]
 crate = "anyhow"
-wrappers = ["wend"]
+wrappers = ["wend", "wasmprinter", "wasmtime-environ"]
 reason = "S-ERRORS: anyhow is only for the wend binary"
 
 [sources]
