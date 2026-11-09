@@ -17,16 +17,6 @@ mod error;
 mod language;
 pub use error::{Error, Result};
 
-/// The widest the view gets, wider terminals center it.
-const MAX_VIEW_COLS: u16 = 100;
-
-/// Returns where the view goes in a terminal of `area`.
-fn view_rect(area: Area) -> Rect {
-    let width = area.cols.min(MAX_VIEW_COLS);
-    let left_col = (area.cols - width) / 2;
-    Rect::new(left_col, 0, Area::new(width, area.rows))
-}
-
 /// Holds the whole editor: the terminal's area, the view and the mode, with the buffers that
 /// aren't shown and the loader of the grammars they are written in.
 ///
@@ -53,7 +43,7 @@ impl Editor {
         Ok(Self {
             area,
             buffers: vec![],
-            view: View::new(view_rect(area)),
+            view: View::new(Rect::new(0, 0, area)),
             mode: Mode::Normal,
             outputs: vec![],
             keymap: Keymap::default(),
@@ -185,10 +175,10 @@ impl Editor {
         self.view.render(frame);
     }
 
-    /// Fits the editor to a new terminal size, keeping the view capped and centered.
+    /// Fits the editor to a new terminal size.
     pub fn resize(&mut self, area: Area) {
         self.area = area;
-        self.view.resize(view_rect(area));
+        self.view.resize(Rect::new(0, 0, area));
         self.frame_pool.resize(area);
     }
 
