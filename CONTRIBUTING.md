@@ -1,6 +1,6 @@
 # Contributing to wend
 
-Thanks for taking an interest. wend is heavily opinionated (see the [README](README.md)), so for anything bigger than a bug fix, please open an issue first to check it fits before you put time into it.
+Thanks for taking an interest. wend has strong opinions (see the [README](README.md)), so for anything bigger than a bug fix, please open an issue first. That way we can check it fits before you put time into it.
 
 ## Setup
 
@@ -8,8 +8,8 @@ You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just).
 
 ```sh
 just toolchain   # installs the pinned Rust, nightly rustfmt, the cargo tools and the git hooks
-just run         # runs wend from source
-just check       # what CI runs: fmt, clippy, docs, tests
+just run FILE    # runs wend from source, opening FILE
+just check       # what CI runs: fmt, clippy, docs, tests, dependencies
 ```
 
 Run `just` on its own to list every recipe.
@@ -27,11 +27,13 @@ Every other crate is named after its folder, with the `wend-` prefix. Every crat
 
 [STYLE.md](STYLE.md) is how wend's Rust is written: layout, naming, errors, API shape, tests and commits, each rule with its reason. Most rules are enforced by the checks below. The rest are flagged in review, citing the rule's `S-…` id.
 
-To check a change against the rules tools can't enforce, ask your coding agent to run the `style-review` skill (`.claude/skills/style-review/SKILL.md`). Any agent that reads [AGENTS.md](AGENTS.md) finds it.
+[PERFORMANCE.md](PERFORMANCE.md) is the same for the code that runs on every key press and every frame: what may allocate, what is borrowed and what is measured, each rule with an id (`P-…`) and a reason.
+
+To check a change against the rules tools can't enforce, ask your coding agent to run the `wend-review` skill (`.claude/skills/wend-review/SKILL.md`). It runs `just check`, then `style-review` against STYLE.md and `perf-review` against PERFORMANCE.md, and lists what it found without changing anything. Any agent that reads [AGENTS.md](AGENTS.md) finds them.
 
 ## Before you push
 
-`just check` has to pass. It fails on any formatting difference, any clippy or rustdoc warning, any failing test, and any dependency problem (below). On a pull request, CI also checks every commit message (see [Commits](#commits)).
+`just check` needs to pass before you push. It checks formatting, clippy and rustdoc warnings, tests, and dependencies (below). On a pull request, CI also checks every commit message (see [Commits](#commits)).
 
 ## Benchmarks
 

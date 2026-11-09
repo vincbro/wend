@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "rust-analyzer": {
-      "command": "rust-analyzer-mcp",
-      "args": ["--all-features", "--config", "check.command=clippy"]
-    }
-  }
-}

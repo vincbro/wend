@@ -8,12 +8,12 @@ A terminal text editor that does less, on purpose.
 
 ## The rules
 
-- **One buffer.** No splits. No tabs.
+- **One buffer.** No splits and no tabs.
 - **Centered, sized to your code.** The buffer is as wide as the language's max line width (rustfmt's for Rust, and so on). On a wide monitor your code sits where you're already looking, not glued to the left edge.
 - **Waypoints, not tabs.** Mark a spot, bind it to a key: `leader w c` takes you to `Cargo.toml`. Waypoints belong to the project, not the path, so they work wherever the repo is checked out, worktrees included. They follow the code when it moves around them. Cross-project waypoints work too.
 - **Remote editing over SSH.** Nothing to install on the other end.
 - **Live files.** When something else changes a file (a formatter, git, an agent), you see it change in the buffer. See [Live files](#live-files).
-- **Strong defaults.** Some choices can't be turned off. If they don't fit how you work, see [Alternatives](#alternatives). No hard feelings.
+- **Strong defaults.** Some choices can't be changed. If they don't fit how you work, [Alternatives](#alternatives) has editors that might. No hard feelings.
 
 ## Namespaces
 
@@ -92,4 +92,4 @@ at your option.
 
 ---
 
-> **Status:** wend is in early development. Most of the above isn't built yet. Expect breakage.
+> **Status:** wend is in early development. Most of the above isn't built yet, so expect rough edges.
