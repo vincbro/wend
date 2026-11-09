@@ -1,21 +1,67 @@
 use std::path::PathBuf;
 
 use wend_core::{
-    buffer::Buffer,
     editor::Editor,
     frame::{Area, CellPosition, Frame},
     input::{
-        Input, Mode,
+        Input,
         key::{Key, KeyCode},
     },
     output::Output,
     syntax::{Highlight, LanguageTag},
-    view::{Direction, Motion},
 };
 
+/// Applies `input` and hands the frames back the way a frontend does once they are drawn.
+/// Returns everything the editor sent.
+fn exchange(editor: &mut Editor, input: Input) -> Vec<Output> {
+    editor.apply(input).expect("the editor accepts the input");
+    let outputs: Vec<Output> = editor.drain_outputs().collect();
+    for output in &outputs {
+        if let Output::Frame(frame) = output {
+            editor
+                .apply(Input::Drawn(frame.clone()))
+                .expect("a drawn frame goes back into the pool");
+        }
+    }
+    outputs
+}
+
+/// The last frame among `outputs`, which is what the screen shows once they are all drawn.
+fn last_frame(outputs: Vec<Output>) -> Frame {
+    outputs
+        .into_iter()
+        .rev()
+        .find_map(|output| match output {
+            Output::Frame(frame) => Some(frame),
+            _ => None,
+        })
+        .expect("every input is answered with a frame, because they are all handed back")
+}
+
+/// Presses `keys` one after another, `\u{1b}` being escape and `\n` enter, and returns the
+/// last frame the editor drew.
+fn press(editor: &mut Editor, keys: &str) -> Frame {
+    let mut frame = None;
+    for c in keys.chars() {
+        let code = match c {
+            '\u{1b}' => KeyCode::Esc,
+            '\n' => KeyCode::Enter,
+            _ => KeyCode::Char(c),
+        };
+        frame = Some(last_frame(exchange(editor, Input::Key(Key::new(code)))));
+    }
+    frame.expect("there is at least one key to press")
+}
+
+/// An editor of `cols` by `rows` that has opened a plain text file holding `text`.
 fn editor(text: &str, cols: u16, rows: u16) -> Editor {
     let mut editor = Editor::new(Area::new(cols, rows)).expect("the wasm engine starts");
-    editor.view_mut().open_buffer(Buffer::from(text));
+    let file = Input::File {
+        path: PathBuf::from("a.txt"),
+        bytes: text.as_bytes().into(),
+        language: None,
+    };
+    exchange(&mut editor, file);
     editor
 }
 
@@ -52,12 +98,8 @@ mod tests {
     #[test]
     fn typing_inserts_in_front_of_the_cursor() {
         let mut editor = editor("world", 20, 3);
-        editor.set_mode(Mode::Insert);
-        for c in "hello ".chars() {
-            editor.view_mut().insert(c);
-        }
+        let frame = press(&mut editor, "ihello ");
 
-        let frame = editor.frame();
         assert_eq!(row_text(&frame, 0), "hello world");
         assert_eq!(
             frame.cursor(),
@@ -69,15 +111,10 @@ mod tests {
     #[test]
     fn motions_move_the_frame_cursor() {
         let mut editor = editor("one two\nthree", 20, 3);
-        editor
-            .view_mut()
-            .move_selection(Motion::Vertical(Direction::Forward), false);
-        editor
-            .view_mut()
-            .move_selection(Motion::Horizontal(Direction::Forward), false);
+        let frame = press(&mut editor, "jl");
 
         assert_eq!(
-            editor.frame().cursor(),
+            frame.cursor(),
             Some(CellPosition::new(GUTTER + 1, 1)),
             "on the h of three"
         );
@@ -86,13 +123,8 @@ mod tests {
     #[test]
     fn the_gutter_counts_rows_from_the_cursor() {
         let mut editor = editor("a\nb\nc\nd", 20, 4);
-        for _ in 0..2 {
-            editor
-                .view_mut()
-                .move_selection(Motion::Vertical(Direction::Forward), false);
-        }
+        let frame = press(&mut editor, "jj");
 
-        let frame = editor.frame();
         let shown: Vec<_> = (0..4).map(|row| gutter_text(&frame, row)).collect();
         assert_eq!(
             shown,
@@ -104,12 +136,8 @@ mod tests {
     #[test]
     fn deleting_a_word_removes_it_from_the_frame() {
         let mut editor = editor("hello world", 20, 3);
-        editor
-            .view_mut()
-            .move_selection(Motion::Word(Direction::Forward), false);
-        editor.view_mut().delete_selection();
+        let frame = press(&mut editor, "wd");
 
-        let frame = editor.frame();
         assert_eq!(
             row_text(&frame, 0),
             "world",
@@ -121,21 +149,17 @@ mod tests {
     #[test]
     fn revert_shows_the_clean_text_again() {
         let mut editor = editor("abc", 20, 3);
-        editor.view_mut().insert('x');
-        editor.view_mut().revert();
+        let frame = press(&mut editor, "ix\u{1b}u");
 
-        assert_eq!(row_text(&editor.frame(), 0), "abc");
+        assert_eq!(row_text(&frame, 0), "abc");
     }
 
     #[test]
     fn jumping_to_the_end_scrolls_it_on_screen() {
         let text: Vec<String> = (0..50).map(|line| line.to_string()).collect();
         let mut editor = editor(&text.join("\n"), 20, 5);
-        editor
-            .view_mut()
-            .move_selection(Motion::File(Direction::Forward), false);
+        let frame = press(&mut editor, "ge");
 
-        let frame = editor.frame();
         let cursor = frame.cursor().unwrap();
         assert!(cursor.row < 5, "the cursor is inside the frame");
         assert_eq!(
@@ -150,26 +174,20 @@ mod tests {
     fn a_terminal_with_no_size_has_no_cursor() {
         for (cols, rows) in [(0, 0), (20, 0), (0, 5)] {
             let mut editor = editor("one\ntwo", cols, rows);
-            let view = editor.view_mut();
-            view.move_selection(Motion::Page(Direction::Forward), false);
-            view.move_selection(Motion::Page(Direction::Backward), false);
-            assert_eq!(
-                editor.frame().cursor(),
-                None,
-                "nowhere to show it, {cols}x{rows}"
-            );
+            let frame = press(&mut editor, "JK");
+            assert_eq!(frame.cursor(), None, "nowhere to show it, {cols}x{rows}");
         }
     }
 
     #[test]
     fn resizing_to_no_size_and_back_restores_the_cursor() {
         let mut editor = editor("abc", 20, 3);
-        editor.resize(Area::new(0, 0));
-        assert_eq!(editor.frame().cursor(), None, "nowhere to show it");
+        let empty = last_frame(exchange(&mut editor, Input::Resize(Area::new(0, 0))));
+        assert_eq!(empty.cursor(), None, "nowhere to show it");
 
-        editor.resize(Area::new(20, 3));
+        let restored = last_frame(exchange(&mut editor, Input::Resize(Area::new(20, 3))));
         assert_eq!(
-            editor.frame().cursor(),
+            restored.cursor(),
             Some(CellPosition::new(GUTTER, 0)),
             "back on the first grapheme"
         );
@@ -324,19 +342,6 @@ mod tests {
                 .into(),
             highlights: include_bytes!("../../../highlights.scm").as_slice().into(),
         }
-    }
-
-    /// Applies `input` and hands the frames back the way a frontend does once they are drawn.
-    /// Returns everything the editor sent.
-    fn exchange(editor: &mut Editor, input: Input) -> Vec<Output> {
-        editor.apply(input).unwrap();
-        let outputs: Vec<Output> = editor.drain_outputs().collect();
-        for output in &outputs {
-            if let Output::Frame(frame) = output {
-                editor.apply(Input::Drawn(frame.clone())).unwrap();
-            }
-        }
-        outputs
     }
 
     #[test]
