@@ -8,24 +8,13 @@ pub(super) use slot::{Glyph, Row, RowMetadata, ScrollOffset, Slot, SlotPosition}
 /// area or the scroll changes.
 ///
 /// `slots` always holds `area.len()` slots row by row, and `row_metadata` one entry per row,
-/// `None` for the rows past the end of the buffer. The cursor fields and `row_start_byte`
-/// only mean something during `rebuild`, where they track the next slot to write.
+/// `None` for the rows past the end of the buffer.
 #[derive(Debug, Clone)]
 pub(super) struct Layout {
     slots: Vec<Slot>,
     row_metadata: Vec<Option<RowMetadata>>,
     area: Area,
-    /// Marks where the layout starts. While rebuilding, the row counts the rows actually
-    /// skipped.
     scroll_offset: ScrollOffset,
-    /// Counts the rows of the first line still to skip while rebuilding.
-    skip_rows: usize,
-
-    row_cursor: usize,
-    col_cursor: usize,
-    line_cursor: usize,
-    row_start_byte: usize,
-    byte_cursor: usize,
 }
 
 impl Layout {
@@ -36,14 +25,6 @@ impl Layout {
             row_metadata: Vec::with_capacity(area.height()),
             area,
             scroll_offset,
-            skip_rows: 0,
-
-            row_cursor: 0,
-            col_cursor: 0,
-            line_cursor: 0,
-
-            row_start_byte: 0,
-            byte_cursor: 0,
         };
         layout.resize(area, scroll_offset);
         layout
