@@ -14,12 +14,7 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::{event, terminal};
 use wend_core::{editor::Editor, frame::Area, input::Input, output, syntax::LanguageTag};
 
-use crate::{
-    args::parse_args,
-    draw::render_frame,
-    input::to_input,
-    screen::{TerminalGuard, restore_terminal},
-};
+use crate::screen::TerminalGuard;
 
 mod args;
 mod draw;
@@ -28,13 +23,13 @@ mod screen;
 mod theme;
 
 fn main() -> Result<()> {
-    let args = parse_args()?;
+    let args = args::parse_args()?;
 
     // Restore before the default hook prints, or the message is lost on the
     // alternate screen and the shell is left in raw mode
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
-        restore_terminal();
+        screen::restore_terminal();
         default_hook(panic_info);
     }));
 
@@ -74,7 +69,7 @@ fn main() -> Result<()> {
     let terminal_tx = input_tx.clone();
     thread::spawn(move || {
         while let Ok(event) = event::read() {
-            let Some(input) = to_input(&event) else {
+            let Some(input) = input::to_input(&event) else {
                 continue;
             };
             // The editor is gone, nobody is left to read input
@@ -87,7 +82,7 @@ fn main() -> Result<()> {
     for output in output_rx {
         match output {
             output::Output::Frame(frame) => {
-                render_frame(&frame, &mut stdout).context("failed to draw the screen")?;
+                draw::render_frame(&frame, &mut stdout).context("failed to draw the screen")?;
                 input_tx
                     .send(Input::Drawn(frame))
                     .context("the editor stopped")?;

@@ -1,5 +1,4 @@
 mod default;
-use default::{command_tree, insert_tree};
 
 use crate::input::{
     Mode,
@@ -65,9 +64,9 @@ impl Keymap {
 impl Default for Keymap {
     fn default() -> Self {
         Self {
-            normal: command_tree("normal", Mode::Select),
-            select: command_tree("select", Mode::Normal),
-            insert: insert_tree(),
+            normal: default::command_tree("normal", Mode::Select),
+            select: default::command_tree("select", Mode::Normal),
+            insert: default::insert_tree(),
             pending: vec![],
             pending_mode: Mode::Normal,
         }

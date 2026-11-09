@@ -12,7 +12,6 @@ pub use highlight::Highlight;
 mod loader;
 pub use loader::Loader;
 mod rope;
-use rope::{input_edit, text_from};
 
 /// Names a language, like `rust`. It is what a buffer is tagged with and what the frontend is
 /// asked to provide the grammar for.
@@ -83,7 +82,7 @@ impl Syntax {
     /// from before the replace, where the old end of the range still exists.
     pub(crate) fn edit(&mut self, rope: &Rope, range: &Range<usize>, text: &str) {
         if let Some(tree) = &mut self.tree {
-            tree.edit(&input_edit(rope, range, text));
+            tree.edit(&rope::input_edit(rope, range, text));
         }
         self.is_stale = true;
     }
@@ -103,7 +102,7 @@ impl Syntax {
         parser.set_language(&self.grammar.language)?;
         let tree = parser
             .parse_with_options(
-                &mut |byte, _| text_from(rope, byte),
+                &mut |byte, _| rope::text_from(rope, byte),
                 self.tree.as_ref(),
                 None,
             )
