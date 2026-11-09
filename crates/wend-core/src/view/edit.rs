@@ -2,8 +2,8 @@ use std::{ops, path::PathBuf};
 
 use crop::Rope;
 
-use super::{ColumnPolicy, Selection, View};
-use crate::buffer::{self, Change};
+use super::{ColumnPolicy, Result, Selection, View};
+use crate::buffer::Change;
 
 impl View {
     /// The only way the text changes. The selection follows the edit.
@@ -71,8 +71,8 @@ impl View {
         self.check_invariants();
     }
 
-    pub fn save(&mut self) -> buffer::Result<(PathBuf, Rope)> {
-        self.buffer.save()
+    pub fn save(&mut self) -> Result<(PathBuf, Rope)> {
+        Ok(self.buffer.save()?)
     }
 }
 

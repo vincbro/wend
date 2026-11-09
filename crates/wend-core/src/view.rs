@@ -1,12 +1,14 @@
 use std::mem;
 
 use crate::{
-    buffer::{self, Buffer},
+    buffer::Buffer,
     frame::{self, CellPosition, Rect},
     syntax::Highlight,
 };
 
 mod edit;
+mod error;
+pub use error::{Error, Result};
 mod grapheme;
 mod highlight;
 use highlight::Highlighter;
@@ -79,7 +81,7 @@ impl View {
 
     /// Takes in the file's new contents. The selection keeps its bytes as far as the new
     /// text reaches, the same way a revert does.
-    pub fn update(&mut self, bytes: &[u8]) -> buffer::Result<()> {
+    pub fn update(&mut self, bytes: &[u8]) -> Result<()> {
         self.buffer.update(bytes)?;
         self.layout_dirty = true;
         self.set_selection(self.selection, ColumnPolicy::Sync);
