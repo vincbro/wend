@@ -101,3 +101,100 @@ const CONTROL_PICTURES: [&str; 32] = [
     "␀", "␁", "␂", "␃", "␄", "␅", "␆", "␇", "␈", "␉", "␊", "␋", "␌", "␍", "␎", "␏", "␐", "␑", "␒",
     "␓", "␔", "␕", "␖", "␗", "␘", "␙", "␚", "␛", "␜", "␝", "␞", "␟",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grapheme(text: &str) -> Grapheme {
+        Grapheme::from_bytes_iter(text.bytes())
+    }
+
+    fn sanitized(text: &str) -> String {
+        grapheme(text).as_str_sanitize().to_owned()
+    }
+
+    #[test]
+    fn printable_text_is_kept() {
+        assert_eq!(sanitized("a"), "a", "ascii");
+        assert_eq!(sanitized("漢"), "漢", "a wide glyph");
+        assert_eq!(
+            sanitized("e\u{301}"),
+            "e\u{301}",
+            "a letter with its accent"
+        );
+    }
+
+    #[test]
+    fn the_default_prints_as_a_space() {
+        assert_eq!(
+            Grapheme::default().as_str_sanitize(),
+            " ",
+            "an empty print would leave the old terminal cell untouched"
+        );
+    }
+
+    #[test]
+    fn layout_controls_print_as_a_space() {
+        for text in ["\t", "\n", "\r", "\r\n"] {
+            assert_eq!(
+                sanitized(text),
+                " ",
+                "the layout already gives {text:?} its width"
+            );
+        }
+    }
+
+    #[test]
+    fn c0_controls_print_as_control_pictures() {
+        assert_eq!(sanitized("\0"), "␀", "the first C0");
+        assert_eq!(
+            sanitized("\u{1b}"),
+            "␛",
+            "escape, which must never reach the terminal"
+        );
+        assert_eq!(sanitized("\u{1f}"), "␟", "the last C0");
+        assert_eq!(sanitized("\u{7f}"), "␡", "delete");
+    }
+
+    #[test]
+    fn c1_controls_print_as_the_replacement() {
+        assert_eq!(
+            sanitized("\u{9b}"),
+            REPLACEMENT,
+            "some terminals treat 0x9B as CSI"
+        );
+    }
+
+    #[test]
+    fn zero_width_text_prints_as_the_replacement() {
+        assert_eq!(sanitized("\u{200b}"), REPLACEMENT, "a zero width space");
+        assert_eq!(sanitized("\u{feff}"), REPLACEMENT, "a byte order mark");
+        assert_eq!(sanitized("\u{301}"), REPLACEMENT, "a lone combining mark");
+    }
+
+    #[test]
+    fn width_follows_what_is_printed() {
+        assert_eq!(grapheme("a").width(), 1, "ascii");
+        assert_eq!(grapheme("漢").width(), 2, "a wide glyph");
+        assert_eq!(grapheme("\u{200b}").width(), 1, "the replacement stands in");
+    }
+
+    #[test]
+    fn a_grapheme_that_just_fits_is_kept() {
+        let text = "a".repeat(usize::from(CAPACITY));
+        assert_eq!(grapheme(&text).as_str(), text);
+    }
+
+    #[test]
+    fn a_grapheme_that_is_too_long_becomes_the_replacement() {
+        let text = "a".repeat(usize::from(CAPACITY) + 1);
+        assert_eq!(grapheme(&text).as_str(), REPLACEMENT, "one byte over");
+    }
+
+    #[test]
+    fn invalid_utf8_becomes_the_replacement() {
+        let invalid = Grapheme::from_bytes_iter([0xff].into_iter());
+        assert_eq!(invalid.as_str(), REPLACEMENT, "0xff is never valid utf-8");
+    }
+}
