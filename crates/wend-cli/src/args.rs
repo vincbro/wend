@@ -2,11 +2,11 @@ use anyhow::{Result, bail};
 
 const HELP: &str = "usage: wend [file/to/open]";
 
-pub(crate) struct Args {
+pub(crate) struct Arguments {
     pub(crate) file: String,
 }
 
-pub(crate) fn parse_args() -> Result<Args> {
+pub(crate) fn parse_args() -> Result<Arguments> {
     use lexopt::prelude::*;
 
     let mut file = None;
@@ -25,5 +25,5 @@ pub(crate) fn parse_args() -> Result<Args> {
 
     let Some(file) = file else { bail!(HELP) };
 
-    Ok(Args { file })
+    Ok(Arguments { file })
 }
