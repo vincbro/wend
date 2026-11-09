@@ -4,7 +4,6 @@ use super::{
 };
 
 impl View {
-    /// Returns the index of the view's last row.
     pub(super) fn bottom_row(&self) -> usize {
         // The terminal can report 0 rows
         self.rect.area.height().saturating_sub(1)
@@ -29,7 +28,6 @@ impl View {
             return;
         };
 
-        // Scrolls just far enough that the head stops right at the margin
         let height = self.rect.area.height();
         let margin = self.margin();
         if row + margin >= height {

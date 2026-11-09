@@ -74,7 +74,6 @@ impl Gutter {
     }
 }
 
-/// Returns the number `row` shows.
 fn number(row: usize, head: Head) -> usize {
     if row == head.row {
         head.line + 1
