@@ -23,7 +23,7 @@ When `wend-review` or `commit` invokes you, use the scope they pass.
 
 ## 3. Find the hot paths
 
-The hot paths are the code that runs per key press and per frame, as `PERFORMANCE.md` defines them: `Editor::apply`, `Keymap::press`, `Layout::rebuild`, `View::render` and the frontend's draw. Trace what the changed lines call and what calls them, with the graph and rust-analyzer tools when they are available and with `grep` otherwise. Say in the report which changed code is on a hot path and which is not.
+The hot paths are the code that runs per key press and per frame, as `PERFORMANCE.md` defines them: `Editor::apply`, `Keymap::press`, `Layout::rebuild`, `View::render` and the frontend's draw. Trace what the changed lines call and what calls them, by reading the code and with `grep`. Say in the report which changed code is on a hot path and which is not.
 
 ## 4. Check the rules
 

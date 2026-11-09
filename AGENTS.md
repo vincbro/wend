@@ -9,14 +9,6 @@ Before writing or reviewing code here, read:
 
 `just check` is the gate, and it must pass.
 
-`.mcp.json` registers the rust-analyzer MCP server, so reviews can ask for types, references, definitions and diagnostics instead of guessing from text. Install it pinned to the commit that was read, not the latest:
-
-```sh
-cargo install --git https://github.com/zeenix/rust-analyzer-mcp --rev 6b0e839d06017a5a5ac6b4e28a4a5bf389e53993 --locked
-```
-
-It runs your `rust-analyzer` with `check.command=clippy` and all features, to match `just clippy`.
-
 Reviews are skills in `.claude/skills/`, and none of them edits code: each reports findings and asks which to implement, and only those get implemented.
 
 - `style-review` checks code against every rule in STYLE.md, comments and docs included.
