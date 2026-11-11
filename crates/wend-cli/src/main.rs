@@ -80,10 +80,19 @@ fn main() -> Result<()> {
         }
     });
 
+    // One frame's bytes, kept between frames so it only grows when a frame is bigger than
+    // any before
+    let mut buf = Vec::new();
+
     for output in output_rx {
         match output {
             output::Output::Frame(frame) => {
-                draw::render_frame(&frame, &mut stdout).context("failed to draw the screen")?;
+                buf.clear();
+                draw::render_frame(&frame, &mut buf).context("failed to draw the screen")?;
+                let mut out = io::stdout().lock();
+                out.write_all(&buf)
+                    .and_then(|()| out.flush())
+                    .context("failed to draw the screen")?;
                 input_tx
                     .send(Input::Drawn(frame))
                     .context("the editor stopped")?;
