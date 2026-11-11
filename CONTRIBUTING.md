@@ -39,6 +39,10 @@ To check a change against the rules tools can't enforce, ask your coding agent t
 
 `just bench` runs the benchmarks with [criterion](https://github.com/criterion-rs/criterion.rs). They live in `crates/wend-core/benches/session.rs` and time a headless editing session: `Editor` driven the way a terminal client drives it, a key and then a frame. Each phase (open, a redraw on its own, every motion in both directions, typing, deleting, reverting) is timed per action on files of 100 KB, 1 MB and 10 MB, so you can see what one key press costs and how it scales with file size.
 
+`just bench-latency` times what the frontend adds, with no terminal attached: a key press through `Editor::apply`, the frame it sends, `draw::render_frame` and one write of the escape sequences to `/dev/null`. `input_delay` is the time from a key to its written frame (typing, a line down and a page down, on 100 KB and 1 MB files, with Rust highlighting on). `fps` redraws an unchanged frame, and the throughput criterion prints is frames per second, the ceiling for the rest. It lives in `crates/wend-cli/benches/latency.rs`.
+
+`just bench-e2e` runs the real release binary on a pseudo terminal with `scripts/e2e_latency.py` (Python 3, no packages): it types keys at wend and times each one until the frame that answers it has been written back, so threads, channels and the real terminal write are included. It leaves out the terminal emulator painting those bytes.
+
 criterion compares each run with the previous one on the same machine. To compare against a fixed point, save a baseline and run against it later:
 
 ```sh

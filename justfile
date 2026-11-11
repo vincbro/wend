@@ -57,6 +57,17 @@ test:
 bench *args:
     cargo bench -p wend-core --bench session -- {{ args }}
 
+# Time a key press to the written frame, and the frames per second. Extra args go
+# to criterion: just bench-latency [args]
+bench-latency *args:
+    cargo bench -p wend --bench latency -- {{ args }}
+
+# Time key presses on the real release binary, through a pseudo terminal. Extra args
+# go to the script: just bench-e2e [--size 100000]
+bench-e2e *args:
+    cargo build --release -p wend
+    python3 scripts/e2e_latency.py {{ args }}
+
 # Fail on unused dependencies, or on any cargo-deny check in deny.toml:
 # advisories, licenses, dependencies not shared through the workspace, sources
 deps:

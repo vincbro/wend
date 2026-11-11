@@ -16,5 +16,13 @@ crossterm.workspace = true
 lexopt.workspace = true
 wend-core.workspace = true
 
+[dev-dependencies]
+criterion.workspace = true
+
 [lints]
 workspace = true
+
+# How fast a key reaches the terminal and how often a frame can be drawn: `just bench`.
+[[bench]]
+name = "latency"
+harness = false
