@@ -12,7 +12,7 @@ pub(super) fn key(c: char) -> Key {
 }
 
 fn leaf(action: Action) -> KeyTree {
-    KeyTree::Leaf(vec![action])
+    KeyTree::Leaf(Box::new([action]))
 }
 
 fn motion_leaf(motion: Motion) -> KeyTree {
@@ -57,7 +57,7 @@ pub(super) fn command_tree(description: &str, other_mode: Mode) -> KeyTree {
             (key('i'), leaf(Action::Mode(Mode::Insert))),
             (
                 key('o'),
-                KeyTree::Leaf(vec![Action::OpenLine, Action::Mode(Mode::Insert)]),
+                KeyTree::Leaf(Box::new([Action::OpenLine, Action::Mode(Mode::Insert)])),
             ),
             (key('v'), leaf(Action::Mode(other_mode))),
             (key('q'), leaf(Action::Quit)),

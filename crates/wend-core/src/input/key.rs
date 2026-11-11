@@ -6,7 +6,7 @@ use crate::input::action::Action;
 /// continue the combo. A key is never both, so a combo is done the moment it reaches a leaf.
 #[derive(Debug, Clone)]
 pub enum KeyTree {
-    Leaf(Vec<Action>),
+    Leaf(Box<[Action]>),
     Node {
         description: String,
         children: HashMap<Key, Self>,
@@ -81,12 +81,12 @@ mod tests {
         KeyTree::from_children(
             "root",
             vec![
-                (key('q'), KeyTree::Leaf(vec![Action::Quit])),
+                (key('q'), KeyTree::Leaf(Box::new([Action::Quit]))),
                 (
                     key('g'),
                     KeyTree::from_children(
                         "goto",
-                        vec![(key('s'), KeyTree::Leaf(vec![Action::Save]))],
+                        vec![(key('s'), KeyTree::Leaf(Box::new([Action::Save])))],
                     ),
                 ),
             ],

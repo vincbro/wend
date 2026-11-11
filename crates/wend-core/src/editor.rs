@@ -94,28 +94,22 @@ impl Editor {
     }
 
     fn key_press(&mut self, key: Key) -> Result<()> {
-        for action in self.keymap.press(self.mode, key) {
-            self.perform(action)?;
+        // The keymap stays borrowed while the actions run, so they get the other fields
+        let Self {
+            keymap,
+            view,
+            mode,
+            outputs,
+            ..
+        } = self;
+        for &action in keymap.press(*mode, key) {
+            perform(view, mode, outputs, action)?;
         }
         Ok(())
     }
 
     fn perform(&mut self, action: Action) -> Result<()> {
-        match action {
-            Action::Motion(motion) => self.view.move_selection(motion, self.is_select()),
-            Action::Mode(mode) => self.set_mode(mode),
-            Action::Insert(c) => self.view.insert(c),
-            Action::Delete => self.view.delete(),
-            Action::DeleteSelection => self.view.delete_selection(),
-            Action::OpenLine => self.view.new_line(),
-            Action::Revert => self.view.revert(),
-            Action::Save => {
-                let (path, rope) = self.view.save()?;
-                self.outputs.push(Output::Write { path, rope });
-            }
-            Action::Quit => self.outputs.push(Output::Quit),
-        }
-        Ok(())
+        perform(&mut self.view, &mut self.mode, &mut self.outputs, action)
     }
 
     pub fn drain_outputs(&mut self) -> Drain<'_, Output> {
@@ -195,6 +189,29 @@ impl Editor {
     pub fn is_insert(&self) -> bool {
         matches!(self.mode, Mode::Insert)
     }
+}
+
+fn perform(
+    view: &mut View,
+    mode: &mut Mode,
+    outputs: &mut Vec<Output>,
+    action: Action,
+) -> Result<()> {
+    match action {
+        Action::Motion(motion) => view.move_selection(motion, matches!(mode, Mode::Select)),
+        Action::Mode(next) => *mode = next,
+        Action::Insert(c) => view.insert(c),
+        Action::Delete => view.delete(),
+        Action::DeleteSelection => view.delete_selection(),
+        Action::OpenLine => view.new_line(),
+        Action::Revert => view.revert(),
+        Action::Save => {
+            let (path, rope) = view.save()?;
+            outputs.push(Output::Write { path, rope });
+        }
+        Action::Quit => outputs.push(Output::Quit),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
