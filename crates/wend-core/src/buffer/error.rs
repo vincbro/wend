@@ -6,6 +6,8 @@ use crate::syntax;
 pub enum Error {
     #[error("file is not valid utf-8")]
     InvalidUtf8,
+    #[error("file is too large, the limit is 4 GiB")]
+    TooLarge,
     #[error("buffer has no path to save to")]
     NoPath,
     #[error("failed to parse the text")]

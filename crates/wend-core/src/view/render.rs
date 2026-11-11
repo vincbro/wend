@@ -32,7 +32,7 @@ impl View {
             let mut cell = Self::cell(&self.layout, self.selection, slot, pos, &selected);
             // Tails are blanks, only the glyph itself has a color
             if let Slot::Glyph(glyph) = slot {
-                cell.highlight = highlighter.at(glyph.from_byte);
+                cell.highlight = highlighter.at(glyph.start());
             }
             frame.write(Self::cell_position(text_rect, pos), cell);
         }
@@ -80,15 +80,15 @@ impl View {
         let (grapheme, covered) = match slot {
             Slot::Tail(head_index) => {
                 let offset = layout.slot_index(pos) - head_index;
-                (Grapheme::blank(), offset < glyph.grapheme.width())
+                (Grapheme::blank(), offset < glyph.grapheme().width())
             }
-            _ => (glyph.grapheme, false),
+            _ => (glyph.grapheme(), false),
         };
 
         Cell {
             grapheme,
             cursor: glyph.to_range().contains(&selection.head()),
-            selected: selected.contains(&glyph.from_byte),
+            selected: selected.contains(&glyph.start()),
             covered,
             // Set by render, which walks the cells in order
             highlight: None,

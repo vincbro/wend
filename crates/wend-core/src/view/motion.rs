@@ -1,4 +1,4 @@
-use super::{ColumnPolicy, Selection, View, layout::SlotPosition};
+use super::{ColumnPolicy, Glyph, Selection, View, layout::SlotPosition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -103,7 +103,7 @@ impl View {
     fn horizontal(&self, direction: Direction) -> Option<usize> {
         let pos = self.head_position()?;
         if let Some(glyph) = self.layout.step(pos, direction) {
-            return Some(glyph.from_byte);
+            return Some(glyph.start());
         }
 
         // At the edge of the row, only continue if the line wrapped onto the next row
@@ -114,7 +114,7 @@ impl View {
         // Forward lands on the neighbor's first glyph, backward on its last
         self.layout
             .edge_glyph(neighbor, direction)
-            .map(|glyph| glyph.from_byte)
+            .map(Glyph::start)
     }
 
     fn vertical(&self, direction: Direction) -> Option<usize> {
@@ -131,7 +131,7 @@ impl View {
             .glyph_at(target)
             .or_else(|| self.layout.step(target, Direction::Backward))
             .or_else(|| self.layout.step(target, Direction::Forward))?;
-        Some(glyph.from_byte)
+        Some(glyph.start())
     }
 
     /// Returns the first or last grapheme of the head's line, the line break not included.

@@ -73,7 +73,7 @@ impl Buffer {
     }
 
     pub fn from_bytes(path: Box<Path>, bytes: &[u8]) -> Result<Self> {
-        let content = str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
+        let content = Self::content(bytes)?;
         let mut rope_builder = RopeBuilder::new();
         rope_builder.append(content);
         Ok(Self::from_rope(Some(path), rope_builder.build()))
@@ -82,7 +82,7 @@ impl Buffer {
     /// Takes in the file's new contents as the clean state. Without unsaved edits the text
     /// becomes them too, with unsaved edits it stays as it is.
     pub fn update(&mut self, bytes: &[u8]) -> Result<()> {
-        let content = str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
+        let content = Self::content(bytes)?;
         let mut rope_builder = RopeBuilder::new();
         rope_builder.append(content);
         self.clean_rope = rope_builder.build();
@@ -94,6 +94,13 @@ impl Buffer {
             }
         }
         Ok(())
+    }
+
+    /// Returns `bytes` as text, or says why it can't be: too long for the layout's `u32`
+    /// offsets, or not UTF-8.
+    fn content(bytes: &[u8]) -> Result<&str> {
+        check_len(bytes.len())?;
+        str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)
     }
 
     fn from_rope(path: Option<Box<Path>>, rope: Rope) -> Self {
@@ -184,6 +191,17 @@ impl Buffer {
     }
 }
 
+/// The longest text a buffer takes in. The layout stores byte offsets as `u32`, with one to
+/// spare for the slot after the last byte.
+const MAX_LEN: usize = u32::MAX as usize - 1;
+
+fn check_len(len: usize) -> Result<()> {
+    if len > MAX_LEN {
+        return Err(Error::TooLarge);
+    }
+    Ok(())
+}
+
 impl Default for Buffer {
     fn default() -> Self {
         Self::new()
@@ -200,6 +218,18 @@ impl From<&str> for Buffer {
 mod tests {
     use super::*;
     use crate::syntax;
+
+    #[test]
+    fn text_the_layout_cannot_address_is_refused() {
+        assert!(
+            check_len(MAX_LEN).is_ok(),
+            "the longest text is still taken"
+        );
+        assert!(
+            matches!(check_len(MAX_LEN + 1), Err(Error::TooLarge)),
+            "one byte more has no u32 offset for the slot after its end"
+        );
+    }
 
     #[test]
     fn edit_applies_and_dirties() {

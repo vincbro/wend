@@ -217,7 +217,7 @@ mod tests {
         let byte = |col: usize, direction: Direction| {
             layout
                 .step(SlotPosition::new(col, 0), direction)
-                .map(|glyph| glyph.from_byte)
+                .map(Glyph::start)
         };
 
         assert_eq!(byte(0, Direction::Forward), Some(1), "past the tab");
@@ -269,16 +269,12 @@ mod tests {
             "e starts after the ↩ marker"
         );
         assert_eq!(
-            layout
-                .edge_glyph(1, Direction::Forward)
-                .map(|glyph| glyph.from_byte),
+            layout.edge_glyph(1, Direction::Forward).map(Glyph::start),
             Some(4),
             "the wrapped row starts on e"
         );
         assert_eq!(
-            layout
-                .edge_glyph(0, Direction::Backward)
-                .map(|glyph| glyph.from_byte),
+            layout.edge_glyph(0, Direction::Backward).map(Glyph::start),
             Some(3),
             "the first row ends on d"
         );

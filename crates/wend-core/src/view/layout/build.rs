@@ -201,8 +201,8 @@ impl<'a> Builder<'a> {
         self.col_cursor += 1;
 
         if let Slot::Glyph(glyph) = slot {
-            self.byte_cursor = glyph.to_byte;
-            for _ in 0..glyph.tails {
+            self.byte_cursor = glyph.end();
+            for _ in 0..glyph.tails() {
                 self.write(Slot::Tail(index));
             }
         }

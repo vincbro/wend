@@ -14,7 +14,7 @@ impl View {
     /// Returns where the grapheme holding `byte` starts, the buffer's end for anything past it.
     pub(super) fn grapheme_start(&self, byte: usize) -> usize {
         self.glyph_on_screen(byte)
-            .map_or_else(|| self.rope_grapheme_start(byte), |glyph| glyph.from_byte)
+            .map_or_else(|| self.rope_grapheme_start(byte), Glyph::start)
     }
 
     /// Walks the line from its start, so this costs as much as the line is long.
@@ -40,7 +40,7 @@ impl View {
     /// wide, see `Layout::rebuild`.
     pub(super) fn grapheme_end(&self, start: usize) -> usize {
         self.glyph_on_screen(start)
-            .map_or_else(|| self.rope_grapheme_end(start), |glyph| glyph.to_byte)
+            .map_or_else(|| self.rope_grapheme_end(start), Glyph::end)
     }
 
     /// Returns where the grapheme starting at `start` ends, inside the text even for the end
