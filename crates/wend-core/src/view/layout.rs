@@ -63,14 +63,18 @@ impl Layout {
     }
 
     /// Returns the index of the last row `line` wraps onto when laid out `cols` wide.
+    ///
+    /// Replaces the contents of this layout with a one row grid, so it works as scratch
+    /// space that is reused between calls.
     #[must_use]
-    pub(super) fn last_row_of_line(buffer: &Buffer, cols: u16, line: usize) -> usize {
+    pub(super) fn last_row_of_line(&mut self, buffer: &Buffer, cols: u16, line: usize) -> usize {
         // On a one row grid, skipping all of the line's rows clamps onto its last
-        let area = Area::new(cols, 1);
-        let scroll_offset = ScrollOffset::new(line, usize::MAX);
-        let mut layout = Self::new(area, scroll_offset);
-        layout.rebuild(buffer, area, scroll_offset);
-        layout.scroll_offset().row
+        self.rebuild(
+            buffer,
+            Area::new(cols, 1),
+            ScrollOffset::new(line, usize::MAX),
+        );
+        self.scroll_offset().row
     }
 
     /// Returns the glyph a slot belongs to, following a tail to its glyph, none for markers
@@ -335,8 +339,29 @@ mod tests {
     fn last_row_of_line_counts_wrapped_rows() {
         // Width 4: line 0 is "abcd", "↩ e\n", line 1 is "xy"
         let buffer = Buffer::from("abcde\nxy");
-        assert_eq!(Layout::last_row_of_line(&buffer, 4, 0), 1);
-        assert_eq!(Layout::last_row_of_line(&buffer, 4, 1), 0);
+        let mut scratch = Layout::new(Area::new(0, 0), ScrollOffset::default());
+        assert_eq!(scratch.last_row_of_line(&buffer, 4, 0), 1);
+        assert_eq!(scratch.last_row_of_line(&buffer, 4, 1), 0);
+    }
+
+    #[test]
+    fn last_row_of_line_leaves_nothing_from_the_last_call() {
+        // Line 0 wraps three times at width 4, line 1 is short, line 2 wraps
+        let buffer = Buffer::from(
+            "abcdefghijkl
+xy
+abcdefg",
+        );
+        let mut scratch = Layout::new(Area::new(0, 0), ScrollOffset::default());
+        for (cols, line) in [(4, 0), (4, 1), (12, 0), (4, 2), (3, 0), (8, 2), (4, 1)] {
+            let fresh = Layout::new(Area::new(0, 0), ScrollOffset::default())
+                .last_row_of_line(&buffer, cols, line);
+            assert_eq!(
+                scratch.last_row_of_line(&buffer, cols, line),
+                fresh,
+                "line {line} at width {cols} counts the same on reused scratch"
+            );
+        }
     }
 
     #[test]

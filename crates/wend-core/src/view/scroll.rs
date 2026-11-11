@@ -1,6 +1,6 @@
 use super::{
     Direction, View,
-    layout::{Layout, ScrollOffset, SlotPosition},
+    layout::{ScrollOffset, SlotPosition},
 };
 
 impl View {
@@ -80,8 +80,9 @@ impl View {
     }
 
     /// Returns the scroll offset `rows` rows up, and how many rows that is.
-    fn offset_above(&self, rows: usize) -> (ScrollOffset, usize) {
+    fn offset_above(&mut self, rows: usize) -> (ScrollOffset, usize) {
         let ScrollOffset { mut line, mut row } = self.layout.scroll_offset();
+        let cols = self.text_rect().area.cols;
         let mut left = rows;
         // A line at a time, onto the last row of the line above
         while left > row {
@@ -90,7 +91,7 @@ impl View {
             };
             left -= row + 1;
             line = above;
-            row = Layout::last_row_of_line(&self.buffer, self.text_rect().area.cols, line);
+            row = self.line_probe.last_row_of_line(&self.buffer, cols, line);
         }
         (ScrollOffset::new(line, row - left), rows)
     }

@@ -2,7 +2,7 @@ use std::mem;
 
 use crate::{
     buffer::Buffer,
-    frame::{self, CellPosition, Rect},
+    frame::{self, Area, CellPosition, Rect},
     syntax::Highlight,
 };
 
@@ -43,6 +43,8 @@ pub struct View {
     gutter: Gutter,
     layout: Layout,
     layout_dirty: bool,
+    /// Scratch space for `Layout::last_row_of_line`, kept so that its memory is reused.
+    line_probe: Layout,
     selection: Selection,
     /// Scratch space for `render`, kept so that its memory is reused.
     open_highlights: Vec<(usize, Highlight)>,
@@ -61,6 +63,7 @@ impl View {
             rect,
             layout: Layout::new(rect.area, ScrollOffset::default()),
             layout_dirty: true,
+            line_probe: Layout::new(Area::new(0, 0), ScrollOffset::default()),
             selection: Selection::point(0),
             open_highlights: vec![],
 
