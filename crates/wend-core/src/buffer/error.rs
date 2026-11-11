@@ -1,4 +1,4 @@
-use std::{io, result};
+use std::result;
 
 use crate::syntax;
 
@@ -8,8 +8,6 @@ pub enum Error {
     InvalidUtf8,
     #[error("buffer has no path to save to")]
     NoPath,
-    #[error("file i/o failed")]
-    Io(#[from] io::Error),
     #[error("failed to parse the text")]
     Syntax(#[from] syntax::Error),
 }
