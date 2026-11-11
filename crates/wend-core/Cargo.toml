@@ -15,6 +15,7 @@ categories = ["text-editors"]
 bench = false
 
 [dependencies]
+az.workspace = true
 crop.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true

@@ -1,5 +1,6 @@
 use crate::{
-    frame::{self, Cell, CellPosition, Frame, Grapheme, Rect},
+    frame::{Cell, CellPosition, Frame, Grapheme, Rect},
+    number,
     syntax::Highlight,
 };
 
@@ -34,7 +35,8 @@ impl Gutter {
     #[must_use]
     pub(super) fn new(largest: usize, view_cols: u16) -> Self {
         let digits = Digits::new(largest).len().max(MIN_DIGITS);
-        let digits = u16::try_from(digits).expect("a usize has at most 20 digits, which fit a u16");
+        // A usize has at most 20 digits.
+        let digits: u16 = number::exact(digits);
         Self {
             width: (digits + PADDING).min(view_cols / 2),
         }
@@ -87,7 +89,7 @@ fn blank_row(frame: &mut Frame, rect: Rect, row: usize) {
         grapheme: Grapheme::blank(),
         ..Cell::default()
     };
-    let row = rect.row + frame::terminal_coordinate(row);
+    let row = rect.row + number::exact::<usize, u16>(row);
     for col in 0..rect.area.cols {
         frame.write(CellPosition::new(rect.col + col, row), blank);
     }
@@ -105,10 +107,10 @@ fn write_number(frame: &mut Frame, rect: Rect, row: usize, number: usize, curren
     } else {
         Highlight::Comment
     };
-    let row = rect.row + frame::terminal_coordinate(row);
+    let row = rect.row + number::exact::<usize, u16>(row);
     let right_edge = rect.col + rect.area.cols;
     for (offset, digit) in digits.rev().enumerate() {
-        let col = right_edge - frame::terminal_coordinate(offset) - 1;
+        let col = right_edge - number::exact::<usize, u16>(offset) - 1;
         let cell = Cell {
             grapheme: Grapheme::from_char(digit),
             highlight: Some(highlight),
@@ -134,13 +136,13 @@ impl Digits {
         Self {
             rest: number,
             place_value: 10usize.pow(exponent),
-            remaining: exponent as usize + 1,
+            remaining: number::exact::<u32, usize>(exponent) + 1,
         }
     }
 }
 
 fn digit_char(digit: usize) -> Option<char> {
-    char::from_digit(u32::try_from(digit).ok()?, 10)
+    char::from_digit(number::exact(digit), 10)
 }
 
 impl Iterator for Digits {

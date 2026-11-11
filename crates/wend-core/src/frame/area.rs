@@ -1,13 +1,3 @@
-/// Converts a position inside an `Area` to a terminal coordinate.
-///
-/// # Panics
-///
-/// If `value` doesn't fit in a `u16`, which it always does inside an `Area`.
-#[must_use]
-pub(crate) fn terminal_coordinate(value: usize) -> u16 {
-    u16::try_from(value).expect("an area is measured in u16, so positions inside it fit")
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Area {
     pub cols: u16,

@@ -1,6 +1,6 @@
 use std::ops;
 
-use crate::frame::Grapheme;
+use crate::{frame::Grapheme, number};
 
 /// Describes a grapheme as laid out: the bytes it covers, and how many tail slots follow
 /// its own slot.
@@ -24,22 +24,23 @@ impl Glyph {
         tails: usize,
         grapheme: Grapheme,
     ) -> Self {
+        // buffer::MAX_LEN keeps offsets within a u32, and a grapheme is at most 31 bytes wide.
         Self {
-            from_byte: byte_offset(from_byte),
-            to_byte: byte_offset(to_byte),
-            tails: columns(tails),
+            from_byte: number::exact(from_byte),
+            to_byte: number::exact(to_byte),
+            tails: number::exact(tails),
             grapheme,
         }
     }
 
     #[must_use]
     pub(in crate::view) fn start(self) -> usize {
-        self.from_byte as usize
+        number::exact(self.from_byte)
     }
 
     #[must_use]
     pub(in crate::view) fn end(self) -> usize {
-        self.to_byte as usize
+        number::exact(self.to_byte)
     }
 
     #[must_use]
@@ -56,27 +57,6 @@ impl Glyph {
     pub(in crate::view) fn to_range(self) -> ops::Range<usize> {
         self.start()..self.end()
     }
-}
-
-/// Narrows a byte offset to what a `Glyph` stores. Debug builds panic when it doesn't fit,
-/// release builds keep the largest offset that does.
-fn byte_offset(value: usize) -> u32 {
-    let narrowed = u32::try_from(value);
-    debug_assert!(
-        narrowed.is_ok(),
-        "buffers over u32::MAX bytes are refused, got an offset of {value}"
-    );
-    narrowed.unwrap_or(u32::MAX)
-}
-
-/// Narrows a count of columns to what a `Glyph` stores, the same way as `byte_offset`.
-fn columns(value: usize) -> u8 {
-    let narrowed = u8::try_from(value);
-    debug_assert!(
-        narrowed.is_ok(),
-        "a grapheme is at most 31 bytes, so it is nowhere near u8::MAX columns, got {value}"
-    );
-    narrowed.unwrap_or(u8::MAX)
 }
 
 /// Locates a slot in a view's layout grid, relative to the view, not the frame.

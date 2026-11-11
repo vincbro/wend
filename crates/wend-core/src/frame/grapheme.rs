@@ -1,5 +1,7 @@
 use unicode_width::UnicodeWidthStr;
 
+use crate::number;
+
 /// Sets how many bytes a grapheme can hold inline, longer ones become U+FFFD.
 const CAPACITY: u8 = 31;
 
@@ -80,7 +82,7 @@ impl Grapheme {
                 // The layout already gives these their width
                 '\t' | '\n' | '\r' => " ",
                 // C0, ESC (0x1B) being the dangerous one
-                '\0'..='\u{1F}' => CONTROL_PICTURES[c as usize],
+                '\0'..='\u{1F}' => CONTROL_PICTURES[number::exact::<u32, usize>(u32::from(c))],
                 '\u{7F}' => "␡",
                 // C1, some terminals treat 0x9B as CSI
                 _ => REPLACEMENT,

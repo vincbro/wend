@@ -1,5 +1,4 @@
 mod area;
-pub(crate) use area::terminal_coordinate;
 pub use area::{Area, Rect};
 mod grapheme;
 pub use grapheme::Grapheme;

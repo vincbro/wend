@@ -2,7 +2,8 @@ use std::mem;
 
 use crate::{
     buffer::Buffer,
-    frame::{self, Area, CellPosition, Rect},
+    frame::{Area, CellPosition, Rect},
+    number,
     syntax::Highlight,
 };
 
@@ -108,8 +109,8 @@ impl View {
     /// Returns where a slot of the layout ends up in the frame.
     fn cell_position(rect: Rect, pos: SlotPosition) -> CellPosition {
         CellPosition::new(
-            rect.col + frame::terminal_coordinate(pos.col),
-            rect.row + frame::terminal_coordinate(pos.row),
+            rect.col + number::exact::<usize, u16>(pos.col),
+            rect.row + number::exact::<usize, u16>(pos.row),
         )
     }
 
@@ -365,7 +366,7 @@ pub(crate) mod tests {
         assert!(rows_with_text > 2, "the first line wraps");
         for row in 1..rows_with_text {
             assert_eq!(
-                gutter_text(&view, &frame, u16::try_from(row).unwrap()),
+                gutter_text(&view, &frame, number::exact(row)),
                 format!("{row:>3} "),
                 "row {row} is {row} motions below the cursor, wrapped or not"
             );

@@ -5,6 +5,8 @@ use tree_sitter::{
     Language, Node, Parser, Query, QueryCursor, QueryMatch, StreamingIterator, Tree,
 };
 
+use crate::number;
+
 mod error;
 pub use error::{Error, Result};
 mod highlight;
@@ -189,7 +191,7 @@ fn capture_highlight(
     index: usize,
 ) -> Option<(Range<usize>, Highlight)> {
     let capture = query_match.captures()[index];
-    let highlight = grammar.captures[capture.index as usize]?;
+    let highlight = grammar.captures[number::exact::<u32, usize>(capture.index)]?;
     Some((capture.node.byte_range(), highlight))
 }
 
