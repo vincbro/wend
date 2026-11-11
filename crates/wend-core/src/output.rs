@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use crop::Rope;
 
@@ -10,7 +10,7 @@ pub enum Output {
     /// Asks the frontend to write `rope` to `path`. Copying a rope only shares its nodes, so
     /// the core never copies the text to save it.
     Write {
-        path: PathBuf,
+        path: Box<Path>,
         rope: Rope,
     },
     /// The screen to draw. Send it back with `Input::Drawn` once it is drawn, the editor

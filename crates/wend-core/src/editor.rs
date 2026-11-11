@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, vec::Drain};
+use std::{collections::HashSet, path::Path, vec::Drain};
 
 use crate::{
     buffer::Buffer,
@@ -132,13 +132,13 @@ impl Editor {
 
     /// Shows the file at `path`, reusing its buffer if it's among the open buffers. The buffer
     /// shown before joins them.
-    fn show_file(&mut self, path: PathBuf, bytes: &[u8]) -> Result<()> {
-        if self.view.buffer().path() == Some(path.as_path()) {
+    fn show_file(&mut self, path: Box<Path>, bytes: &[u8]) -> Result<()> {
+        if self.view.buffer().path() == Some(&*path) {
             self.view.update(bytes)?;
         } else if let Some(index) = self
             .buffers
             .iter()
-            .position(|buffer| buffer.path() == Some(path.as_path()))
+            .position(|buffer| buffer.path() == Some(&*path))
         {
             let mut buffer = self.buffers.swap_remove(index);
             buffer.update(bytes)?;
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn a_file_opens_and_then_updates() {
         let mut editor = Editor::new(Area::new(80, 24)).unwrap();
-        let path = PathBuf::from("a.txt");
+        let path: Box<Path> = Path::new("a.txt").into();
         let file = |bytes: &[u8]| Input::File {
             path: path.clone(),
             bytes: bytes.into(),
@@ -301,7 +301,7 @@ mod tests {
 
         editor.apply(file(b"abc")).unwrap();
         assert_eq!(text(&editor), "abc");
-        assert_eq!(editor.view().buffer().path(), Some(path.as_path()));
+        assert_eq!(editor.view().buffer().path(), Some(&*path));
 
         editor.apply(file(b"xyz")).unwrap();
         assert_eq!(

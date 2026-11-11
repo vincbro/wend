@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use wend_core::{
     editor::Editor,
@@ -57,7 +57,7 @@ fn press(editor: &mut Editor, keys: &str) -> Frame {
 fn editor(text: &str, cols: u16, rows: u16) -> Editor {
     let mut editor = Editor::new(Area::new(cols, rows)).expect("the wasm engine starts");
     let file = Input::File {
-        path: PathBuf::from("a.txt"),
+        path: Path::new("a.txt").into(),
         bytes: text.as_bytes().into(),
         language: None,
     };
@@ -209,7 +209,7 @@ mod tests {
     fn keys_in_frame_out() {
         let mut editor = Editor::new(Area::new(20, 3)).unwrap();
         let file = Input::File {
-            path: PathBuf::from("a.txt"),
+            path: Path::new("a.txt").into(),
             bytes: b"abc".as_slice().into(),
             language: None,
         };
@@ -237,7 +237,7 @@ mod tests {
     fn highlights_reach_the_frame_once_the_grammar_loads() {
         let mut editor = Editor::new(Area::new(20, 3)).unwrap();
         let file = Input::File {
-            path: PathBuf::from("a.rs"),
+            path: Path::new("a.rs").into(),
             bytes: b"fn main() {}".as_slice().into(),
             language: Some(LanguageTag::new("rust")),
         };
@@ -266,7 +266,7 @@ mod tests {
 
     fn rust_file() -> Input {
         Input::File {
-            path: PathBuf::from("a.rs"),
+            path: Path::new("a.rs").into(),
             bytes: b"fn main() {}".as_slice().into(),
             language: Some(LanguageTag::new("rust")),
         }
@@ -351,7 +351,7 @@ mod tests {
         exchange(&mut editor, rust_language());
 
         let second = Input::File {
-            path: PathBuf::from("b.rs"),
+            path: Path::new("b.rs").into(),
             bytes: b"fn other() {}".as_slice().into(),
             language: Some(LanguageTag::new("rust")),
         };

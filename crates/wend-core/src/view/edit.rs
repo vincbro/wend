@@ -1,4 +1,4 @@
-use std::{ops, path::PathBuf};
+use std::{ops, path::Path};
 
 use crop::Rope;
 
@@ -71,7 +71,7 @@ impl View {
         self.check_invariants();
     }
 
-    pub fn save(&mut self) -> Result<(PathBuf, Rope)> {
+    pub fn save(&mut self) -> Result<(Box<Path>, Rope)> {
         Ok(self.buffer.save()?)
     }
 }

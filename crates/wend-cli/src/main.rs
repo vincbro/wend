@@ -37,13 +37,14 @@ fn main() -> Result<()> {
     let (input_tx, input_rx) = mpsc::channel();
 
     let _guard = TerminalGuard::enter().context("failed to set up the terminal")?;
-    let mut stdout = io::stdout();
 
     let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
     let mut editor = Editor::new(area).context("failed to start the editor")?;
 
-    let path = PathBuf::from_str(&args.file).context("not a valid path")?;
+    let path = PathBuf::from_str(&args.file)
+        .context("not a valid path")?
+        .into_boxed_path();
     let bytes = fs::read(&path)
         .with_context(|| format!("failed to read {}", path.display()))?
         .into_boxed_slice();

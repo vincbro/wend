@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::{
     frame::{Area, Frame},
@@ -19,7 +19,7 @@ pub enum Input {
     Key(Key),
     /// What the file at `path` holds now, whether the editor asked for it or it changed.
     File {
-        path: PathBuf,
+        path: Box<Path>,
         bytes: Box<[u8]>,
         language: Option<LanguageTag>,
     },

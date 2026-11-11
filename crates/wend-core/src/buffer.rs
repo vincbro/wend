@@ -1,8 +1,4 @@
-use std::{
-    ops,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{ops, path::Path, sync::Arc};
 
 use crop::{Rope, RopeBuilder};
 
@@ -20,7 +16,7 @@ use crate::syntax::{Grammar, Highlight, LanguageTag, Loader, Syntax};
 /// costs the parts that differ.
 #[derive(Debug, Clone)]
 pub struct Buffer {
-    path: Option<PathBuf>,
+    path: Option<Box<Path>>,
     rope: Rope,
     clean_rope: Rope,
     is_dirty: bool,
@@ -76,7 +72,7 @@ impl Buffer {
             .flatten()
     }
 
-    pub fn from_bytes(path: PathBuf, bytes: &[u8]) -> Result<Self> {
+    pub fn from_bytes(path: Box<Path>, bytes: &[u8]) -> Result<Self> {
         let content = str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let mut rope_builder = RopeBuilder::new();
         rope_builder.append(content);
@@ -100,7 +96,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn from_rope(path: Option<PathBuf>, rope: Rope) -> Self {
+    fn from_rope(path: Option<Box<Path>>, rope: Rope) -> Self {
         Self {
             path,
             clean_rope: rope.clone(),
@@ -168,7 +164,7 @@ impl Buffer {
     }
 
     /// Makes the text the new clean state, and returns the path and text to write.
-    pub fn save(&mut self) -> Result<(PathBuf, Rope)> {
+    pub fn save(&mut self) -> Result<(Box<Path>, Rope)> {
         let Some(path) = &self.path else {
             return Err(Error::NoPath);
         };
@@ -244,7 +240,7 @@ mod tests {
 
     #[test]
     fn non_utf8_file_is_an_error() {
-        let result = Buffer::from_bytes(PathBuf::from("latin1.txt"), b"caf\xe9");
+        let result = Buffer::from_bytes(Path::new("latin1.txt").into(), b"caf\xe9");
         assert!(
             matches!(result, Err(Error::InvalidUtf8)),
             "a latin-1 file is refused, not a panic"
@@ -259,18 +255,18 @@ mod tests {
 
     #[test]
     fn save_returns_the_text_to_write() {
-        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        let mut buffer = Buffer::from_bytes(Path::new("a.txt").into(), b"abc").unwrap();
         buffer.edit(3..3, "d");
         let (path, rope) = buffer.save().unwrap();
 
-        assert_eq!(path, PathBuf::from("a.txt"));
+        assert_eq!(&*path, Path::new("a.txt"));
         assert_eq!(rope.to_string(), "abcd");
         assert!(!buffer.is_dirty(), "the saved text is the clean state");
     }
 
     #[test]
     fn save_then_revert_keeps_saved_text() {
-        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        let mut buffer = Buffer::from_bytes(Path::new("a.txt").into(), b"abc").unwrap();
         buffer.edit(3..3, "d");
         buffer.save().unwrap();
         buffer.edit(0..1, "X");
@@ -281,7 +277,7 @@ mod tests {
 
     #[test]
     fn update_without_edits_takes_the_new_text() {
-        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        let mut buffer = Buffer::from_bytes(Path::new("a.txt").into(), b"abc").unwrap();
         buffer.update(b"xyz").unwrap();
         assert_eq!(buffer.rope().to_string(), "xyz");
         assert!(!buffer.is_dirty());
@@ -289,7 +285,7 @@ mod tests {
 
     #[test]
     fn update_with_edits_keeps_them() {
-        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        let mut buffer = Buffer::from_bytes(Path::new("a.txt").into(), b"abc").unwrap();
         buffer.edit(3..3, "d");
         buffer.update(b"xyz").unwrap();
         assert_eq!(
@@ -308,7 +304,7 @@ mod tests {
 
     #[test]
     fn update_with_invalid_utf8_is_an_error() {
-        let mut buffer = Buffer::from_bytes(PathBuf::from("a.txt"), b"abc").unwrap();
+        let mut buffer = Buffer::from_bytes(Path::new("a.txt").into(), b"abc").unwrap();
         assert!(matches!(buffer.update(b"caf\xe9"), Err(Error::InvalidUtf8)));
         assert_eq!(buffer.rope().to_string(), "abc", "the text is left alone");
     }

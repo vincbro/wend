@@ -8,7 +8,7 @@ use crate::input::action::Action;
 pub enum KeyTree {
     Leaf(Box<[Action]>),
     Node {
-        description: String,
+        description: Box<str>,
         children: HashMap<Key, Self>,
     },
 }
@@ -17,7 +17,7 @@ impl KeyTree {
     #[must_use]
     pub fn from_children(description: &str, children: Vec<(Key, Self)>) -> Self {
         Self::Node {
-            description: description.to_owned(),
+            description: description.into(),
             children: children.into_iter().collect(),
         }
     }
@@ -106,7 +106,7 @@ mod tests {
     fn walk_stops_on_a_node() {
         let tree = tree();
         assert!(
-            matches!(tree.get(&[key('g')]), Some(KeyTree::Node { description, .. }) if description == "goto"),
+            matches!(tree.get(&[key('g')]), Some(KeyTree::Node { description, .. }) if &**description == "goto"),
             "a prefix waits for the next key"
         );
     }
