@@ -112,9 +112,11 @@ Types that are copied on every key or frame stay under 128 bytes; above that the
 
 ## Output
 
-### P-OUTPUT: The terminal gets one locked, buffered writer per frame
+### P-OUTPUT: The terminal gets one write per frame
 
-The frontend wraps `stdout().lock()` in a `BufWriter` with room for a whole frame, writes everything through it and calls `flush` once, checking the error. `Stdout` on its own is line-buffered with a small buffer, so a frame of many escape sequences becomes many system calls.
+The frontend builds a whole frame in a `Vec<u8>` it keeps between frames, clears it before each frame, and hands it to a locked `stdout` with a single `write_all` and one `flush`, checking the errors. The lock is only held for that write, so the panic hook can still restore the terminal from another thread. `Stdout` on its own is line-buffered with a small buffer, so a frame of many escape sequences becomes many system calls. The `Vec` grows to the largest frame seen and then stays that size.
+
+Inside the frame, a color is written only when it differs from the cell before, and the cursor is moved only at the start of a row and after a cell that isn't plain single-width ASCII.
 
 *Enforced:* review.
 
@@ -134,13 +136,12 @@ To profile, build with `debug = "line-tables-only"` so the profiler shows source
 
 ## Known opportunities
 
-Measured on 2026-11-08, not yet changed. Each one is a candidate for a change that follows P-MEASURE.
+Measured on 2026-11-11, not yet changed. Each one is a candidate for a change that follows P-MEASURE. `just bench`, `just bench-latency` and `just bench-e2e` give the numbers.
 
 | Where | What | Numbers |
 |---|---|---|
-| `view/layout/slot.rs` | A `Slot` is 64 bytes because it holds a whole `Glyph` (three `usize` and a 32-byte `Grapheme`). | A 100×40 view is 256 KB written on every layout rebuild. `usize` positions could be `u32`, and the grapheme could stay out of the slot. |
-| `wend-cli/src/draw.rs` | The frame is queued into the line-buffered `stdout`, with a color change and a `MoveTo` for every cell. | Hundreds of small writes per frame. Breaks P-OUTPUT. Frame diffing is in TODO.md. |
-| `editor/keymap.rs` | `Keymap::press` clones a `Vec<Action>` for every key. | One allocation per key press. Breaks P-NO-ALLOC-HOT. Fix with P-BORROW: `Leaf(Box<[Action]>)`, `press` returns an iterator over the leaf's actions or the one typed character, and `perform` stops needing the whole `Editor` so the keymap can stay borrowed. |
-| `view/layout.rs` | `Layout::last_row_of_line` builds a whole new `Layout` on each call, and scrolling up calls it once per line. | One allocation per line scrolled. Breaks P-NO-ALLOC-HOT. |
-| `KeyTree`, `Buffer`, `Input::File`, `Output::Write` | `Vec<Action>`, `String` and `PathBuf` for data that never grows. | Breaks P-BOXED. |
+| `syntax.rs`, `Syntax::highlights` | Every frame runs the highlight query over the visible bytes, and its cost grows with the file, not the screen. With highlighting off, a redraw is about 0.17 ms at 100 KB and at 1 MB. | With it on: 0.52 ms at 100 KB and 2.76 ms at 1 MB. Cache the visible spans while the tree and the range are unchanged. |
+| `wend-cli/src/draw.rs` | Every cell is redrawn on every frame. | Frame diffing is in TODO.md. |
+| `Editor::apply`, `reparse` | Typing in a 1 MB file takes about 14 ms, nearly all of it the incremental parse and the highlight query. | Not yet split further. |
+| `view/layout.rs`, `Layout::find_byte` | Scans the rows and slots, and one key press calls it several times (`ensure_cursor_visible`, `cursor_position`, `grapheme_start`). | Not measured on its own. Cache the head's slot after a rebuild. |
 | `Cargo.toml` | `panic = "abort"` and a profiling profile aren't set. | Undecided. |

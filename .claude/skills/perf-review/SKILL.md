@@ -37,7 +37,7 @@ Go through every rule in `PERFORMANCE.md` whose *Enforced* line includes "review
 - **P-REUSE and P-CAPACITY:** a collection rebuilt per call that could live in the calling struct, `a = b.clone()` where `clone_from` fits, and growing a `Vec` whose size is known.
 - **P-SIZES:** a new hot type that is large, or a large enum variant that is not boxed. Say how big it is when you can tell.
 - **P-ITERATORS:** `collect` only to iterate again, indexing in a loop that an iterator expresses, `filter` then `map`, `chunks` where `chunks_exact` fits, a custom iterator without `size_hint`.
-- **P-OUTPUT:** terminal output that is not one locked, buffered writer flushed once per frame.
+- **P-OUTPUT:** terminal output that is not built in one reused buffer and written once per frame, or a lock on `stdout` held longer than that write.
 - **P-BUILD:** a change to a profile in `Cargo.toml` that undoes the shipped settings, or an inline attribute (also S-INLINE).
 
 Do not repeat a problem already in the *Known opportunities* table. Report it only if the change makes it worse, and say if the change fixes a row, so the row can be removed.
