@@ -29,8 +29,17 @@ use wend_core::{
 };
 
 // The frontend's own modules, so the bench times the code that ships
+// These files carry unit tests that the bench, with no test harness, never runs
+#[allow(
+    dead_code,
+    reason = "test helpers of the file are compiled but not run here"
+)]
 #[path = "../src/draw.rs"]
 mod draw;
+#[allow(
+    dead_code,
+    reason = "test helpers of the file are compiled but not run here"
+)]
 #[path = "../src/theme.rs"]
 mod theme;
 

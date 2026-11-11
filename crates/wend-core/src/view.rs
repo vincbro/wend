@@ -199,7 +199,7 @@ impl View {
 pub(crate) mod tests {
     use super::*;
     use crate::{
-        frame::{Area, Frame},
+        frame::{Area, Content, Frame},
         syntax::{self, LanguageTag},
     };
 
@@ -232,6 +232,34 @@ pub(crate) mod tests {
             .iter()
             .map(|cell| cell.grapheme.as_str_sanitize())
             .collect()
+    }
+
+    #[test]
+    fn the_selection_and_the_cursor_are_layers_over_the_text() {
+        let mut view = view("abcdef", 20, 2);
+        view.set_selection(Selection::new(0, 2), ColumnPolicy::Sync);
+
+        let frame = rendered(&mut view);
+
+        let gutter = gutter_width(&view);
+        let style = |col: u16| frame.get(CellPosition::new(gutter + col, 0)).style;
+        assert!(style(0).selected && !style(0).cursor, "the a is selected");
+        assert!(style(2).selected && style(2).cursor, "the head is both");
+        assert!(!style(3).selected && !style(3).cursor, "the d is neither");
+    }
+
+    #[test]
+    fn a_wrapped_row_ends_in_a_marker() {
+        let mut view = view("aaaaaaaa", 4, 3);
+
+        let frame = rendered(&mut view);
+
+        let markers: Vec<_> = frame
+            .iter()
+            .filter(|(_, cell)| cell.style.content == Content::Marker)
+            .collect();
+        assert_eq!(markers.len(), 2, "3, 3 and 2 characters, so two wraps");
+        assert_eq!(markers[0].1.grapheme.as_str_sanitize(), "↩");
     }
 
     #[test]
@@ -329,11 +357,16 @@ pub(crate) mod tests {
         let frame = rendered(&mut view);
 
         let gutter = gutter_width(&view);
-        let highlight = |col: u16| frame.get(CellPosition::new(gutter + col, 0)).highlight;
-        assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
-        assert_eq!(highlight(1), Some(Highlight::Keyword), "the n of fn");
-        assert_eq!(highlight(2), None, "the space");
-        assert_eq!(highlight(3), Some(Highlight::Function), "the m of main");
+        let content = |col: u16| frame.get(CellPosition::new(gutter + col, 0)).style.content;
+        let keyword = Content::Text(Highlight::Keyword);
+        assert_eq!(content(0), keyword, "the f of fn");
+        assert_eq!(content(1), keyword, "the n of fn");
+        assert_eq!(content(2), Content::Plain, "the space");
+        assert_eq!(
+            content(3),
+            Content::Text(Highlight::Function),
+            "the m of main"
+        );
     }
 
     #[test]

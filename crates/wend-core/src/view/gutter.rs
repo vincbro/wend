@@ -1,7 +1,6 @@
 use crate::{
-    frame::{Cell, CellPosition, Frame, Grapheme, Rect},
+    frame::{Cell, CellPosition, Content, Frame, Grapheme, Rect, Style},
     number,
-    syntax::Highlight,
 };
 
 /// The fewest digits the gutter makes room for, so the text only moves when a file passes 999
@@ -102,10 +101,10 @@ fn write_number(frame: &mut Frame, rect: Rect, row: usize, number: usize, curren
     if digits.len() > rect.area.width() {
         return;
     }
-    let highlight = if current {
-        Highlight::Keyword
+    let content = if current {
+        Content::CurrentLineNumber
     } else {
-        Highlight::Comment
+        Content::LineNumber
     };
     let row = rect.row + number::exact::<usize, u16>(row);
     let right_edge = rect.col + rect.area.cols;
@@ -113,7 +112,10 @@ fn write_number(frame: &mut Frame, rect: Rect, row: usize, number: usize, curren
         let col = right_edge - number::exact::<usize, u16>(offset) - 1;
         let cell = Cell {
             grapheme: Grapheme::from_char(digit),
-            highlight: Some(highlight),
+            style: Style {
+                content,
+                ..Style::default()
+            },
             ..Cell::default()
         };
         frame.write(CellPosition::new(col, row), cell);
@@ -269,6 +271,16 @@ mod tests {
         assert_eq!(row_text(&frame, 4), "  1 ", "one row above the cursor");
         assert_eq!(row_text(&frame, 5), " 42 ", "the cursor's line");
         assert_eq!(row_text(&frame, 7), "  2 ", "two rows below the cursor");
+    }
+
+    #[test]
+    fn only_the_cursor_row_has_the_current_line_number_layer() {
+        let frame = rendered(9, 8, Some(HEAD));
+
+        let content = |row: u16| frame.get(CellPosition::new(2, row)).style.content;
+        assert_eq!(content(5), Content::CurrentLineNumber, "the cursor's line");
+        assert_eq!(content(4), Content::LineNumber, "the row above");
+        assert_eq!(content(7), Content::LineNumber, "a row below");
     }
 
     #[test]

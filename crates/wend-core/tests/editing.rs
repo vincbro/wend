@@ -2,7 +2,7 @@ use std::path::Path;
 
 use wend_core::{
     editor::Editor,
-    frame::{Area, CellPosition, Frame},
+    frame::{Area, CellPosition, Content, Frame},
     input::{
         Input,
         key::{Key, KeyCode},
@@ -243,8 +243,8 @@ mod tests {
         };
         let plain = send(&mut editor, file);
         assert_eq!(
-            plain[0].get(CellPosition::new(GUTTER, 0)).highlight,
-            None,
+            plain[0].get(CellPosition::new(GUTTER, 0)).style.content,
+            Content::Plain,
             "no colors until the grammar is there"
         );
 
@@ -259,9 +259,18 @@ mod tests {
             },
         );
 
-        let highlight = |col: u16| loaded[0].get(CellPosition::new(GUTTER + col, 0)).highlight;
-        assert_eq!(highlight(0), Some(Highlight::Keyword), "the f of fn");
-        assert_eq!(highlight(3), Some(Highlight::Function), "the m of main");
+        let content = |col: u16| {
+            loaded[0]
+                .get(CellPosition::new(GUTTER + col, 0))
+                .style
+                .content
+        };
+        assert_eq!(content(0), Content::Text(Highlight::Keyword), "the f of fn");
+        assert_eq!(
+            content(3),
+            Content::Text(Highlight::Function),
+            "the m of main"
+        );
     }
 
     fn rust_file() -> Input {
@@ -317,8 +326,8 @@ mod tests {
             "the text is still there"
         );
         assert_eq!(
-            frames[0].get(CellPosition::new(GUTTER, 0)).highlight,
-            None,
+            frames[0].get(CellPosition::new(GUTTER, 0)).style.content,
+            Content::Plain,
             "without a grammar it is plain text"
         );
         send(
@@ -371,8 +380,8 @@ mod tests {
             })
             .expect("a frame is drawn for the new file");
         assert_eq!(
-            frame.get(CellPosition::new(GUTTER, 0)).highlight,
-            Some(Highlight::Keyword),
+            frame.get(CellPosition::new(GUTTER, 0)).style.content,
+            Content::Text(Highlight::Keyword),
             "the fn of the second file"
         );
     }

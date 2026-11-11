@@ -1,7 +1,7 @@
 use std::{mem, ops};
 
 use super::{Highlighter, Layout, Selection, Slot, SlotPosition, View, gutter};
-use crate::frame::{Cell, Frame, Grapheme};
+use crate::frame::{Cell, Content, Frame, Grapheme, Style};
 
 impl View {
     /// Writes the view's cells into `frame`, leaving the rest of it alone.
@@ -31,8 +31,10 @@ impl View {
         for (pos, slot) in self.layout.slots() {
             let mut cell = Self::cell(&self.layout, self.selection, slot, pos, &selected);
             // Tails are blanks, only the glyph itself has a color
-            if let Slot::Glyph(glyph) = slot {
-                cell.highlight = highlighter.at(glyph.start());
+            if let Slot::Glyph(glyph) = slot
+                && let Some(highlight) = highlighter.at(glyph.start())
+            {
+                cell.style.content = Content::Text(highlight);
             }
             frame.write(Self::cell_position(text_rect, pos), cell);
         }
@@ -69,6 +71,10 @@ impl View {
             return match slot {
                 Slot::Marker(c) => Cell {
                     grapheme: Grapheme::from_char(c),
+                    style: Style {
+                        content: Content::Marker,
+                        ..Style::default()
+                    },
                     ..blank
                 },
                 _ => blank,
@@ -87,11 +93,13 @@ impl View {
 
         Cell {
             grapheme,
-            cursor: glyph.to_range().contains(&selection.head()),
-            selected: selected.contains(&glyph.start()),
+            // The content is set by render, which walks the cells in order
+            style: Style {
+                content: Content::Plain,
+                selected: selected.contains(&glyph.start()),
+                cursor: glyph.to_range().contains(&selection.head()),
+            },
             covered,
-            // Set by render, which walks the cells in order
-            highlight: None,
         }
     }
 }

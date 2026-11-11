@@ -2,23 +2,17 @@ mod area;
 pub use area::{Area, Rect};
 mod grapheme;
 pub use grapheme::Grapheme;
-
-use crate::syntax::Highlight;
+mod style;
+pub use style::{Content, Style};
 
 /// Holds what to draw in one terminal cell.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Cell {
     pub grapheme: Grapheme,
-    /// Set on every cell of the grapheme under the head, while `Frame::cursor` is the one
-    /// position where that grapheme starts.
-    pub cursor: bool,
-    pub selected: bool,
+    pub style: Style,
     /// Drawn by the wide grapheme to its left, so there is nothing to print. Printing
     /// into half of a wide grapheme makes the terminal blank all of it.
     pub covered: bool,
-    /// None for plain text, and on the cells that aren't a glyph's own, such as its tails
-    /// and markers.
-    pub highlight: Option<Highlight>,
 }
 
 /// Locates a cell in the frame, which covers the whole terminal, not just one view.
@@ -127,7 +121,10 @@ mod tests {
         frame.write(
             CellPosition::new(3, 0),
             Cell {
-                selected: true,
+                style: Style {
+                    selected: true,
+                    ..Style::default()
+                },
                 ..Cell::default()
             },
         );
@@ -135,7 +132,7 @@ mod tests {
 
         assert_eq!(frame.area(), Area::new(2, 4));
         assert!(
-            frame.iter().all(|(_, cell)| !cell.selected),
+            frame.iter().all(|(_, cell)| !cell.style.selected),
             "nothing from the old width shows up at another position"
         );
     }
