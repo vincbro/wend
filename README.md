@@ -70,12 +70,22 @@ What works today. Normal and select mode share a keymap, select only makes motio
 | `J` `K`   | to the last, first row on screen        |
 | `gs` `ge` | start, end of the file                  |
 | `i`       | insert mode, `Esc` to leave             |
+| `Esc`     | drop the selection, back to normal mode |
 | `o`       | open a line below and insert            |
 | `d`       | delete the selection                    |
 | `u`       | revert to the last save                 |
 | `s`       | save                                    |
 | `v`       | toggle select mode                      |
 | `q`       | quit                                    |
+
+## Config
+
+The config file is `$XDG_CONFIG_HOME/wend/config.toml`, or `~/.config/wend/config.toml`. It always holds every setting, with a comment on each, so the file is the documentation.
+
+- `wend --reset-config` writes the default config, replacing the file.
+- `wend --extend-config` adds the settings a file lacks and keeps everything else, comments included. A new release's settings reach you this way.
+
+Bindings in the file go over the defaults. Bind a combo to `[]` to remove it, so `q = []` removes the quit key.
 
 ## Alternatives
 
