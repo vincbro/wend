@@ -3,6 +3,7 @@
 //! `crates/wend-cli`.
 
 pub mod buffer;
+pub mod config;
 pub mod editor;
 pub mod frame;
 pub mod input;

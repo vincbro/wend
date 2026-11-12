@@ -1,14 +1,8 @@
 use crate::{
+    config::LineNumbers,
     frame::{Cell, CellPosition, Content, Frame, Grapheme, Rect, Style},
     number,
 };
-
-/// The fewest digits the gutter makes room for, so the text only moves when a file passes 999
-/// lines.
-const MIN_DIGITS: usize = 3;
-
-/// Blank columns between the numbers and the text.
-const PADDING: u16 = 1;
 
 /// Where the cursor is, which every other row's number is counted from.
 #[derive(Debug, Clone, Copy)]
@@ -27,17 +21,20 @@ pub(super) struct Head {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Gutter {
     width: u16,
+    /// The blank columns between the numbers and the text.
+    padding: u16,
 }
 
 impl Gutter {
     /// Makes the gutter of a view `view_cols` wide that has to show numbers up to `largest`.
     #[must_use]
-    pub(super) fn new(largest: usize, view_cols: u16) -> Self {
-        let digits = Digits::new(largest).len().max(MIN_DIGITS);
+    pub(super) fn new(largest: usize, view_cols: u16, config: LineNumbers) -> Self {
+        let digits = Digits::new(largest).len().max(config.min_digits);
         // A usize has at most 20 digits.
         let digits: u16 = number::exact(digits);
         Self {
-            width: (digits + PADDING).min(view_cols / 2),
+            width: digits.saturating_add(config.padding).min(view_cols / 2),
+            padding: config.padding,
         }
     }
 
@@ -64,7 +61,7 @@ impl Gutter {
         head: Option<Head>,
     ) {
         let (rect, _) = self.split(rect);
-        let numbers = rect.pad_right(PADDING);
+        let numbers = rect.pad_right(self.padding);
         for row in 0..rect.area.height() {
             blank_row(frame, rect, row);
             let Some(head) = head.filter(|_| row < rows_with_text) else {
@@ -199,7 +196,7 @@ mod tests {
 
     /// A gutter four columns wide, in a view of eight.
     fn gutter() -> Gutter {
-        Gutter::new(0, 8)
+        Gutter::new(0, 8, LineNumbers::default())
     }
 
     /// What the first four columns of a row of the frame show.
@@ -219,7 +216,7 @@ mod tests {
 
     #[test]
     fn the_gutter_grows_with_the_largest_number() {
-        let width = |largest| width(Gutter::new(largest, 100));
+        let width = |largest| width(Gutter::new(largest, 100, LineNumbers::default()));
 
         assert_eq!(width(0), 4, "three digits and the padding at the least");
         assert_eq!(width(999), 4, "still three digits");
@@ -230,7 +227,7 @@ mod tests {
     #[test]
     fn the_gutter_takes_at_most_half_of_the_view() {
         assert_eq!(
-            width(Gutter::new(1_000, 6)),
+            width(Gutter::new(1_000, 6, LineNumbers::default())),
             3,
             "half of 6, not the 5 it wants"
         );
@@ -318,7 +315,7 @@ mod tests {
         let area = Area::new(6, 1);
         let mut frame = Frame::new(area, None);
 
-        Gutter::new(0, 6).render(
+        Gutter::new(0, 6, LineNumbers::default()).render(
             &mut frame,
             Rect::new(0, 0, area),
             1,

@@ -1,28 +1,11 @@
-mod default;
-
-use crate::input::{
-    Mode,
-    action::Action,
-    key::{Key, KeyCode, KeyTree},
+use crate::{
+    config::KeyTrees,
+    input::{
+        Mode,
+        action::Action,
+        key::{Key, KeyCode, KeyTree},
+    },
 };
-
-/// The key tree of each mode.
-#[derive(Debug, Clone)]
-struct Trees {
-    normal: KeyTree,
-    select: KeyTree,
-    insert: KeyTree,
-}
-
-impl Trees {
-    fn get(&self, mode: Mode) -> &KeyTree {
-        match mode {
-            Mode::Normal => &self.normal,
-            Mode::Select => &self.select,
-            Mode::Insert => &self.insert,
-        }
-    }
-}
 
 /// Turns keys into actions, one key at a time, with a key tree for each mode.
 ///
@@ -30,7 +13,7 @@ impl Trees {
 /// which is the mode the combo started in.
 #[derive(Debug, Clone)]
 pub(super) struct Keymap {
-    trees: Trees,
+    trees: KeyTrees,
     pending: Vec<Key>,
     pending_mode: Mode,
     /// Holds the action of a character typing itself, so `press` can lend it like a leaf's.
@@ -38,6 +21,17 @@ pub(super) struct Keymap {
 }
 
 impl Keymap {
+    #[must_use]
+    pub(super) fn new(trees: KeyTrees) -> Self {
+        Self {
+            trees,
+            pending: vec![],
+            pending_mode: Mode::Normal,
+            // Overwritten before it is lent out
+            typed: [Action::Insert(' ')],
+        }
+    }
+
     /// Adds `key` to the combo and returns the actions to run: a leaf's, or a character
     /// typing itself in insert mode. Empty while the combo waits for its next key, and
     /// after a key nothing binds, which drops the combo.
@@ -80,31 +74,22 @@ fn typed_action(typed: &mut [Action; 1], mode: Mode, key: Key, is_combo: bool) -
     }
 }
 
-impl Default for Keymap {
-    fn default() -> Self {
-        Self {
-            trees: Trees {
-                normal: default::command_tree("normal", Mode::Select),
-                select: default::command_tree("select", Mode::Normal),
-                insert: default::insert_tree(),
-            },
-            pending: vec![],
-            pending_mode: Mode::Normal,
-            // Overwritten before it is lent out
-            typed: [Action::Insert(' ')],
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use default::key;
-
     use super::*;
     use crate::{
+        config::Keys,
         input::key::Modifiers,
         view::{Direction, Motion},
     };
+
+    fn key(character: char) -> Key {
+        Key::new(KeyCode::Char(character))
+    }
+
+    fn default_keymap() -> Keymap {
+        Keymap::new(Keys::default().trees().unwrap())
+    }
 
     fn actions<'a>(keymap: &'a Keymap, mode: Mode, keys: &[Key]) -> &'a [Action] {
         match keymap.trees.get(mode).get(keys) {
@@ -115,7 +100,7 @@ mod tests {
 
     #[test]
     fn v_toggles_between_normal_and_select() {
-        let keymap = Keymap::default();
+        let keymap = default_keymap();
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('v')]),
             [Action::Mode(Mode::Select)]
@@ -128,7 +113,7 @@ mod tests {
 
     #[test]
     fn g_starts_a_combo() {
-        let keymap = Keymap::default();
+        let keymap = default_keymap();
         assert!(matches!(
             keymap.trees.get(Mode::Normal).get(&[key('g')]),
             Some(KeyTree::Node { .. })
@@ -141,7 +126,7 @@ mod tests {
 
     #[test]
     fn o_opens_a_line_then_inserts() {
-        let keymap = Keymap::default();
+        let keymap = default_keymap();
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('o')]),
             [Action::OpenLine, Action::Mode(Mode::Insert)]
@@ -150,7 +135,7 @@ mod tests {
 
     #[test]
     fn combo_waits_then_runs() {
-        let mut keymap = Keymap::default();
+        let mut keymap = default_keymap();
         assert!(keymap.press(Mode::Normal, key('g')).is_empty(), "g waits");
         assert!(matches!(
             keymap.press(Mode::Normal, key('s'))[..],
@@ -164,9 +149,12 @@ mod tests {
 
     #[test]
     fn unbound_key_drops_the_combo() {
-        let mut keymap = Keymap::default();
+        let mut keymap = default_keymap();
         assert!(keymap.press(Mode::Normal, key('g')).is_empty(), "g waits");
-        assert!(keymap.press(Mode::Normal, key('x')).is_empty());
+        assert!(
+            keymap.press(Mode::Normal, key('x')).is_empty(),
+            "normal mode doesn't type"
+        );
         assert!(
             matches!(keymap.press(Mode::Normal, key('q'))[..], [Action::Quit]),
             "q isn't read as g q"
@@ -175,7 +163,7 @@ mod tests {
 
     #[test]
     fn mode_change_drops_the_combo() {
-        let mut keymap = Keymap::default();
+        let mut keymap = default_keymap();
         assert!(keymap.press(Mode::Normal, key('g')).is_empty(), "g waits");
         assert!(
             matches!(
@@ -188,7 +176,7 @@ mod tests {
 
     #[test]
     fn insert_types_unbound_characters() {
-        let mut keymap = Keymap::default();
+        let mut keymap = default_keymap();
         assert!(matches!(
             keymap.press(Mode::Insert, key('h'))[..],
             [Action::Insert('h')]
@@ -208,13 +196,16 @@ mod tests {
 
     #[test]
     fn normal_drops_unbound_characters() {
-        let mut keymap = Keymap::default();
-        assert!(keymap.press(Mode::Normal, key('x')).is_empty());
+        let mut keymap = default_keymap();
+        assert!(
+            keymap.press(Mode::Normal, key('x')).is_empty(),
+            "normal mode doesn't type"
+        );
     }
 
     #[test]
     fn insert_leaves_characters_unbound() {
-        let keymap = Keymap::default();
+        let keymap = default_keymap();
         assert!(
             keymap.trees.get(Mode::Insert).get(&[key('h')]).is_none(),
             "the editor types it"

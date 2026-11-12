@@ -2,6 +2,7 @@ use std::{collections::HashSet, path::Path, vec::Drain};
 
 use crate::{
     buffer::Buffer,
+    config::Config,
     frame::{Area, Frame, Rect},
     input::{Input, Mode, action::Action, key::Key},
     output::Output,
@@ -39,14 +40,18 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(area: Area) -> Result<Self> {
+    /// Starts an editor that follows `config`.
+    pub fn new(area: Area, config: &Config) -> Result<Self> {
+        let keymap = Keymap::new(config.keys.trees()?);
+        let mut view = View::new(Rect::new(0, 0, area));
+        view.set_config(config);
         Ok(Self {
             area,
             buffers: vec![],
-            view: View::new(Rect::new(0, 0, area)),
+            view,
             mode: Mode::Normal,
             outputs: vec![],
-            keymap: Keymap::default(),
+            keymap,
             frame_pool: FramePool::new(2, area),
             is_stale: false,
             loader: Loader::new()?,
@@ -76,6 +81,7 @@ impl Editor {
                 wasm,
                 highlights,
             } => self.load_language(tag, &wasm, &highlights),
+            Input::Config(config) => self.set_config(&config)?,
         }
 
         self.is_stale |= changed;
@@ -90,6 +96,13 @@ impl Editor {
             self.outputs.push(Output::Frame(frame));
             self.is_stale = false;
         }
+        Ok(())
+    }
+
+    /// Follows `config` from now on. A config that fails leaves the editor as it was.
+    pub fn set_config(&mut self, config: &Config) -> Result<()> {
+        self.keymap = Keymap::new(config.keys.trees()?);
+        self.view.set_config(config);
         Ok(())
     }
 
@@ -200,6 +213,7 @@ fn perform(
     match action {
         Action::Motion(motion) => view.move_selection(motion, matches!(mode, Mode::Select)),
         Action::Mode(next) => *mode = next,
+        Action::CollapseSelection => view.collapse_selection(),
         Action::Insert(c) => view.insert(c),
         Action::Delete => view.delete(),
         Action::DeleteSelection => view.delete_selection(),
@@ -217,7 +231,7 @@ fn perform(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{input::key::KeyCode, syntax};
+    use crate::{config::Actions, input::key::KeyCode, syntax};
 
     fn press(editor: &mut Editor, keys: &str) {
         for c in keys.chars() {
@@ -237,7 +251,7 @@ mod tests {
 
     #[test]
     fn insert_types_and_esc_leaves() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "iab\u{8}c\u{1b}");
         assert_eq!(text(&editor), "ac", "backspace deletes the b");
         assert_eq!(editor.mode(), Mode::Normal);
@@ -245,15 +259,65 @@ mod tests {
 
     #[test]
     fn o_opens_a_line_and_inserts() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "ia\u{1b}ob");
         assert_eq!(text(&editor), "a\nb");
         assert_eq!(editor.mode(), Mode::Insert);
     }
 
     #[test]
+    fn a_new_config_rebinds_keys() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        let mut config = Config::default();
+        config.keys.normal.insert(
+            "<leader>v".parse().unwrap(),
+            Actions(Box::new([Action::Mode(Mode::Select)])),
+        );
+        editor.apply(Input::Config(Box::new(config))).unwrap();
+        press(&mut editor, " v");
+        assert_eq!(editor.mode(), Mode::Select, "space is the leader");
+    }
+
+    #[test]
+    fn a_config_that_collides_leaves_the_keys_as_they_were() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        let mut config = Config::default();
+        config
+            .keys
+            .normal
+            .insert("g".parse().unwrap(), Actions(Box::new([Action::Quit])));
+        assert!(editor.set_config(&config).is_err(), "g also starts gs");
+        press(&mut editor, "gs");
+        assert!(
+            !editor
+                .drain_outputs()
+                .any(|output| matches!(output, Output::Quit)),
+            "g stayed a prefix"
+        );
+    }
+
+    #[test]
+    fn esc_collapses_the_selection_and_leaves_select() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        press(&mut editor, "iab cd\u{1b}gsvw\u{1b}d");
+        assert_eq!(
+            text(&editor),
+            "abcd",
+            "only the grapheme under the cursor went, not the whole word"
+        );
+        assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn changing_mode_keeps_the_selection() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        press(&mut editor, "iab cd\u{1b}gsvwvd");
+        assert_eq!(text(&editor), "cd", "v back to normal didn't drop the word");
+    }
+
+    #[test]
     fn v_toggles_select() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "v");
         assert_eq!(editor.mode(), Mode::Select);
         press(&mut editor, "v");
@@ -262,7 +326,7 @@ mod tests {
 
     #[test]
     fn select_then_delete_removes_the_selection() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "iab cd\u{1b}gsvwd");
         assert_eq!(
             text(&editor),
@@ -273,14 +337,14 @@ mod tests {
 
     #[test]
     fn revert_drops_unsaved_edits() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "iab\u{1b}u");
         assert_eq!(text(&editor), "");
     }
 
     #[test]
     fn q_asks_to_quit() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "q");
         assert!(
             editor
@@ -291,7 +355,7 @@ mod tests {
 
     #[test]
     fn a_file_opens_and_then_updates() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         let path: Box<Path> = Path::new("a.txt").into();
         let file = |bytes: &[u8]| Input::File {
             path: path.clone(),
@@ -328,7 +392,7 @@ mod tests {
 
     #[test]
     fn a_drawn_frame_alone_draws_nothing() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "i");
         let mut sent = frames(&mut editor);
         assert_eq!(sent.len(), 1);
@@ -342,7 +406,7 @@ mod tests {
 
     #[test]
     fn inputs_while_every_frame_is_out_share_one_frame() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         press(&mut editor, "i");
         press(&mut editor, "a");
         let drawing = frames(&mut editor);
@@ -369,7 +433,7 @@ mod tests {
 
     #[test]
     fn a_loaded_grammar_reaches_the_buffers_that_are_not_shown() {
-        let mut editor = Editor::new(Area::new(80, 24)).unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         let text = "fn a() {}";
         let mut hidden = Buffer::from(text);
         hidden.set_language(Some(LanguageTag::new("rust")));

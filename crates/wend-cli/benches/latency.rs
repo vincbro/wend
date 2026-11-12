@@ -18,6 +18,7 @@ use std::{
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use wend_core::{
+    config::Config,
     editor::Editor,
     frame::{Area, Frame},
     input::{
@@ -102,7 +103,8 @@ impl Session {
     /// Opens `text` as a Rust file, with its grammar loaded and the first frame drawn.
     fn open(text: &str) -> Self {
         let area = Area::new(COLS, ROWS);
-        let mut editor = Editor::new(area).expect("the wasm engine starts on every platform");
+        let mut editor = Editor::new(area, &Config::default())
+            .expect("the wasm engine starts on every platform");
         let frame = editor.frame();
         let mut session = Self {
             editor,

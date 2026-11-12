@@ -17,6 +17,7 @@ bench = false
 [dependencies]
 az.workspace = true
 crop.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
 unicode-width.workspace = true

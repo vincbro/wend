@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use wend_core::{
+    config::Config,
     editor::Editor,
     frame::{Area, CellPosition, Content, Frame},
     input::{
@@ -55,7 +56,8 @@ fn press(editor: &mut Editor, keys: &str) -> Frame {
 
 /// An editor of `cols` by `rows` that has opened a plain text file holding `text`.
 fn editor(text: &str, cols: u16, rows: u16) -> Editor {
-    let mut editor = Editor::new(Area::new(cols, rows)).expect("the wasm engine starts");
+    let mut editor =
+        Editor::new(Area::new(cols, rows), &Config::default()).expect("the wasm engine starts");
     let file = Input::File {
         path: Path::new("a.txt").into(),
         bytes: text.as_bytes().into(),
@@ -207,7 +209,7 @@ mod tests {
 
     #[test]
     fn keys_in_frame_out() {
-        let mut editor = Editor::new(Area::new(20, 3)).unwrap();
+        let mut editor = Editor::new(Area::new(20, 3), &Config::default()).unwrap();
         let file = Input::File {
             path: Path::new("a.txt").into(),
             bytes: b"abc".as_slice().into(),
@@ -235,7 +237,7 @@ mod tests {
 
     #[test]
     fn highlights_reach_the_frame_once_the_grammar_loads() {
-        let mut editor = Editor::new(Area::new(20, 3)).unwrap();
+        let mut editor = Editor::new(Area::new(20, 3), &Config::default()).unwrap();
         let file = Input::File {
             path: Path::new("a.rs").into(),
             bytes: b"fn main() {}".as_slice().into(),
@@ -283,7 +285,8 @@ mod tests {
 
     #[test]
     fn the_grammar_is_asked_for_once() {
-        let mut editor = Editor::new(Area::new(20, 3)).expect("the wasm engine starts");
+        let mut editor =
+            Editor::new(Area::new(20, 3), &Config::default()).expect("the wasm engine starts");
         editor.apply(rust_file()).unwrap();
         for c in ['i', 'x', 'y'] {
             editor
@@ -304,7 +307,8 @@ mod tests {
 
     #[test]
     fn a_grammar_that_fails_to_load_leaves_the_text_plain() {
-        let mut editor = Editor::new(Area::new(20, 3)).expect("the wasm engine starts");
+        let mut editor =
+            Editor::new(Area::new(20, 3), &Config::default()).expect("the wasm engine starts");
         let opened = send(&mut editor, rust_file());
         send(
             &mut editor,
@@ -355,7 +359,8 @@ mod tests {
 
     #[test]
     fn a_second_file_of_a_loaded_language_is_highlighted_without_asking_again() {
-        let mut editor = Editor::new(Area::new(20, 3)).expect("the wasm engine starts");
+        let mut editor =
+            Editor::new(Area::new(20, 3), &Config::default()).expect("the wasm engine starts");
         exchange(&mut editor, rust_file());
         exchange(&mut editor, rust_language());
 

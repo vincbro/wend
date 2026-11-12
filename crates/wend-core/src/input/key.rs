@@ -7,19 +7,32 @@ use crate::input::action::Action;
 #[derive(Debug, Clone)]
 pub enum KeyTree {
     Leaf(Box<[Action]>),
-    Node {
-        description: Box<str>,
-        children: HashMap<Key, Self>,
-    },
+    Node { children: HashMap<Key, Self> },
 }
 
 impl KeyTree {
+    /// A node with no combos.
     #[must_use]
-    pub fn from_children(description: &str, children: Vec<(Key, Self)>) -> Self {
+    pub fn new() -> Self {
         Self::Node {
-            description: description.into(),
-            children: children.into_iter().collect(),
+            children: HashMap::new(),
         }
+    }
+
+    /// Binds `actions` to the combo `keys`. `false`, with the tree maybe half grown, when the
+    /// combo is empty or collides with another: one is the start of the other, or both are
+    /// the same.
+    pub fn insert(&mut self, keys: &[Key], actions: Box<[Action]>) -> bool {
+        let (Some((&first, rest)), Self::Node { children }) = (keys.split_first(), self) else {
+            return false;
+        };
+        if rest.is_empty() {
+            return children.insert(first, Self::Leaf(actions)).is_none();
+        }
+        children
+            .entry(first)
+            .or_insert_with(Self::new)
+            .insert(rest, actions)
     }
 
     /// Walks `keys` down from this tree. `None` when a key isn't bound, or the walk goes
@@ -33,7 +46,13 @@ impl KeyTree {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+impl Default for KeyTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Key {
     pub code: KeyCode,
     pub modifiers: Modifiers,
@@ -49,7 +68,7 @@ impl Key {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeyCode {
     Char(char),
     Enter,
@@ -58,7 +77,7 @@ pub enum KeyCode {
     Tab,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Modifiers {
     pub alt: bool,
     pub control: bool,
@@ -78,19 +97,10 @@ mod tests {
     }
 
     fn tree() -> KeyTree {
-        KeyTree::from_children(
-            "root",
-            vec![
-                (key('q'), KeyTree::Leaf(Box::new([Action::Quit]))),
-                (
-                    key('g'),
-                    KeyTree::from_children(
-                        "goto",
-                        vec![(key('s'), KeyTree::Leaf(Box::new([Action::Save])))],
-                    ),
-                ),
-            ],
-        )
+        let mut tree = KeyTree::new();
+        assert!(tree.insert(&[key('q')], Box::new([Action::Quit])));
+        assert!(tree.insert(&[key('g'), key('s')], Box::new([Action::Save])));
+        tree
     }
 
     #[test]
@@ -106,7 +116,7 @@ mod tests {
     fn walk_stops_on_a_node() {
         let tree = tree();
         assert!(
-            matches!(tree.get(&[key('g')]), Some(KeyTree::Node { description, .. }) if &**description == "goto"),
+            matches!(tree.get(&[key('g')]), Some(KeyTree::Node { .. })),
             "a prefix waits for the next key"
         );
     }
@@ -143,6 +153,23 @@ mod tests {
         assert!(
             tree.get(&[control_q]).is_none(),
             "q is bound, control and q is not"
+        );
+    }
+
+    #[test]
+    fn insert_refuses_colliding_combos() {
+        let mut tree = tree();
+        assert!(
+            !tree.insert(&[key('q'), key('x')], Box::new([Action::Save])),
+            "q is a leaf, nothing continues it"
+        );
+        assert!(
+            !tree.clone().insert(&[key('g')], Box::new([Action::Save])),
+            "g starts a combo, so it can't be a leaf"
+        );
+        assert!(
+            !tree.insert(&[], Box::new([Action::Save])),
+            "an empty combo is no combo"
         );
     }
 }

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::{
+    config::Config,
     frame::{Area, Frame},
     input::{action::Action, key::Key},
     syntax::LanguageTag,
@@ -33,4 +34,7 @@ pub enum Input {
         wasm: Box<[u8]>,
         highlights: Box<[u8]>,
     },
+    /// A new config, read by the frontend from wherever it is kept, to replace the one the
+    /// editor has.
+    Config(Box<Config>),
 }

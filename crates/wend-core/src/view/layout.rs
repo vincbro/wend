@@ -1,4 +1,6 @@
-use crate::{buffer::Buffer, frame::Area, view::Direction};
+use std::num::NonZeroUsize;
+
+use crate::{buffer::Buffer, config::Text, frame::Area, view::Direction};
 
 mod build;
 mod slot;
@@ -15,6 +17,8 @@ pub(super) struct Layout {
     row_metadata: Vec<Option<RowMetadata>>,
     area: Area,
     scroll_offset: ScrollOffset,
+    /// The columns between tab stops.
+    tab_width: usize,
 }
 
 impl Layout {
@@ -25,6 +29,7 @@ impl Layout {
             row_metadata: Vec::with_capacity(area.height()),
             area,
             scroll_offset,
+            tab_width: Text::default().tab_width.get(),
         };
         layout.resize(area, scroll_offset);
         layout
@@ -57,6 +62,11 @@ impl Layout {
     }
 
     /// Returns the last row that shows text, none when nothing fits.
+    /// Sets the columns between tab stops, from the next rebuild on.
+    pub(super) fn set_tab_width(&mut self, tab_width: NonZeroUsize) {
+        self.tab_width = tab_width.get();
+    }
+
     #[must_use]
     pub(super) fn last_row(&self) -> Option<usize> {
         self.row_metadata.iter().rposition(Option::is_some)

@@ -2,6 +2,7 @@ use std::mem;
 
 use crate::{
     buffer::Buffer,
+    config::{Config, LineNumbers, Scroll},
     frame::{Area, CellPosition, Rect},
     number,
     syntax::Highlight,
@@ -51,6 +52,7 @@ pub struct View {
     open_highlights: Vec<(usize, Highlight)>,
 
     scroll_margin: usize,
+    line_numbers: LineNumbers,
     desired_col: usize,
 }
 
@@ -58,8 +60,9 @@ impl View {
     #[must_use]
     pub fn new(rect: Rect) -> Self {
         let buffer = Buffer::new();
+        let line_numbers = LineNumbers::default();
         Self {
-            gutter: Self::gutter_for(&buffer, rect),
+            gutter: Self::gutter_for(&buffer, rect, line_numbers),
             buffer,
             rect,
             layout: Layout::new(rect.area, ScrollOffset::default()),
@@ -68,7 +71,8 @@ impl View {
             selection: Selection::point(0),
             open_highlights: vec![],
 
-            scroll_margin: 10,
+            scroll_margin: Scroll::default().margin,
+            line_numbers,
             desired_col: 0,
         }
     }
@@ -91,6 +95,12 @@ impl View {
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
         Ok(())
+    }
+
+    /// Collapses the selection onto its head, so only the cursor is left.
+    pub fn collapse_selection(&mut self) {
+        self.set_selection(Selection::point(self.selection.head()), ColumnPolicy::Keep);
+        self.check_invariants();
     }
 
     /// Returns where the head is in the frame, scrolling first so it is on screen, none if
@@ -134,9 +144,18 @@ impl View {
         }
     }
 
+    /// Follows the scroll, text and line number settings of `config` from the next frame on.
+    pub fn set_config(&mut self, config: &Config) {
+        self.scroll_margin = config.scroll.margin;
+        self.line_numbers = config.line_numbers;
+        self.layout.set_tab_width(config.text.tab_width);
+        self.line_probe.set_tab_width(config.text.tab_width);
+        self.layout_dirty = true;
+    }
+
     pub fn resize(&mut self, rect: Rect) {
         self.rect = rect;
-        self.gutter = Self::gutter_for(&self.buffer, rect);
+        self.gutter = Self::gutter_for(&self.buffer, rect, self.line_numbers);
         self.desired_col = self
             .desired_col
             .min(self.text_rect().area.width().saturating_sub(1));
@@ -144,11 +163,15 @@ impl View {
     }
 
     /// Returns the gutter `buffer` needs in a view at `rect`.
-    fn gutter_for(buffer: &Buffer, rect: Rect) -> Gutter {
+    fn gutter_for(buffer: &Buffer, rect: Rect, line_numbers: LineNumbers) -> Gutter {
         // The cursor can sit on the empty line after a final line break, which the rope does
         // not count, so the last line number is one more
         let line_count = buffer.rope().line_len() + 1;
-        Gutter::new(line_count.max(rect.area.height()), rect.area.cols)
+        Gutter::new(
+            line_count.max(rect.area.height()),
+            rect.area.cols,
+            line_numbers,
+        )
     }
 
     /// Returns the part of the view the text is laid out in, to the right of the gutter.
@@ -260,6 +283,35 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(markers.len(), 2, "3, 3 and 2 characters, so two wraps");
         assert_eq!(markers[0].1.grapheme.as_str_sanitize(), "↩");
+    }
+
+    #[test]
+    fn a_config_sets_the_tab_width_and_the_gutter() {
+        let mut view = view("\tx", 20, 5);
+        view.set_selection(Selection::point(1), ColumnPolicy::Sync);
+        view.ensure_cursor_visible();
+        assert_eq!(view.head_position().unwrap().col, 4, "a tab is 4 wide");
+        let gutter = view.gutter.split(view.rect).0.area.cols;
+
+        let mut config = Config::default();
+        config.text.tab_width = 2.try_into().unwrap();
+        config.line_numbers.min_digits = 5;
+        view.set_config(&config);
+        view.ensure_cursor_visible();
+        assert_eq!(view.head_position().unwrap().col, 2, "a tab is 2 wide");
+        assert_eq!(
+            view.gutter.split(view.rect).0.area.cols,
+            gutter + 2,
+            "the numbers make room for two more digits"
+        );
+    }
+
+    #[test]
+    fn collapse_selection_keeps_the_head() {
+        let mut view = view("hello world", 20, 5);
+        view.set_selection(Selection::new(0, 4), ColumnPolicy::Sync);
+        view.collapse_selection();
+        assert_eq!(view.selection, Selection::point(4), "the head stays");
     }
 
     #[test]

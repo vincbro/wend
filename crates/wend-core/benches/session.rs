@@ -12,6 +12,7 @@ use std::{
 use criterion::{BenchmarkId, Criterion, Throughput};
 use wend_core::{
     buffer::Buffer,
+    config::Config,
     editor::Editor,
     frame::{Area, Frame},
     view::{Direction, Motion},
@@ -69,7 +70,7 @@ fn text(len: usize) -> String {
 ///
 /// Returning the frame avoids allocating a second frame in `phase()`.
 fn opened(text: &str) -> (Editor, Frame) {
-    let mut editor = Editor::new(Area::new(COLS, ROWS))
+    let mut editor = Editor::new(Area::new(COLS, ROWS), &Config::default())
         .expect("the wasm engine starts on every supported platform");
     editor.view_mut().open_buffer(Buffer::from(text));
 

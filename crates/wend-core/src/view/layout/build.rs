@@ -6,8 +6,6 @@ use crate::{
     frame::{Area, Grapheme},
 };
 
-const TAB_WIDTH: usize = 4;
-
 impl Layout {
     pub(super) fn resize(&mut self, area: Area, scroll_offset: ScrollOffset) {
         self.area = area;
@@ -148,7 +146,8 @@ impl<'a> Builder<'a> {
     fn write_grapheme(&mut self, grapheme: &str) {
         if grapheme == "\t" {
             // Up to the next tab stop, a whole tab width when already on one
-            let tails = TAB_WIDTH - self.col_cursor % TAB_WIDTH - 1;
+            let tab_width = self.layout.tab_width;
+            let tails = tab_width - self.col_cursor % tab_width - 1;
             self.write(Slot::Glyph(self.glyph_at_cursor(grapheme, tails)));
             return;
         }

@@ -1,6 +1,6 @@
 use std::result;
 
-use crate::{buffer, syntax, view};
+use crate::{buffer, config, syntax, view};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -8,6 +8,8 @@ pub enum Error {
     Buffer(#[from] buffer::Error),
     #[error("view operation failed")]
     View(#[from] view::Error),
+    #[error("config is invalid")]
+    Config(#[from] config::Error),
     #[error("syntax failed")]
     Syntax(#[from] syntax::Error),
 }

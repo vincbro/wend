@@ -17,13 +17,20 @@ use wend_core::{editor::Editor, frame::Area, input::Input, output, syntax::Langu
 use crate::screen::TerminalGuard;
 
 mod args;
+mod config;
 mod draw;
 mod input;
 mod screen;
 mod theme;
 
 fn main() -> Result<()> {
-    let args = args::parse_args()?;
+    let file = match args::parse_args()? {
+        args::Command::Edit(file) => file,
+        args::Command::ExtendConfig => return report_config(&config::extend()?, "extended"),
+        args::Command::ResetConfig => return report_config(&config::reset()?, "reset"),
+    };
+    // Before the terminal is taken over, so a mistake in the file is shown where it can be read
+    let config = config::load()?;
 
     // Restore before the default hook prints, or the message is lost on the
     // alternate screen and the shell is left in raw mode
@@ -40,9 +47,9 @@ fn main() -> Result<()> {
 
     let window = terminal::window_size().context("failed to read the terminal size")?;
     let area = Area::new(window.columns, window.rows);
-    let mut editor = Editor::new(area).context("failed to start the editor")?;
+    let mut editor = Editor::new(area, &config).context("failed to start the editor")?;
 
-    let path = PathBuf::from_str(&args.file)
+    let path = PathBuf::from_str(&file)
         .context("not a valid path")?
         .into_boxed_path();
     let bytes = fs::read(&path)
@@ -119,6 +126,11 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Says what was done to the config file at `path`.
+fn report_config(path: &Path, done: &str) -> Result<()> {
+    writeln!(io::stdout().lock(), "{done} {}", path.display()).context("failed to write the report")
 }
 
 /// Writes the text chunk by chunk, so it is never copied into one string first.
