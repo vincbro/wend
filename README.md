@@ -73,6 +73,7 @@ What works today. Normal and select mode share a keymap, select only makes motio
 | `Esc`     | drop the selection, back to normal mode |
 | `o`       | open a line below and insert            |
 | `d`       | delete the selection                    |
+| `x`       | select the screen row                   |
 | `u`       | revert to the last save                 |
 | `s`       | save                                    |
 | `v`       | toggle select mode                      |

@@ -36,6 +36,7 @@ pub(super) fn command_bindings(other_mode: Mode) -> Bindings {
         bind("s", &[Action::Save]),
         bind("i", &[Action::Mode(Mode::Insert)]),
         bind("o", &[Action::OpenLine, Action::Mode(Mode::Insert)]),
+        bind("x", &[Action::SelectRow]),
         bind("v", &[Action::Mode(other_mode)]),
         bind("q", &[Action::Quit]),
         bind(

@@ -217,6 +217,7 @@ fn perform(
         Action::Insert(c) => view.insert(c),
         Action::Delete => view.delete(),
         Action::DeleteSelection => view.delete_selection(),
+        Action::SelectRow => view.select_row(),
         Action::OpenLine => view.new_line(),
         Action::Revert => view.revert(),
         Action::Save => {
@@ -332,6 +333,28 @@ mod tests {
             text(&editor),
             "cd",
             "w selects the first word and the space after it"
+        );
+    }
+
+    #[test]
+    fn x_selects_the_row_the_cursor_is_on() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        press(&mut editor, "iab\ncd\nef\u{1b}kxd");
+        assert_eq!(
+            text(&editor),
+            "ab\nef",
+            "x took the middle row and nothing else"
+        );
+    }
+
+    #[test]
+    fn x_grows_a_selection_over_the_next_row() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        press(&mut editor, "iab\ncd\nef\u{1b}kxvjxd");
+        assert_eq!(
+            text(&editor),
+            "ab\n",
+            "x in select mode joined the next row to the selection"
         );
     }
 

@@ -103,6 +103,24 @@ impl View {
         self.check_invariants();
     }
 
+    /// Selects the screen row the head is on, growing a selection that spans rows.
+    pub fn select_row(&mut self) {
+        let Some(pos) = self.head_position() else {
+            return;
+        };
+        let (Some(first), Some(last)) = (
+            self.layout.edge_glyph(pos.row, Direction::Forward),
+            self.layout.edge_glyph(pos.row, Direction::Backward),
+        ) else {
+            return;
+        };
+        let start = self.selection.start().min(first.start());
+        // Ends are graphemes included, so the last glyph's start, not its end
+        let end = self.selection.end().max(last.start());
+        self.set_selection(Selection::new(start, end), ColumnPolicy::Sync);
+        self.check_invariants();
+    }
+
     /// Returns where the head is in the frame, scrolling first so it is on screen, none if
     /// the area is empty. The area comes from the terminal, which can report no size at all.
     pub fn cursor_position(&mut self) -> Option<CellPosition> {

@@ -152,7 +152,7 @@ mod tests {
         let mut keymap = default_keymap();
         assert!(keymap.press(Mode::Normal, key('g')).is_empty(), "g waits");
         assert!(
-            keymap.press(Mode::Normal, key('x')).is_empty(),
+            keymap.press(Mode::Normal, key('z')).is_empty(),
             "normal mode doesn't type"
         );
         assert!(
@@ -198,7 +198,7 @@ mod tests {
     fn normal_drops_unbound_characters() {
         let mut keymap = default_keymap();
         assert!(
-            keymap.press(Mode::Normal, key('x')).is_empty(),
+            keymap.press(Mode::Normal, key('z')).is_empty(),
             "normal mode doesn't type"
         );
     }
