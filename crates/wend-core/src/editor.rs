@@ -43,8 +43,7 @@ impl Editor {
     /// Starts an editor that follows `config`.
     pub fn new(area: Area, config: &Config) -> Result<Self> {
         let keymap = Keymap::new(config.keys.trees()?);
-        let mut view = View::new(Rect::new(0, 0, area));
-        view.set_config(config);
+        let view = View::new(Rect::new(0, 0, area), config);
         Ok(Self {
             area,
             buffers: vec![],

@@ -1,4 +1,11 @@
+use std::{fmt, str::FromStr};
+
 use crossterm::style::{Attribute, Color};
+use serde::{
+    Deserialize, Deserializer,
+    de::{Error as _, SeqAccess, Visitor},
+};
+use toml_edit::de;
 use wend_core::{
     frame::{Content, Style as CellStyle},
     syntax::Highlight,
@@ -37,6 +44,22 @@ impl Modifiers {
         self.0 & other.0 == other.0
     }
 
+    /// The names a theme file writes them as.
+    const NAMES: [(&'static str, Self); 5] = [
+        ("bold", Self::BOLD),
+        ("dim", Self::DIM),
+        ("italic", Self::ITALIC),
+        ("underline", Self::UNDERLINE),
+        ("strikethrough", Self::STRIKETHROUGH),
+    ];
+
+    fn named(name: &str) -> Option<Self> {
+        Self::NAMES
+            .into_iter()
+            .find(|(known, _)| *known == name)
+            .map(|(_, modifier)| modifier)
+    }
+
     /// The terminal attributes that switch these modifiers on.
     pub(crate) fn attributes(self) -> impl Iterator<Item = Attribute> {
         Self::ATTRIBUTES
@@ -46,13 +69,70 @@ impl Modifiers {
     }
 }
 
+/// Reads the list of names a theme file gives modifiers.
+struct ModifierNames;
+
+impl<'de> Visitor<'de> for ModifierNames {
+    type Value = Modifiers;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a list of bold, dim, italic, underline and strikethrough")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut names: A) -> Result<Modifiers, A::Error> {
+        let mut modifiers = Modifiers::NONE;
+        while let Some(name) = names.next_element::<String>()? {
+            let modifier = Modifiers::named(&name)
+                .ok_or_else(|| A::Error::custom(format!("unknown modifier `{name}`")))?;
+            modifiers = modifiers.union(modifier);
+        }
+        Ok(modifiers)
+    }
+}
+
+impl<'de> Deserialize<'de> for Modifiers {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_seq(ModifierNames)
+    }
+}
+
+/// A color as a theme file writes it: `#rrggbb`.
+mod hex {
+    use super::*;
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Color>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let digits = text
+            .strip_prefix('#')
+            .filter(|digits| digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit()))
+            .ok_or_else(|| D::Error::custom(format!("`{text}` is not a color like #c9c7cd")))?;
+        let channel = |range| u8::from_str_radix(&digits[range], 16).map_err(D::Error::custom);
+        Ok(Some(Color::Rgb {
+            r: channel(0..2)?,
+            g: channel(2..4)?,
+            b: channel(4..6)?,
+        }))
+    }
+}
+
 /// What one layer changes about a cell's look. A color it leaves out shows through from the
 /// layers below, so a rule can say only "bold" or only "a background".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct Rule {
+    #[serde(deserialize_with = "hex::deserialize")]
     pub(crate) foreground: Option<Color>,
+    #[serde(deserialize_with = "hex::deserialize")]
     pub(crate) background: Option<Color>,
     pub(crate) modifiers: Modifiers,
+}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Self::NONE
+    }
 }
 
 impl Rule {
@@ -62,27 +142,6 @@ impl Rule {
         background: None,
         modifiers: Modifiers::NONE,
     };
-
-    pub(crate) const fn foreground(color: Color) -> Self {
-        Self {
-            foreground: Some(color),
-            ..Self::NONE
-        }
-    }
-
-    pub(crate) const fn background(color: Color) -> Self {
-        Self {
-            background: Some(color),
-            ..Self::NONE
-        }
-    }
-
-    pub(crate) const fn with(self, modifiers: Modifiers) -> Self {
-        Self {
-            modifiers: self.modifiers.union(modifiers),
-            ..self
-        }
-    }
 
     /// Lays `top` over `self`: a color `top` sets wins, one it leaves out shows through,
     /// and the modifiers of both stay on.
@@ -96,8 +155,9 @@ impl Rule {
     }
 }
 
-/// Decides how every layer of a cell is drawn.
-#[derive(Debug, Clone, Copy)]
+/// Decides how every layer of a cell is drawn. A theme file says every rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Theme {
     /// The bottom of every cell, so it sets both colors.
     pub(crate) plain: Rule,
@@ -121,6 +181,15 @@ pub(crate) struct Theme {
     pub(crate) string: Rule,
     pub(crate) type_name: Rule,
     pub(crate) variable: Rule,
+}
+
+impl FromStr for Theme {
+    type Err = de::Error;
+
+    /// Reads a theme from the text of a theme file.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        de::from_str(text)
+    }
 }
 
 impl Theme {
@@ -172,49 +241,33 @@ impl Theme {
     }
 }
 
-const fn rgb(red: u8, green: u8, blue: u8) -> Color {
-    Color::Rgb {
-        r: red,
-        g: green,
-        b: blue,
-    }
+/// The themes that ship with wend: every file in the repo's `themes` folder, listed by
+/// `build.rs` and sorted by name.
+const BUILT_IN: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/themes.rs"));
+
+pub(crate) fn built_in_names() -> impl Iterator<Item = &'static str> {
+    BUILT_IN.iter().map(|(name, _)| *name)
 }
 
-const BACKGROUND: Color = rgb(0x16, 0x16, 0x17);
-const FOREGROUND: Color = rgb(0xc9, 0xc7, 0xcd);
-const COMMENT: Color = rgb(0x65, 0x65, 0x6b);
-const KEYWORD: Color = rgb(0xac, 0xa1, 0xcf);
+pub(crate) fn built_in_text(name: &str) -> Option<&'static str> {
+    let (_, text) = BUILT_IN.iter().find(|(known, _)| *known == name)?;
+    Some(text)
+}
 
-/// Mellow by Rohit K Viswanath, the palette and choices of helix's `mellow.toml`.
-pub(crate) static MELLOW: Theme = Theme {
-    plain: Rule {
-        foreground: Some(FOREGROUND),
-        background: Some(BACKGROUND),
-        modifiers: Modifiers::NONE,
-    },
-    line_number: Rule::foreground(COMMENT),
-    current_line_number: Rule::foreground(KEYWORD),
-    marker: Rule::NONE,
-    // gray03 and gray04, helix leaves the text's color as it is on both
-    selection: Rule::background(rgb(0x3e, 0x3e, 0x43)),
-    cursor: Rule::background(rgb(0x57, 0x57, 0x5f)),
-
-    // Picked from mellow's palette by eye, not copied from helix's `mellow.toml`
-    attribute: Rule::foreground(rgb(0xac, 0xa1, 0xcf)),
-    comment: Rule::foreground(COMMENT).with(Modifiers::ITALIC),
-    constant: Rule::foreground(rgb(0xf5, 0xa1, 0x91)),
-    constructor: Rule::foreground(rgb(0xe2, 0x9e, 0xca)),
-    escape: Rule::foreground(rgb(0xea, 0x83, 0xa5)),
-    function: Rule::foreground(rgb(0xe6, 0xb9, 0x9d)),
-    keyword: Rule::foreground(KEYWORD),
-    label: Rule::foreground(rgb(0xe6, 0xb9, 0x9d)),
-    operator: Rule::foreground(rgb(0xb4, 0xb4, 0xb9)),
-    property: Rule::foreground(rgb(0xb5, 0xb4, 0xc9)),
-    punctuation: Rule::foreground(rgb(0x92, 0x91, 0x99)),
-    string: Rule::foreground(rgb(0x90, 0xb9, 0x9f)),
-    type_name: Rule::foreground(rgb(0xe2, 0x9e, 0xca)),
-    variable: Rule::foreground(FOREGROUND),
-};
+impl Theme {
+    /// The built-in theme called `name`.
+    ///
+    /// # Panics
+    /// When a built-in theme file doesn't parse, which the tests rule out.
+    #[must_use]
+    pub(crate) fn built_in(name: &str) -> Option<Self> {
+        let text = built_in_text(name)?;
+        Some(
+            text.parse()
+                .expect("every built-in theme file is a valid theme"),
+        )
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -240,15 +293,42 @@ mod tests {
         assert_eq!(Modifiers::NONE.attributes().count(), 0, "nothing is on");
     }
 
+    impl Rule {
+        const fn foreground(color: Color) -> Self {
+            Self {
+                foreground: Some(color),
+                ..Self::NONE
+            }
+        }
+
+        const fn background(color: Color) -> Self {
+            Self {
+                background: Some(color),
+                ..Self::NONE
+            }
+        }
+
+        const fn with(self, modifiers: Modifiers) -> Self {
+            Self {
+                modifiers: self.modifiers.union(modifiers),
+                ..self
+            }
+        }
+    }
+
     const RED: Color = Color::Red;
     const BLUE: Color = Color::Blue;
+
+    fn mellow() -> Theme {
+        Theme::built_in("mellow").unwrap()
+    }
 
     fn theme() -> Theme {
         Theme {
             keyword: Rule::foreground(RED).with(Modifiers::BOLD),
             selection: Rule::background(BLUE),
             cursor: Rule::NONE.with(Modifiers::UNDERLINE),
-            ..MELLOW
+            ..mellow()
         }
     }
 
@@ -263,8 +343,8 @@ mod tests {
     fn plain_text_is_drawn_in_the_plain_colors() {
         let style = theme().resolve(CellStyle::default());
 
-        assert_eq!(style.foreground, FOREGROUND);
-        assert_eq!(style.background, BACKGROUND);
+        assert_eq!(style.foreground, mellow().plain.foreground.unwrap());
+        assert_eq!(style.background, mellow().plain.background.unwrap());
         assert_eq!(style.modifiers, Modifiers::NONE);
     }
 
@@ -273,7 +353,11 @@ mod tests {
         let style = theme().resolve(keyword());
 
         assert_eq!(style.foreground, RED);
-        assert_eq!(style.background, BACKGROUND, "the rule left it out");
+        assert_eq!(
+            style.background,
+            mellow().plain.background.unwrap(),
+            "the rule left it out"
+        );
         assert_eq!(style.modifiers, Modifiers::BOLD);
     }
 
@@ -310,5 +394,121 @@ mod tests {
         let top = Rule::foreground(BLUE);
 
         assert_eq!(Rule::foreground(RED).over(top).foreground, Some(BLUE));
+    }
+
+    #[test]
+    fn every_built_in_theme_parses_and_is_named_once() {
+        for &(name, text) in BUILT_IN {
+            assert!(text.parse::<Theme>().is_ok(), "{name} parses");
+            let count = BUILT_IN.iter().filter(|(known, _)| *known == name).count();
+            assert_eq!(count, 1, "{name} is listed once");
+        }
+    }
+
+    /// The comment lines from the explanation every theme file starts with, down to the
+    /// last one.
+    fn explanation(text: &str) -> Vec<&str> {
+        text.lines()
+            .skip_while(|line| *line != "# A wend theme. Save it as `<name>.toml` in the `themes` folder next to config.toml, and pick")
+            .filter(|line| line.starts_with('#'))
+            .collect()
+    }
+
+    #[test]
+    fn every_built_in_theme_explains_itself_the_same_way() {
+        let first = explanation(built_in_text("default").unwrap());
+
+        assert!(first.len() > 20, "the first theme has the explanation");
+        for &(name, text) in BUILT_IN {
+            assert_eq!(explanation(text), first, "{name} explains differently");
+        }
+    }
+
+    #[test]
+    fn every_rule_of_a_built_in_theme_has_a_comment() {
+        for &(name, text) in BUILT_IN {
+            let lines: Vec<_> = text.lines().collect();
+            let rules: Vec<_> = (0..lines.len())
+                .filter(|&row| lines[row].starts_with('['))
+                .collect();
+            assert_eq!(rules.len(), 20, "{name} has a section for every rule");
+            for row in rules {
+                assert!(
+                    lines[row - 1].starts_with("# "),
+                    "{name}: {} has no comment above it",
+                    lines[row]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_built_in_theme_lists_every_modifier() {
+        for &(name, text) in BUILT_IN {
+            for (modifier, _) in Modifiers::NAMES {
+                assert!(
+                    text.contains(&format!("#   \"{modifier}\"")),
+                    "{name} doesn't list {modifier}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_theme_file_must_say_every_rule() {
+        assert!(
+            "[keyword]\nforeground = \"#ff0000\"\n"
+                .parse::<Theme>()
+                .is_err(),
+            "the other rules are missing"
+        );
+    }
+
+    /// The first built-in theme with its keyword section swapped for `rule`.
+    fn with_keyword(rule: &str) -> String {
+        let text = built_in_text("default").unwrap();
+        let (before, rest) = text.split_once("[keyword]\n").unwrap();
+        let (_, after) = rest.split_once("\n\n").unwrap();
+        format!("{before}[keyword]\n{rule}\n\n{after}")
+    }
+
+    #[test]
+    fn bad_theme_files_are_errors() {
+        assert!(
+            with_keyword("foreground = \"#ff0000\"\nmodifiers = [\"bold\"]")
+                .parse::<Theme>()
+                .is_ok(),
+            "a color and a modifier are what a rule is made of"
+        );
+        assert!(
+            with_keyword("foreground = \"red\"")
+                .parse::<Theme>()
+                .is_err(),
+            "a color is hex, not a name"
+        );
+        assert!(
+            with_keyword("foreground = \"#ff00\"")
+                .parse::<Theme>()
+                .is_err(),
+            "a color is six digits"
+        );
+        assert!(
+            with_keyword("foreground = \"#+1+2+3\"")
+                .parse::<Theme>()
+                .is_err(),
+            "a color is hex digits, not anything from_str_radix takes"
+        );
+        assert!(
+            with_keyword("modifiers = [\"loud\"]")
+                .parse::<Theme>()
+                .is_err(),
+            "no such modifier"
+        );
+        assert!(
+            format!("{}\n[keywrd]\n", built_in_text("default").unwrap())
+                .parse::<Theme>()
+                .is_err(),
+            "a typo is not ignored"
+        );
     }
 }

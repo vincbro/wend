@@ -19,6 +19,7 @@ az.workspace = true
 crop.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+toml_edit.workspace = true
 tree-sitter.workspace = true
 unicode-width.workspace = true
 

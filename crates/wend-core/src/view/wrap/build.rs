@@ -1,6 +1,6 @@
 use unicode_width::UnicodeWidthStr;
 
-use super::{Glyph, Wrap, RowMetadata, ScrollOffset, Slot, SlotPosition};
+use super::{Glyph, RowMetadata, ScrollOffset, Slot, SlotPosition, Wrap};
 use crate::{
     buffer::Buffer,
     frame::{Area, Grapheme},

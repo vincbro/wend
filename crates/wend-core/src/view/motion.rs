@@ -112,9 +112,7 @@ impl View {
             return None;
         }
         // Forward lands on the neighbor's first glyph, backward on its last
-        self.wrap
-            .edge_glyph(neighbor, direction)
-            .map(Glyph::start)
+        self.wrap.edge_glyph(neighbor, direction).map(Glyph::start)
     }
 
     fn vertical(&self, direction: Direction) -> Option<usize> {

@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use crate::{buffer::Buffer, config::Text, frame::Area, view::Direction};
+use crate::{buffer::Buffer, frame::Area, view::Direction};
 
 mod build;
 mod slot;
@@ -23,13 +23,13 @@ pub(super) struct Wrap {
 
 impl Wrap {
     #[must_use]
-    pub(super) fn new(area: Area, scroll_offset: ScrollOffset) -> Self {
+    pub(super) fn new(area: Area, scroll_offset: ScrollOffset, tab_width: NonZeroUsize) -> Self {
         let mut wrap = Self {
             slots: Vec::with_capacity(area.len()),
             row_metadata: Vec::with_capacity(area.height()),
             area,
             scroll_offset,
-            tab_width: Text::default().tab_width.get(),
+            tab_width: tab_width.get(),
         };
         wrap.resize(area, scroll_offset);
         wrap
@@ -208,6 +208,11 @@ impl Wrap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+
+    fn tab_width() -> NonZeroUsize {
+        Config::default().text.tab_width
+    }
 
     fn wrap(text: &str, cols: u16, rows: u16) -> Wrap {
         scrolled_wrap(text, cols, rows, ScrollOffset::default())
@@ -215,7 +220,7 @@ mod tests {
 
     fn scrolled_wrap(text: &str, cols: u16, rows: u16, scroll_offset: ScrollOffset) -> Wrap {
         let area = Area::new(cols, rows);
-        let mut wrap = Wrap::new(area, scroll_offset);
+        let mut wrap = Wrap::new(area, scroll_offset, tab_width());
         wrap.rebuild(&Buffer::from(text), area, scroll_offset);
         wrap
     }
@@ -225,8 +230,7 @@ mod tests {
         // The tab spans cols 0..4, 漢 spans 5..7
         let wrap = wrap("\ta漢b", 20, 2);
         let byte = |col: usize, direction: Direction| {
-            wrap
-                .step(SlotPosition::new(col, 0), direction)
+            wrap.step(SlotPosition::new(col, 0), direction)
                 .map(Glyph::start)
         };
 
@@ -256,8 +260,7 @@ mod tests {
             "the gap is blank"
         );
         assert_eq!(
-            wrap
-                .row(0)
+            wrap.row(0)
                 .map(|row| (row.metadata.to_byte, row.metadata.len)),
             Some((4, 4)),
             "the gap is not part of the row"
@@ -334,18 +337,14 @@ mod tests {
             Some(ScrollOffset::new(1, 0)),
             "line 1 follows"
         );
-        assert_eq!(
-            wrap.last_row(),
-            Some(1),
-            "line 1 is the last row with text"
-        );
+        assert_eq!(wrap.last_row(), Some(1), "line 1 is the last row with text");
     }
 
     #[test]
     fn last_row_of_line_counts_wrapped_rows() {
         // Width 4: line 0 is "abcd", "↩ e\n", line 1 is "xy"
         let buffer = Buffer::from("abcde\nxy");
-        let mut scratch = Wrap::new(Area::new(0, 0), ScrollOffset::default());
+        let mut scratch = Wrap::new(Area::new(0, 0), ScrollOffset::default(), tab_width());
         assert_eq!(scratch.last_row_of_line(&buffer, 4, 0), 1);
         assert_eq!(scratch.last_row_of_line(&buffer, 4, 1), 0);
     }
@@ -358,9 +357,9 @@ mod tests {
 xy
 abcdefg",
         );
-        let mut scratch = Wrap::new(Area::new(0, 0), ScrollOffset::default());
+        let mut scratch = Wrap::new(Area::new(0, 0), ScrollOffset::default(), tab_width());
         for (cols, line) in [(4, 0), (4, 1), (12, 0), (4, 2), (3, 0), (8, 2), (4, 1)] {
-            let fresh = Wrap::new(Area::new(0, 0), ScrollOffset::default())
+            let fresh = Wrap::new(Area::new(0, 0), ScrollOffset::default(), tab_width())
                 .last_row_of_line(&buffer, cols, line);
             assert_eq!(
                 scratch.last_row_of_line(&buffer, cols, line),

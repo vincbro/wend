@@ -181,7 +181,11 @@ impl ExactSizeIterator for Digits {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::Area;
+    use crate::{config::Config, frame::Area};
+
+    fn line_numbers() -> LineNumbers {
+        Config::default().line_numbers
+    }
 
     const HEAD: Head = Head { row: 5, line: 41 };
 
@@ -196,7 +200,7 @@ mod tests {
 
     /// A gutter four columns wide, in a view of eight.
     fn gutter() -> Gutter {
-        Gutter::new(0, 8, LineNumbers::default())
+        Gutter::new(0, 8, line_numbers())
     }
 
     /// What the first four columns of a row of the frame show.
@@ -216,7 +220,7 @@ mod tests {
 
     #[test]
     fn the_gutter_grows_with_the_largest_number() {
-        let width = |largest| width(Gutter::new(largest, 100, LineNumbers::default()));
+        let width = |largest| width(Gutter::new(largest, 100, line_numbers()));
 
         assert_eq!(width(0), 4, "three digits and the padding at the least");
         assert_eq!(width(999), 4, "still three digits");
@@ -227,7 +231,7 @@ mod tests {
     #[test]
     fn the_gutter_takes_at_most_half_of_the_view() {
         assert_eq!(
-            width(Gutter::new(1_000, 6, LineNumbers::default())),
+            width(Gutter::new(1_000, 6, line_numbers())),
             3,
             "half of 6, not the 5 it wants"
         );
@@ -315,7 +319,7 @@ mod tests {
         let area = Area::new(6, 1);
         let mut frame = Frame::new(area, None);
 
-        Gutter::new(0, 6, LineNumbers::default()).render(
+        Gutter::new(0, 6, line_numbers()).render(
             &mut frame,
             Rect::new(0, 0, area),
             1,

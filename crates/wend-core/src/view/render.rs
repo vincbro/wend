@@ -1,6 +1,6 @@
 use std::{mem, ops};
 
-use super::{Highlighter, Wrap, Selection, Slot, SlotPosition, View, gutter};
+use super::{Highlighter, Selection, Slot, SlotPosition, View, Wrap, gutter};
 use crate::frame::{Cell, Content, Frame, Grapheme, Style};
 
 impl View {

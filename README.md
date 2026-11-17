@@ -81,12 +81,21 @@ What works today. Normal and select mode share a keymap, select only makes motio
 
 ## Config
 
-The config file is `$XDG_CONFIG_HOME/wend/config.toml`, or `~/.config/wend/config.toml`. It always holds every setting, with a comment on each, so the file is the documentation.
+The config file is `$XDG_CONFIG_HOME/wend/config.toml`, or `~/.config/wend/config.toml`. It holds every setting, with a comment on each, so the file is the documentation.
 
-- `wend --reset-config` writes the default config, replacing the file.
-- `wend --extend-config` adds the settings a file lacks and keeps everything else, comments included. A new release's settings reach you this way.
+With no config file wend uses the defaults. `wend --default-config` prints them as a file, so `wend --default-config > ~/.config/wend/config.toml` gives you one to edit. The same file is in the repo as [`config/default.toml`](config/default.toml). A setting the file leaves out keeps its default.
 
 Bindings in the file go over the defaults. Bind a combo to `[]` to remove it, so `q = []` removes the quit key.
+
+## Themes
+
+The built-in themes are the files in the repo's [`themes`](themes) folder, compiled into the binary: Default, Mellow, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Dracula, Rosé Pine, One Dark, Solarized Dark and Solarized Light. Pick one with `theme = "name"` in the config file; it is `default` until you do.
+
+To make your own, print a built-in theme and save it as `<name>.toml` in the `themes` folder next to the config file: `wend --theme default > ~/.config/wend/themes/dusk.toml`. Every theme file explains itself, with a comment on every rule that says what it colors and an example. A theme file in that folder is loaded when it is the selected theme, and goes before a built-in theme of the same name.
+
+To add a theme that ships with wend, run `just theme <name>` in a checkout. It copies `themes/default.toml` to `themes/<name>.toml`, and the next build lists it as a built-in theme, with no code to change.
+
+A theme file says every rule. A rule sets a `foreground` and a `background` as `#rrggbb`, and `modifiers` from `bold`, `dim`, `italic`, `underline` and `strikethrough`. Layers stack (plain text, then the highlight, then the selection, then the cursor), and a layer only changes what it sets.
 
 ## Alternatives
 

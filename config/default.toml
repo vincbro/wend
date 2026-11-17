@@ -1,0 +1,94 @@
+# wend's config. Save it as config.toml in wend's config folder (`~/.config/wend`), for
+# example with `wend --default-config > ~/.config/wend/config.toml`. Without a config file
+# wend uses these values, and a setting the file leaves out keeps the value shown here.
+
+# The theme to draw with: a built-in one such as `default`, or the name of a file in the
+# themes folder next to this one. `wend --theme <name>` prints a built-in one to copy from.
+theme = "default"
+
+# Keys. A combo is the keys typed in a row: `gs`, `<C-x>` for control, `<A-x>` for alt,
+# `<esc>` `<enter>` `<tab>` `<backspace>` `<space>` for the named keys, `<lt>` for `<`
+# and `<leader>` for the leader key. An action is a name, or a list of names that run
+# in order. Bind a combo to `[]` to remove it. A combo can't also be the start of a
+# longer one, so unbind `gs` and `ge` before binding `g`.
+[keys]
+# The key `<leader>` stands for in a combo.
+leader = "<space>"
+
+# Keys in normal mode.
+[keys.normal]
+H = "line_start" # start of the line
+J = "page_down" # last row on screen
+K = "page_up" # first row on screen
+L = "line_end" # end of the line
+b = "previous_word" # select the previous word
+d = "delete_selection" # delete the selection
+ge = "file_end" # end of the file
+gs = "file_start" # start of the file
+h = "left" # one grapheme left
+i = "insert_mode" # insert mode
+j = "down" # one row down
+k = "up" # one row up
+l = "right" # one grapheme right
+o = ["open_line", "insert_mode"] # open a line below, then insert mode
+q = "quit" # quit
+s = "save" # save
+u = "revert" # revert to the last save
+v = "select_mode" # select mode
+w = "next_word" # select the next word
+x = "select_row" # select the screen row the cursor is on
+"<esc>" = [
+  "collapse_selection",
+  "normal_mode",
+] # drop the selection down to the cursor, then normal mode
+
+# Keys in select mode, where motions extend the selection.
+[keys.select]
+H = "line_start" # start of the line
+J = "page_down" # last row on screen
+K = "page_up" # first row on screen
+L = "line_end" # end of the line
+b = "previous_word" # select the previous word
+d = "delete_selection" # delete the selection
+ge = "file_end" # end of the file
+gs = "file_start" # start of the file
+h = "left" # one grapheme left
+i = "insert_mode" # insert mode
+j = "down" # one row down
+k = "up" # one row up
+l = "right" # one grapheme right
+o = ["open_line", "insert_mode"] # open a line below, then insert mode
+q = "quit" # quit
+s = "save" # save
+u = "revert" # revert to the last save
+v = "normal_mode" # normal mode
+w = "next_word" # select the next word
+x = "select_row" # select the screen row the cursor is on
+"<esc>" = [
+  "collapse_selection",
+  "normal_mode",
+] # drop the selection down to the cursor, then normal mode
+
+# Keys in insert mode. A character that isn't bound here types itself.
+[keys.insert]
+"<enter>" = "insert_newline" # a line break
+"<esc>" = "normal_mode"      # normal mode
+"<backspace>" = "delete"     # delete the grapheme before the cursor
+"<tab>" = "insert_tab"       # a tab
+
+
+[scroll]
+# The rows kept between the cursor and the edge of the view.
+margin = 10
+
+
+[text]
+# The columns between tab stops, at least 1.
+tab_width = 4
+
+
+[line_numbers]
+# The fewest digits the numbers make room for, so the text only moves past that many.
+min_digits = 3
+# The blank columns between the numbers and the text.
+padding = 1

@@ -6,11 +6,9 @@ use crate::{
     config::{Actions, Chord, Error, Result, notation},
     input::{
         Mode,
-        key::{Key, KeyCode, KeyTree},
+        key::{Key, KeyTree},
     },
 };
-
-mod default;
 
 /// The combos of one mode and what each runs.
 pub type Bindings = BTreeMap<Chord, Actions>;
@@ -50,24 +48,13 @@ impl<'de> Deserialize<'de> for Leader {
 
 /// The keys of every mode. A file holds only what it changes: its bindings go over the
 /// default ones, and an empty list of actions removes a default binding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "Overrides")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Merged")]
 pub struct Keys {
     pub leader: Leader,
     pub normal: Bindings,
     pub select: Bindings,
     pub insert: Bindings,
-}
-
-impl Default for Keys {
-    fn default() -> Self {
-        Self {
-            leader: Leader(Key::new(KeyCode::Char(' '))),
-            normal: default::command_bindings(Mode::Select),
-            select: default::command_bindings(Mode::Normal),
-            insert: default::insert_bindings(),
-        }
-    }
 }
 
 /// The key tree of each mode.
@@ -115,39 +102,32 @@ fn build_tree(mode: &'static str, bindings: &Bindings, leader: Key) -> Result<Ke
     Ok(tree)
 }
 
-/// What a file says about the keys, before it goes over the defaults.
-#[derive(Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-struct Overrides {
-    leader: Option<Leader>,
+/// The keys after a file went over the defaults, with the unbound combos still in.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Merged {
+    leader: Leader,
     normal: Bindings,
     select: Bindings,
     insert: Bindings,
 }
 
-impl TryFrom<Overrides> for Keys {
+impl TryFrom<Merged> for Keys {
     type Error = Error;
 
-    fn try_from(overrides: Overrides) -> Result<Self> {
-        let mut keys = Self::default();
-        if let Some(leader) = overrides.leader {
-            keys.leader = leader;
+    fn try_from(mut merged: Merged) -> Result<Self> {
+        // A combo bound to no actions is how a file removes a default one
+        for bindings in [&mut merged.normal, &mut merged.select, &mut merged.insert] {
+            bindings.retain(|_, actions| !actions.0.is_empty());
         }
-        apply(&mut keys.normal, overrides.normal);
-        apply(&mut keys.select, overrides.select);
-        apply(&mut keys.insert, overrides.insert);
-        // A file that collides is refused here, where its line can still be reported
+        let keys = Self {
+            leader: merged.leader,
+            normal: merged.normal,
+            select: merged.select,
+            insert: merged.insert,
+        };
+        // A file that collides is refused here, while it can still be reported
         keys.trees()?;
         Ok(keys)
-    }
-}
-
-fn apply(bindings: &mut Bindings, overrides: Bindings) {
-    for (chord, actions) in overrides {
-        if actions.0.is_empty() {
-            bindings.remove(&chord);
-        } else {
-            bindings.insert(chord, actions);
-        }
     }
 }

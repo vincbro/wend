@@ -26,11 +26,12 @@ mod theme;
 fn main() -> Result<()> {
     let file = match args::parse_args()? {
         args::Command::Edit(file) => file,
-        args::Command::ExtendConfig => return report_config(&config::extend()?, "extended"),
-        args::Command::ResetConfig => return report_config(&config::reset()?, "reset"),
+        args::Command::DefaultConfig => return print(config::DEFAULT),
+        args::Command::Theme(name) => return print(config::theme::built_in(&name)?),
     };
     // Before the terminal is taken over, so a mistake in the file is shown where it can be read
     let config = config::load()?;
+    let theme = config::theme::load(&config.theme)?;
 
     // Restore before the default hook prints, or the message is lost on the
     // alternate screen and the shell is left in raw mode
@@ -95,7 +96,8 @@ fn main() -> Result<()> {
         match output {
             output::Output::Frame(frame) => {
                 buf.clear();
-                draw::render_frame(&frame, &mut buf).context("failed to draw the screen")?;
+                draw::render_frame(&frame, &theme, &mut buf)
+                    .context("failed to draw the screen")?;
                 let mut out = io::stdout().lock();
                 out.write_all(&buf)
                     .and_then(|()| out.flush())
@@ -128,9 +130,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Says what was done to the config file at `path`.
-fn report_config(path: &Path, done: &str) -> Result<()> {
-    writeln!(io::stdout().lock(), "{done} {}", path.display()).context("failed to write the report")
+/// Writes `text` to stdout, for a flag that prints a file to copy.
+fn print(text: &str) -> Result<()> {
+    io::stdout()
+        .lock()
+        .write_all(text.as_bytes())
+        .context("failed to write to stdout")
 }
 
 /// Writes the text chunk by chunk, so it is never copied into one string first.

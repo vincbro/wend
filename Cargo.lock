@@ -1583,6 +1583,7 @@ dependencies = [
  "criterion",
  "crossterm",
  "lexopt",
+ "serde",
  "toml_edit",
  "wend-core",
 ]
@@ -1596,6 +1597,7 @@ dependencies = [
  "crop",
  "serde",
  "thiserror",
+ "toml_edit",
  "tree-sitter",
  "unicode-width",
 ]

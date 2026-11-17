@@ -78,7 +78,7 @@ fn typed_action(typed: &mut [Action; 1], mode: Mode, key: Key, is_combo: bool) -
 mod tests {
     use super::*;
     use crate::{
-        config::Keys,
+        config::Config,
         input::key::Modifiers,
         view::{Direction, Motion},
     };
@@ -88,7 +88,7 @@ mod tests {
     }
 
     fn default_keymap() -> Keymap {
-        Keymap::new(Keys::default().trees().unwrap())
+        Keymap::new(Config::default().keys.trees().unwrap())
     }
 
     fn actions<'a>(keymap: &'a Keymap, mode: Mode, keys: &[Key]) -> &'a [Action] {

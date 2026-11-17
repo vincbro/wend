@@ -12,6 +12,12 @@ default:
 run *args:
     cargo run -p wend -- {{ args }}
 
+# Create a theme that ships with wend, a copy of the default to edit: just theme NAME
+theme name:
+    test ! -e themes/{{ name }}.toml || { echo "themes/{{ name }}.toml already exists"; exit 1; }
+    cp themes/default.toml themes/{{ name }}.toml
+    @echo "created themes/{{ name }}.toml: change its colors and the comment at its top; the next build ships it"
+
 # Build the workspace
 build:
     cargo build --workspace

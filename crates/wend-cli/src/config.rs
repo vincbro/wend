@@ -1,14 +1,15 @@
-//! Finds, reads and writes the config file, which the core never does itself.
+//! Finds and reads the config file and the theme files, which the core never does itself.
 
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use wend_core::config::Config;
+pub(crate) use wend_core::config::DEFAULT;
 
-mod document;
+pub(crate) mod theme;
 
 /// Where the config lives: `$XDG_CONFIG_HOME/wend/config.toml`, or under `~/.config`.
 fn config_path() -> Option<PathBuf> {
@@ -28,111 +29,49 @@ fn read(path: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Reads the config file. No file means the default config, a file that doesn't parse is
-/// an error.
+/// Reads the config file. With no file the default config is used, and a file that doesn't
+/// parse is an error.
 pub(crate) fn load() -> Result<Config> {
-    let Some(path) = config_path() else {
-        return Ok(Config::default());
-    };
-    match read(&path)? {
-        Some(text) => {
-            document::parse(&text).with_context(|| format!("invalid config in {}", path.display()))
-        }
+    match config_path() {
+        Some(path) => load_from(&path),
         None => Ok(Config::default()),
     }
 }
 
-/// Fills in every setting the config file lacks, and creates the file if there is none.
-/// Returns where it is.
-pub(crate) fn extend() -> Result<PathBuf> {
-    let path = writable_path()?;
-    let existing = read(&path)?.unwrap_or_default();
-    let text =
-        document::extend(&existing).with_context(|| format!("can't extend {}", path.display()))?;
-    write(&path, &text)?;
-    Ok(path)
-}
-
-/// Replaces the config file with the default config, comments included. Returns where it is.
-pub(crate) fn reset() -> Result<PathBuf> {
-    let path = writable_path()?;
-    write(&path, &document::default_document()?.to_string())?;
-    Ok(path)
-}
-
-fn writable_path() -> Result<PathBuf> {
-    config_path().ok_or_else(|| anyhow!("no config directory: set XDG_CONFIG_HOME or HOME"))
-}
-
-fn write(path: &Path, text: &str) -> Result<()> {
-    if let Some(directory) = path.parent() {
-        fs::create_dir_all(directory)
-            .with_context(|| format!("failed to create {}", directory.display()))?;
-    }
-    fs::write(path, text).with_context(|| format!("failed to write {}", path.display()))
+fn load_from(path: &Path) -> Result<Config> {
+    let Some(text) = read(path)? else {
+        return Ok(Config::default());
+    };
+    Config::parse(&text).with_context(|| format!("invalid config in {}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{document::parse, *};
+    use std::process;
+
+    use super::*;
 
     #[test]
-    fn an_empty_file_is_the_default_config() {
-        assert_eq!(parse("").unwrap(), Config::default());
+    fn no_file_is_the_default_config_and_writes_nothing() {
+        let path = env::temp_dir()
+            .join("wend-no-such-directory")
+            .join("config.toml");
+
+        assert_eq!(load_from(&path).unwrap(), Config::default());
+        assert!(!path.exists(), "reading never creates the file");
     }
 
     #[test]
-    fn a_binding_goes_over_the_defaults() {
-        let config = parse("[keys.normal]\n\"<leader>e\" = \"save\"\n\"z\" = \"quit\"\n").unwrap();
-        assert_eq!(
-            config.keys.normal.len(),
-            Config::default().keys.normal.len() + 2
-        );
-        let left = "h".parse().unwrap();
-        assert_eq!(
-            config.keys.normal[&left],
-            Config::default().keys.normal[&left],
-            "what the file doesn't mention stays"
-        );
-    }
+    fn a_file_that_doesnt_parse_is_an_error() {
+        let path = env::temp_dir().join(format!("wend-bad-config-{}.toml", process::id()));
+        fs::write(&path, "[scroll]\nmargin = \"wide\"\n").unwrap();
 
-    #[test]
-    fn an_empty_list_unbinds() {
-        let config = parse("[keys.normal]\nq = []\n").unwrap();
-        assert!(!config.keys.normal.contains_key(&"q".parse().unwrap()));
-    }
+        let result = load_from(&path);
+        fs::remove_file(&path).unwrap();
 
-    #[test]
-    fn the_leader_can_move() {
-        let config = parse("[keys]\nleader = \"<C-a>\"\n").unwrap();
-        assert_ne!(config.keys.leader, Config::default().keys.leader);
-    }
-
-    #[test]
-    fn settings_are_read() {
-        let config = parse("[text]\ntab_width = 2\n[scroll]\nmargin = 0\n").unwrap();
-        assert_eq!(config.text.tab_width.get(), 2);
-        assert_eq!(config.scroll.margin, 0);
-    }
-
-    #[test]
-    fn bad_files_are_errors() {
         assert!(
-            parse("[keys.normal]\nx = \"fly\"\n").is_err(),
-            "no such action"
-        );
-        assert!(
-            parse("[keys.normal]\n\"<nope>\" = \"quit\"\n").is_err(),
-            "no such key"
-        );
-        assert!(
-            parse("[keys.normal]\ng = \"quit\"\n").is_err(),
-            "g starts gs and ge"
-        );
-        assert!(parse("[keys.norml]\n").is_err(), "a typo is not ignored");
-        assert!(
-            parse("[text]\ntab_width = 0\n").is_err(),
-            "a tab has a width"
+            result.is_err(),
+            "a mistake in the file is shown, not ignored"
         );
     }
 }

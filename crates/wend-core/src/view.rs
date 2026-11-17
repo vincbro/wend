@@ -2,7 +2,7 @@ use std::mem;
 
 use crate::{
     buffer::Buffer,
-    config::{Config, LineNumbers, Scroll},
+    config::{Config, LineNumbers},
     frame::{Area, CellPosition, Rect},
     number,
     syntax::Highlight,
@@ -15,7 +15,7 @@ mod grapheme;
 mod highlight;
 use highlight::Highlighter;
 mod wrap;
-use wrap::{Glyph, Wrap, ScrollOffset, Slot, SlotPosition};
+use wrap::{Glyph, ScrollOffset, Slot, SlotPosition, Wrap};
 mod motion;
 pub use motion::{Direction, Motion};
 mod render;
@@ -58,20 +58,24 @@ pub struct View {
 
 impl View {
     #[must_use]
-    pub fn new(rect: Rect) -> Self {
+    pub fn new(rect: Rect, config: &Config) -> Self {
         let buffer = Buffer::new();
-        let line_numbers = LineNumbers::default();
+        let line_numbers = config.line_numbers;
         Self {
             gutter: Self::gutter_for(&buffer, rect, line_numbers),
             buffer,
             rect,
-            wrap: Wrap::new(rect.area, ScrollOffset::default()),
+            wrap: Wrap::new(rect.area, ScrollOffset::default(), config.text.tab_width),
             wrap_dirty: true,
-            line_probe: Wrap::new(Area::new(0, 0), ScrollOffset::default()),
+            line_probe: Wrap::new(
+                Area::new(0, 0),
+                ScrollOffset::default(),
+                config.text.tab_width,
+            ),
             selection: Selection::point(0),
             open_highlights: vec![],
 
-            scroll_margin: Scroll::default().margin,
+            scroll_margin: config.scroll.margin,
             line_numbers,
             desired_col: 0,
         }
@@ -247,7 +251,10 @@ pub(crate) mod tests {
     /// A view whose text is `cols` columns wide, with the gutter on top of that.
     pub(crate) fn view(text: &str, cols: u16, rows: u16) -> View {
         // Wide enough that the gutter takes what it wants, whatever `cols` is
-        let mut view = View::new(Rect::new(0, 0, Area::new(cols + 100, rows)));
+        let mut view = View::new(
+            Rect::new(0, 0, Area::new(cols + 100, rows)),
+            &Config::default(),
+        );
         view.open_buffer(Buffer::from(text));
         let gutter = gutter_width(&view);
         view.resize(Rect::new(0, 0, Area::new(cols + gutter, rows)));
@@ -525,7 +532,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_view_too_narrow_for_its_gutter_still_keeps_half_for_the_text() {
-        let mut view = View::new(Rect::new(0, 0, Area::new(6, 3)));
+        let mut view = View::new(Rect::new(0, 0, Area::new(6, 3)), &Config::default());
         view.open_buffer(Buffer::from("abc"));
 
         assert_eq!(gutter_width(&view), 3, "half of 6, not the 4 it wants");

@@ -92,6 +92,8 @@ struct Session {
     editor: Editor,
     /// The frame `redraw` draws into.
     frame: Frame,
+    /// Built once, like the frontend's, so a frame doesn't time reading a theme file.
+    theme: theme::Theme,
     /// One frame's bytes, reused like the frontend's.
     bytes: Vec<u8>,
     sink: File,
@@ -109,6 +111,7 @@ impl Session {
         let mut session = Self {
             editor,
             frame,
+            theme: theme::Theme::built_in("default").expect("default is built in"),
             bytes: Vec::new(),
             sink: OpenOptions::new()
                 .write(true)
@@ -134,7 +137,7 @@ impl Session {
         while let Some(output) = self.outputs.pop() {
             match output {
                 Output::Frame(frame) => {
-                    write(&frame, &mut self.bytes, &mut self.sink);
+                    write(&frame, &self.theme, &mut self.bytes, &mut self.sink);
                     self.editor
                         .apply(Input::Drawn(frame))
                         .expect("a frame always fits back in the pool");
@@ -160,15 +163,15 @@ impl Session {
     /// Draws the frame again with nothing changed.
     fn redraw(&mut self) {
         self.editor.update_frame(&mut self.frame);
-        write(&self.frame, &mut self.bytes, &mut self.sink);
+        write(&self.frame, &self.theme, &mut self.bytes, &mut self.sink);
     }
 }
 
 /// Turns `frame` into escape sequences in `bytes` and writes them out in one go, as the
 /// frontend does.
-fn write(frame: &Frame, bytes: &mut Vec<u8>, sink: &mut File) {
+fn write(frame: &Frame, theme: &theme::Theme, bytes: &mut Vec<u8>, sink: &mut File) {
     bytes.clear();
-    draw::render_frame(frame, bytes).expect("a Vec takes any write");
+    draw::render_frame(frame, theme, bytes).expect("a Vec takes any write");
     sink.write_all(bytes).expect("writing to /dev/null works");
 }
 

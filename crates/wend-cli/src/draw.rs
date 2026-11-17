@@ -8,7 +8,7 @@ use crossterm::{
 };
 use wend_core::frame::{Cell, Frame};
 
-use crate::theme::{MELLOW, Modifiers};
+use crate::theme::{Modifiers, Theme};
 
 /// What the terminal is told to draw a cell with, after the theme has resolved its layers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +58,7 @@ impl Default for Style {
     }
 }
 
-pub(crate) fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()> {
+pub(crate) fn render_frame(frame: &Frame, theme: &Theme, writer: &mut impl Write) -> Result<()> {
     // Terminals that support it hold the frame back until it is whole, so a half-drawn
     // one never shows. The others ignore it.
     writer.queue(terminal::BeginSynchronizedUpdate)?;
@@ -77,15 +77,20 @@ pub(crate) fn render_frame(frame: &Frame, writer: &mut impl Write) -> Result<()>
         if needs_move || pos.col == 0 {
             writer.queue(cursor::MoveTo(pos.col, pos.row))?;
         }
-        last_style = queue_cell(cell, last_style, writer)?;
+        last_style = queue_cell(cell, theme, last_style, writer)?;
         needs_move = cell.grapheme.as_str_sanitize().len() != 1;
     }
     writer.queue(terminal::EndSynchronizedUpdate)?;
     Ok(())
 }
 
-fn queue_cell(cell: &Cell, last_style: Style, writer: &mut impl Write) -> Result<Style> {
-    let style = MELLOW.resolve(cell.style);
+fn queue_cell(
+    cell: &Cell,
+    theme: &Theme,
+    last_style: Style,
+    writer: &mut impl Write,
+) -> Result<Style> {
+    let style = theme.resolve(cell.style);
 
     if style != last_style {
         style.queue(last_style, writer)?;

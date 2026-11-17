@@ -1,0 +1,128 @@
+# Mellow by Rohit K Viswanath, the palette and choices of helix's `mellow.toml`.
+
+# A wend theme. Save it as `<name>.toml` in the `themes` folder next to config.toml, and pick
+# it with `theme = "<name>"` there. `wend --theme <name>` prints a built-in theme to copy from.
+#
+# A cell is drawn from layers, from the bottom: `plain`, then what the text is (a keyword, a
+# string, a line number, ...), then `selection`, then `cursor`. A layer changes only what it
+# sets. A color it leaves out shows through from the layer below, and modifiers add up. So
+# `selection` can set just a background and keep every text color.
+#
+# Every rule below can set any of these, and all three are optional:
+#
+#   foreground = "#rrggbb"            the color of the text
+#   background = "#rrggbb"            the color behind the text
+#   modifiers = ["bold", "italic"]    a list, any of the five below
+#
+# A color is a `#` and six hex digits: red, green, blue. These are the modifiers:
+#
+#   "bold"            heavier text
+#   "dim"             fainter text
+#   "italic"          slanted text
+#   "underline"       a line under the text
+#   "strikethrough"   a line through the text
+#
+# A terminal that can't draw a modifier ignores it. A rule with none of the three changes
+# nothing, and is written as just its `[name]`. Every rule has to be in the file, so a
+# mistake in a name is an error instead of a silent default.
+
+# The bottom layer, so every cell starts as this and it sets both colors.
+# Example: foreground = "#c9c7cd" on background = "#161617" for light text on dark.
+[plain]
+foreground = "#c9c7cd"
+background = "#161617"
+
+# The line numbers in the gutter.
+# Example: foreground = "#65656b" for numbers quieter than the text.
+[line_number]
+foreground = "#65656b"
+
+# The number of the line the cursor is on.
+# Example: foreground = "#aca1cf", modifiers = ["bold"] to make it stand out.
+[current_line_number]
+foreground = "#aca1cf"
+
+# The `↩` that starts a row of a line that wraps. It isn't text, so it has its own rule.
+# Example: foreground = "#ea83a5".
+[marker]
+
+# The selected text. Leave the foreground out and the text keeps its colors.
+# Example: background = "#3e3e43".
+[selection]
+background = "#3e3e43"
+
+# The cell the cursor is on, over the selection. It needs to differ from `selection`.
+# Example: background = "#57575f", or modifiers = ["underline"] to keep every color.
+[cursor]
+background = "#57575f"
+
+# Attributes, like `#[derive(Debug)]` in Rust.
+# Example: foreground = "#aca1cf".
+[attribute]
+foreground = "#aca1cf"
+
+# Comments.
+# Example: foreground = "#65656b", modifiers = ["italic"].
+[comment]
+foreground = "#65656b"
+modifiers = ["italic"]
+
+# Constants and literal values such as numbers and `true`.
+# Example: foreground = "#f5a191".
+[constant]
+foreground = "#f5a191"
+
+# Constructors, like `Some` or an enum variant.
+# Example: foreground = "#e29eca".
+[constructor]
+foreground = "#e29eca"
+
+# Escape sequences inside a string, like `\n`.
+# Example: foreground = "#ea83a5".
+[escape]
+foreground = "#ea83a5"
+
+# Function and method names.
+# Example: foreground = "#e6b99d".
+[function]
+foreground = "#e6b99d"
+
+# Keywords, like `fn`, `let` and `match`.
+# Example: foreground = "#aca1cf", modifiers = ["bold"].
+[keyword]
+foreground = "#aca1cf"
+
+# Labels, like the `'outer` of a loop.
+# Example: foreground = "#e6b99d".
+[label]
+foreground = "#e6b99d"
+
+# Operators, like `+` and `=>`.
+# Example: foreground = "#b4b4b9".
+[operator]
+foreground = "#b4b4b9"
+
+# Fields and properties, like `point.x`.
+# Example: foreground = "#b5b4c9".
+[property]
+foreground = "#b5b4c9"
+
+# Brackets, commas and semicolons.
+# Example: foreground = "#929199" to push them back.
+[punctuation]
+foreground = "#929199"
+
+# String and character literals.
+# Example: foreground = "#90b99f".
+[string]
+foreground = "#90b99f"
+
+# Type names, like `String`.
+# Example: foreground = "#e29eca".
+[type_name]
+foreground = "#e29eca"
+
+# Variables and parameters.
+# Example: foreground = "#c9c7cd", the same as `plain`, to leave them uncolored.
+[variable]
+foreground = "#c9c7cd"
