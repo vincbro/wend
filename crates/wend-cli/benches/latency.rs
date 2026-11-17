@@ -56,7 +56,7 @@ const RUST_HIGHLIGHTS: &[u8] = include_bytes!("../../../highlights.scm");
 
 /// Lines that look like source code, cycled to fill a file. The same as the session bench.
 const LINES: [&str; 9] = [
-    "fn layout(buffer: &Buffer, area: Area) -> Layout {",
+    "fn wrap(buffer: &Buffer, area: Area) -> Wrap {",
     "    let width = area.width().min(100); // keep lines readable",
     "    for (row, slot) in slots.iter().enumerate() {",
     "        // 漢字とかなが混ざったコメント",
@@ -65,7 +65,7 @@ const LINES: [&str; 9] = [
     "    }",
     "",
     "    let message = \"a line long enough to wrap on any terminal, so scrolling and \
-     moving through it go through the wrapped row paths of the layout, which a file of \
+     moving through it go through the wrapped row paths of the wrap, which a file of \
      short lines never touches, and it keeps going a little longer to wrap twice\";",
 ];
 
@@ -224,7 +224,7 @@ fn input_delay(criterion: &mut Criterion) {
 }
 
 /// Redraws a frame as fast as it can go. One iteration is one frame, so the throughput
-/// criterion prints is frames per second. Nothing changes between frames, so the layout and
+/// criterion prints is frames per second. Nothing changes between frames, so the wrap and
 /// the parse are not redone: this is the ceiling the other numbers are measured against.
 fn fps(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("fps");

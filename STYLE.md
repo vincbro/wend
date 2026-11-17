@@ -255,7 +255,7 @@ A module returns only its own `Error`, never another module's. An error from a l
 wend is written data-oriented, not object-oriented. A struct is one of two kinds:
 
 - **Plain data.** For example `Area`, `Rect`, `CellPosition`, `Cell`. No invariant ties its fields together, so any combination of values is valid. Its fields may all be public (at the struct's own visibility), and it's usually `Copy`. You don't mutate it in place: you build a new value and overwrite the old one.
-- **Stateful.** For example `Buffer`, `View`, `Layout`, `Editor`. It has logic that depends on its own fields staying consistent: the selection on grapheme starts, the layout matching the buffer, `dirty` matching the rope. **All of its fields are private**, and the only way to change them is through methods that keep the invariants.
+- **Stateful.** For example `Buffer`, `View`, `Wrap`, `Editor`. It has logic that depends on its own fields staying consistent: the selection on grapheme starts, the wrap matching the buffer, `dirty` matching the rope. **All of its fields are private**, and the only way to change them is through methods that keep the invariants.
 
 Most structs are the stateful kind, so the default is private fields. A struct never mixes the two kinds: if one field needs to be private, they all are, and access goes through getters (S-NAMES-STD).
 
@@ -333,7 +333,7 @@ Put it on the smallest item that needs it, never at the crate level. A workspace
 
 ### S-TESTS: Inline unit tests plus end-to-end integration tests
 
-- Unit tests live at the bottom of the file they test, in `#[cfg(test)] mod tests { use super::*; … }`. They cover exact edge cases, like layout and grapheme handling.
+- Unit tests live at the bottom of the file they test, in `#[cfg(test)] mod tests { use super::*; … }`. They cover exact edge cases, like wrapping and grapheme handling.
 - Integration tests live in `crates/<crate>/tests/`. They drive `Editor` the way a user does: keys in, frame out.
 - Test names describe the behavior, with no `test_` prefix: `wide_glyph_wraps_whole`.
 - An assertion's message says what the case means: `assert_eq!(a, b, "snaps into the grapheme start")`.

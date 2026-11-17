@@ -9,7 +9,7 @@ impl View {
     /// The only way the text changes. The selection follows the edit.
     fn edit(&mut self, range: ops::Range<usize>, text: &str) -> Change {
         let change = self.buffer.edit(range, text);
-        self.layout_dirty = true;
+        self.wrap_dirty = true;
         self.set_selection(self.selection.map(change), ColumnPolicy::Sync);
         change
     }
@@ -25,7 +25,7 @@ impl View {
 
     /// Deletes the grapheme before the selection, joins lines when at the start of one.
     pub fn delete(&mut self) {
-        // Done on the buffer, not the layout, so it works across wrapped rows and lines
+        // Done on the buffer, not the wrap, so it works across wrapped rows and lines
         let to_byte = self.selection.start();
         let Some(len) = self
             .buffer
@@ -65,7 +65,7 @@ impl View {
     /// Throws away every edit since the file was last loaded or saved.
     pub fn revert(&mut self) {
         self.buffer.revert();
-        self.layout_dirty = true;
+        self.wrap_dirty = true;
         // There is no change to map through, keep the same bytes as close as the text allows
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();

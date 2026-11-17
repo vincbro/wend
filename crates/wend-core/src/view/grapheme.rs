@@ -3,12 +3,12 @@ use std::ops;
 use super::{Glyph, View};
 
 impl View {
-    /// Returns the glyph holding `byte`, none if it is off screen or the layout is out of date.
+    /// Returns the glyph holding `byte`, none if it is off screen or the wrap is out of date.
     fn glyph_on_screen(&self, byte: usize) -> Option<Glyph> {
-        if self.layout_dirty {
+        if self.wrap_dirty {
             return None;
         }
-        self.layout.glyph_at(self.layout.find_byte(byte)?)
+        self.wrap.glyph_at(self.wrap.find_byte(byte)?)
     }
 
     /// Returns where the grapheme holding `byte` starts, the buffer's end for anything past it.
@@ -37,7 +37,7 @@ impl View {
     }
 
     /// Returns where the grapheme starting at `start` ends. The end of buffer slot is one byte
-    /// wide, see `Layout::rebuild`.
+    /// wide, see `Wrap::rebuild`.
     pub(super) fn grapheme_end(&self, start: usize) -> usize {
         self.glyph_on_screen(start)
             .map_or_else(|| self.rope_grapheme_end(start), Glyph::end)

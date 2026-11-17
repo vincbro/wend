@@ -30,7 +30,7 @@ const TYPED: &str = "let typed = \"some text\";";
 
 /// Lines that look like source code, cycled to fill a file.
 const LINES: [&str; 9] = [
-    "fn layout(buffer: &Buffer, area: Area) -> Layout {",
+    "fn wrap(buffer: &Buffer, area: Area) -> Wrap {",
     "    let width = area.width().min(100); // keep lines readable",
     "    for (row, slot) in slots.iter().enumerate() {",
     "        // 漢字とかなが混ざったコメント",
@@ -39,7 +39,7 @@ const LINES: [&str; 9] = [
     "    }",
     "",
     "    let message = \"a line long enough to wrap on any terminal, so scrolling and \
-     moving through it go through the wrapped row paths of the layout, which a file of \
+     moving through it go through the wrapped row paths of the wrap, which a file of \
      short lines never touches, and it keeps going a little longer to wrap twice\";",
 ];
 

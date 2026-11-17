@@ -79,7 +79,7 @@ impl Grapheme {
         // Controls always form their own grapheme (UAX #29), the only exception is CRLF
         if c.is_control() && (chars.as_str().is_empty() || text == "\r\n") {
             return match c {
-                // The layout already gives these their width
+                // The wrap already gives these their width
                 '\t' | '\n' | '\r' => " ",
                 // C0, ESC (0x1B) being the dangerous one
                 '\0'..='\u{1F}' => CONTROL_PICTURES[number::exact::<u32, usize>(u32::from(c))],
@@ -137,12 +137,12 @@ mod tests {
     }
 
     #[test]
-    fn layout_controls_print_as_a_space() {
+    fn wrap_controls_print_as_a_space() {
         for text in ["\t", "\n", "\r", "\r\n"] {
             assert_eq!(
                 sanitized(text),
                 " ",
-                "the layout already gives {text:?} its width"
+                "the wrap already gives {text:?} its width"
             );
         }
     }

@@ -2,7 +2,7 @@
 
 How wend keeps its hot paths fast. It sits next to [STYLE.md](STYLE.md) and works the same way: every rule has an ID (`P-…`), a reason and an *Enforced* line, and `review` means nothing automatic checks it.
 
-The hot paths are the ones that run per key press and per frame: `Editor::apply`, `Keymap::press`, `Layout::rebuild`, `View::render` and the frontend's draw. Everything else (startup, loading a grammar, saving) can allocate and copy freely.
+The hot paths are the ones that run per key press and per frame: `Editor::apply`, `Keymap::press`, `Wrap::rebuild`, `View::render` and the frontend's draw. Everything else (startup, loading a grammar, saving) can allocate and copy freely.
 
 The ideas come from the [Rust Performance Book](https://nnethercote.github.io/perf-book/). What is here is the part that fits an editor, and the book stays the reference for the rest.
 
@@ -30,7 +30,7 @@ The default for owned data is `Box<[T]>`, `Box<str>`, `Box<Path>` or `Arc<str>`.
 
 *Why:* a `Vec` is three words and a boxed slice is two, so 24 bytes become 16 in every struct and enum that holds one. A boxed slice has no spare capacity that is never used, and it locks the API down: there is no `push` to misuse and the length can't change by accident.
 
-Not covered by the rule: a collection that is reused on purpose to keep its capacity (the layout's slots, a frame's cells, `open_highlights`, a `FramePool`). Those are `Vec`s because growing and clearing them is their job.
+Not covered by the rule: a collection that is reused on purpose to keep its capacity (the wrap's slots, a frame's cells, `open_highlights`, a `FramePool`). Those are `Vec`s because growing and clearing them is their job.
 
 Build a boxed slice directly, with `collect::<Box<[_]>>()` or `Box::from`. `Vec::into_boxed_slice` may reallocate to drop the extra capacity.
 
@@ -143,5 +143,5 @@ Measured on 2026-11-11, not yet changed. Each one is a candidate for a change th
 | `syntax.rs`, `Syntax::highlights` | Every frame runs the highlight query over the visible bytes, and its cost grows with the file, not the screen. With highlighting off, a redraw is about 0.17 ms at 100 KB and at 1 MB. | With it on: 0.52 ms at 100 KB and 2.76 ms at 1 MB. Cache the visible spans while the tree and the range are unchanged. |
 | `wend-cli/src/draw.rs` | Every cell is redrawn on every frame. | Frame diffing is in TODO.md. |
 | `Editor::apply`, `reparse` | Typing in a 1 MB file takes about 14 ms, nearly all of it the incremental parse and the highlight query. | Not yet split further. |
-| `view/layout.rs`, `Layout::find_byte` | Scans the rows and slots, and one key press calls it several times (`ensure_cursor_visible`, `cursor_position`, `grapheme_start`). | Not measured on its own. Cache the head's slot after a rebuild. |
+| `view/wrap.rs`, `Wrap::find_byte` | Scans the rows and slots, and one key press calls it several times (`ensure_cursor_visible`, `cursor_position`, `grapheme_start`). | Not measured on its own. Cache the head's slot after a rebuild. |
 | `Cargo.toml` | `panic = "abort"` and a profiling profile aren't set. | Undecided. |

@@ -1,6 +1,6 @@
 use std::{mem, ops};
 
-use super::{Highlighter, Layout, Selection, Slot, SlotPosition, View, gutter};
+use super::{Highlighter, Wrap, Selection, Slot, SlotPosition, View, gutter};
 use crate::frame::{Cell, Content, Frame, Grapheme, Style};
 
 impl View {
@@ -10,11 +10,11 @@ impl View {
     ///
     /// If the view's rect reaches outside `frame`.
     pub fn render(&mut self, frame: &mut Frame) {
-        self.refresh_layout();
+        self.refresh_wrap();
         let text_rect = self.text_rect();
-        let rows_with_text = self.layout.last_row().map_or(0, |row| row + 1);
+        let rows_with_text = self.wrap.last_row().map_or(0, |row| row + 1);
         let head = self.head_position().and_then(|slot| {
-            let metadata = self.layout.row_metadata(slot.row)?;
+            let metadata = self.wrap.row_metadata(slot.row)?;
             Some(gutter::Head {
                 row: slot.row,
                 line: metadata.line,
@@ -28,8 +28,8 @@ impl View {
         // reads the other fields, and doesn't call methods that take the whole view
         let spans = self.buffer.highlights(self.visible_bytes());
         let mut highlighter = Highlighter::new(spans, &mut open);
-        for (pos, slot) in self.layout.slots() {
-            let mut cell = Self::cell(&self.layout, self.selection, slot, pos, &selected);
+        for (pos, slot) in self.wrap.slots() {
+            let mut cell = Self::cell(&self.wrap, self.selection, slot, pos, &selected);
             // Tails are blanks, only the glyph itself has a color
             if let Slot::Glyph(glyph) = slot
                 && let Some(highlight) = highlighter.at(glyph.start())
@@ -42,9 +42,9 @@ impl View {
         self.open_highlights = open;
     }
 
-    /// The bytes of the text the layout shows, from the first row's start to the last row's end.
+    /// The bytes of the text the wrap shows, from the first row's start to the last row's end.
     fn visible_bytes(&self) -> ops::Range<usize> {
-        let mut rows = self.layout.rows();
+        let mut rows = self.wrap.rows();
         let Some(first) = rows.next() else {
             return 0..0;
         };
@@ -57,7 +57,7 @@ impl View {
     /// Takes the parts of the view it reads instead of the view, so `render` can keep the
     /// buffer borrowed meanwhile.
     fn cell(
-        layout: &Layout,
+        wrap: &Wrap,
         selection: Selection,
         slot: Slot,
         pos: SlotPosition,
@@ -67,7 +67,7 @@ impl View {
             grapheme: Grapheme::blank(),
             ..Cell::default()
         };
-        let Some(glyph) = layout.glyph(slot) else {
+        let Some(glyph) = wrap.glyph(slot) else {
             return match slot {
                 Slot::Marker(c) => Cell {
                     grapheme: Grapheme::from_char(c),
@@ -85,7 +85,7 @@ impl View {
         // a too long grapheme shown as U+FFFD) print as blanks
         let (grapheme, covered) = match slot {
             Slot::Tail(head_index) => {
-                let offset = layout.slot_index(pos) - head_index;
+                let offset = wrap.slot_index(pos) - head_index;
                 (Grapheme::blank(), offset < glyph.grapheme().width())
             }
             _ => (glyph.grapheme(), false),

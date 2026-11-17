@@ -1,6 +1,6 @@
 use super::{
     Direction, View,
-    layout::{ScrollOffset, SlotPosition},
+    wrap::{ScrollOffset, SlotPosition},
 };
 
 impl View {
@@ -17,14 +17,14 @@ impl View {
 
     pub(super) fn ensure_cursor_visible(&mut self) {
         // The buffer or area might have changed since the last rebuild
-        self.refresh_layout();
+        self.refresh_wrap();
 
         let head = self.selection.head();
-        if self.layout.find_byte(head).is_none() {
+        if self.wrap.find_byte(head).is_none() {
             self.jump_to(head);
         }
         // Only an empty area has nowhere to show the head
-        let Some(SlotPosition { row, .. }) = self.layout.find_byte(head) else {
+        let Some(SlotPosition { row, .. }) = self.wrap.find_byte(head) else {
             return;
         };
 
@@ -42,13 +42,13 @@ impl View {
     fn jump_to(&mut self, byte: usize) {
         let height = self.rect.area.height();
         self.rebuild_at(ScrollOffset::new(self.buffer.rope().line_of_byte(byte), 0));
-        while self.layout.find_byte(byte).is_none() {
-            let prev_offset = self.layout.scroll_offset();
+        while self.wrap.find_byte(byte).is_none() {
+            let prev_offset = self.wrap.scroll_offset();
             self.rebuild_at(ScrollOffset::new(
                 prev_offset.line,
                 prev_offset.row + height.max(1),
             ));
-            if self.layout.scroll_offset() == prev_offset {
+            if self.wrap.scroll_offset() == prev_offset {
                 break;
             }
         }
@@ -69,19 +69,19 @@ impl View {
         scrolled
     }
 
-    /// Returns the offset `rows` rows down, read from the layout, and how many rows that is.
+    /// Returns the offset `rows` rows down, read from the wrap, and how many rows that is.
     fn offset_below(&self, rows: usize) -> (ScrollOffset, usize) {
-        let rows = rows.min(self.layout.last_row().unwrap_or(0));
+        let rows = rows.min(self.wrap.last_row().unwrap_or(0));
         let scroll_offset = self
-            .layout
+            .wrap
             .offset_of_row(rows)
-            .unwrap_or(self.layout.scroll_offset());
+            .unwrap_or(self.wrap.scroll_offset());
         (scroll_offset, rows)
     }
 
     /// Returns the scroll offset `rows` rows up, and how many rows that is.
     fn offset_above(&mut self, rows: usize) -> (ScrollOffset, usize) {
-        let ScrollOffset { mut line, mut row } = self.layout.scroll_offset();
+        let ScrollOffset { mut line, mut row } = self.wrap.scroll_offset();
         let cols = self.text_rect().area.cols;
         let mut left = rows;
         // A line at a time, onto the last row of the line above
@@ -96,30 +96,30 @@ impl View {
         (ScrollOffset::new(line, row - left), rows)
     }
 
-    /// Rebuilds the layout if anything it depends on changed since the last rebuild.
-    pub(super) fn refresh_layout(&mut self) {
-        if self.layout_dirty {
-            self.rebuild_at(self.layout.scroll_offset());
+    /// Rebuilds the wrap if anything it depends on changed since the last rebuild.
+    pub(super) fn refresh_wrap(&mut self) {
+        if self.wrap_dirty {
+            self.rebuild_at(self.wrap.scroll_offset());
         }
     }
 
     pub(super) fn rebuild_at(&mut self, scroll_offset: ScrollOffset) {
         // Edits and reverts can make the buffer shorter than where we scrolled to, the
-        // layout clamps the row the same way
+        // wrap clamps the row the same way
         let line = scroll_offset.line.min(self.buffer.rope().line_len());
 
         // The line count may have changed, and with it the gutter
         self.gutter = Self::gutter_for(&self.buffer, self.rect, self.line_numbers);
         let text_area = self.text_rect().area;
 
-        self.layout.rebuild(
+        self.wrap.rebuild(
             &self.buffer,
             text_area,
             ScrollOffset::new(line, scroll_offset.row),
         );
         // A gutter that grew with the line count took columns from the text
         self.desired_col = self.desired_col.min(text_area.width().saturating_sub(1));
-        self.layout_dirty = false;
+        self.wrap_dirty = false;
     }
 }
 
@@ -135,8 +135,8 @@ mod tests {
         let mut rows = vec![];
         for _ in 0..12 {
             view.move_selection(Motion::Vertical(Direction::Forward), false);
-            let pos = view.layout.find_byte(view.selection.head()).unwrap();
-            rows.push((pos.row, view.layout.scroll_offset()));
+            let pos = view.wrap.find_byte(view.selection.head()).unwrap();
+            rows.push((pos.row, view.wrap.scroll_offset()));
         }
         // Down to the margin, then the head stays on it and the view follows row by row
         let expected: Vec<_> = (1..=12)
@@ -151,9 +151,9 @@ mod tests {
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         view.move_selection(Motion::Vertical(Direction::Backward), false);
-        let pos = view.layout.find_byte(view.selection.head()).unwrap();
+        let pos = view.wrap.find_byte(view.selection.head()).unwrap();
         assert_eq!(
-            (pos.row, view.layout.scroll_offset()),
+            (pos.row, view.wrap.scroll_offset()),
             (2, ScrollOffset::new(0, 7)),
             "each step up scrolls one row, the head stays on the top margin"
         );
@@ -166,7 +166,7 @@ mod tests {
         view.rebuild_at(ScrollOffset::new(1, 0));
         assert_eq!(view.scroll(Direction::Backward, 1), 1, "line 0 is above");
         assert_eq!(
-            view.layout.scroll_offset(),
+            view.wrap.scroll_offset(),
             ScrollOffset::new(0, 1),
             "onto the wrapped row of line 0, not its first row"
         );
@@ -176,7 +176,7 @@ mod tests {
             "line 0 has a row left"
         );
         assert_eq!(
-            view.layout.scroll_offset(),
+            view.wrap.scroll_offset(),
             ScrollOffset::new(0, 0),
             "then up through line 0's rows"
         );
@@ -193,7 +193,7 @@ mod tests {
             "stops at the last row"
         );
         assert_eq!(
-            view.layout.scroll_offset(),
+            view.wrap.scroll_offset(),
             ScrollOffset::new(1, 0),
             "past both rows of line 0"
         );
@@ -202,7 +202,7 @@ mod tests {
             2,
             "stops at the top of the buffer"
         );
-        assert_eq!(view.layout.scroll_offset(), ScrollOffset::new(0, 0));
+        assert_eq!(view.wrap.scroll_offset(), ScrollOffset::new(0, 0));
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod tests {
         let mut view = tests::view(&"a".repeat(200), 4, 5);
         view.move_selection(Motion::File(Direction::Forward), false);
         assert_eq!(view.selection.head(), 199, "the head is not pulled back");
-        let pos = view.layout.find_byte(view.selection.head()).unwrap();
+        let pos = view.wrap.find_byte(view.selection.head()).unwrap();
         assert_eq!(pos.row, 2, "on the bottom margin");
     }
 }

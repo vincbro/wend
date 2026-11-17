@@ -1,4 +1,4 @@
-use super::{ColumnPolicy, Glyph, Selection, View, layout::SlotPosition};
+use super::{ColumnPolicy, Glyph, Selection, View, wrap::SlotPosition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -27,7 +27,7 @@ mod word;
 impl View {
     /// Moves the selection. With `extend` the anchor stays and only the head moves.
     pub fn move_selection(&mut self, motion: Motion, extend: bool) {
-        // Motions read the layout around the head, make sure both are current
+        // Motions read the wrap around the head, make sure both are current
         self.ensure_cursor_visible();
         let moved = match motion {
             Motion::Page(direction) => self.page(direction).map(Selection::point),
@@ -81,7 +81,7 @@ impl View {
     fn page_forward(&mut self) -> Option<usize> {
         let bottom = self.bottom_row();
         let scrolled = self.scroll(Direction::Forward, bottom);
-        let last = self.layout.last_row()?;
+        let last = self.wrap.last_row()?;
         if bottom - scrolled <= last {
             return Some(bottom - scrolled);
         }
@@ -89,7 +89,7 @@ impl View {
         // The buffer ends first, its last row is the last one on screen. Undo the scroll so
         // the view only moves as far as the margin pulls it.
         self.scroll(Direction::Backward, (bottom - last).min(scrolled));
-        self.layout.last_row()
+        self.wrap.last_row()
     }
 
     /// Scrolls up a page and returns the row the head lands on.
@@ -102,17 +102,17 @@ impl View {
 
     fn horizontal(&self, direction: Direction) -> Option<usize> {
         let pos = self.head_position()?;
-        if let Some(glyph) = self.layout.step(pos, direction) {
+        if let Some(glyph) = self.wrap.step(pos, direction) {
             return Some(glyph.start());
         }
 
         // At the edge of the row, only continue if the line wrapped onto the next row
         let neighbor = neighbor_row(pos.row, direction)?;
-        if self.layout.row(neighbor)?.metadata.line != self.layout.row(pos.row)?.metadata.line {
+        if self.wrap.row(neighbor)?.metadata.line != self.wrap.row(pos.row)?.metadata.line {
             return None;
         }
         // Forward lands on the neighbor's first glyph, backward on its last
-        self.layout
+        self.wrap
             .edge_glyph(neighbor, direction)
             .map(Glyph::start)
     }
@@ -127,10 +127,10 @@ impl View {
     fn closest_glyph_start(&self, row: usize) -> Option<usize> {
         let target = SlotPosition::new(self.desired_col, row);
         let glyph = self
-            .layout
+            .wrap
             .glyph_at(target)
-            .or_else(|| self.layout.step(target, Direction::Backward))
-            .or_else(|| self.layout.step(target, Direction::Forward))?;
+            .or_else(|| self.wrap.step(target, Direction::Backward))
+            .or_else(|| self.wrap.step(target, Direction::Forward))?;
         Some(glyph.start())
     }
 
@@ -194,10 +194,10 @@ mod tests {
         // Far enough to run into the other end of the buffer
         for page in 0..30 {
             let edge_row = match direction {
-                Direction::Forward => view.layout.last_row().unwrap(),
+                Direction::Forward => view.wrap.last_row().unwrap(),
                 Direction::Backward => 0,
             };
-            let edge = view.layout.row(edge_row).unwrap().metadata;
+            let edge = view.wrap.row(edge_row).unwrap().metadata;
             view.move_selection(Motion::Page(direction), false);
             assert!(
                 (edge.from_byte..edge.to_byte).contains(&view.selection.head()),

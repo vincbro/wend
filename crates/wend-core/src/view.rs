@@ -14,8 +14,8 @@ pub use error::{Error, Result};
 mod grapheme;
 mod highlight;
 use highlight::Highlighter;
-mod layout;
-use layout::{Glyph, Layout, ScrollOffset, Slot, SlotPosition};
+mod wrap;
+use wrap::{Glyph, Wrap, ScrollOffset, Slot, SlotPosition};
 mod motion;
 pub use motion::{Direction, Motion};
 mod render;
@@ -43,10 +43,10 @@ pub struct View {
     buffer: Buffer,
     rect: Rect,
     gutter: Gutter,
-    layout: Layout,
-    layout_dirty: bool,
-    /// Scratch space for `Layout::last_row_of_line`, kept so that its memory is reused.
-    line_probe: Layout,
+    wrap: Wrap,
+    wrap_dirty: bool,
+    /// Scratch space for `Wrap::last_row_of_line`, kept so that its memory is reused.
+    line_probe: Wrap,
     selection: Selection,
     /// Scratch space for `render`, kept so that its memory is reused.
     open_highlights: Vec<(usize, Highlight)>,
@@ -65,9 +65,9 @@ impl View {
             gutter: Self::gutter_for(&buffer, rect, line_numbers),
             buffer,
             rect,
-            layout: Layout::new(rect.area, ScrollOffset::default()),
-            layout_dirty: true,
-            line_probe: Layout::new(Area::new(0, 0), ScrollOffset::default()),
+            wrap: Wrap::new(rect.area, ScrollOffset::default()),
+            wrap_dirty: true,
+            line_probe: Wrap::new(Area::new(0, 0), ScrollOffset::default()),
             selection: Selection::point(0),
             open_highlights: vec![],
 
@@ -91,7 +91,7 @@ impl View {
     /// text reaches, the same way a revert does.
     pub fn update(&mut self, bytes: &[u8]) -> Result<()> {
         self.buffer.update(bytes)?;
-        self.layout_dirty = true;
+        self.wrap_dirty = true;
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
         Ok(())
@@ -109,8 +109,8 @@ impl View {
             return;
         };
         let (Some(first), Some(last)) = (
-            self.layout.edge_glyph(pos.row, Direction::Forward),
-            self.layout.edge_glyph(pos.row, Direction::Backward),
+            self.wrap.edge_glyph(pos.row, Direction::Forward),
+            self.wrap.edge_glyph(pos.row, Direction::Backward),
         ) else {
             return;
         };
@@ -131,10 +131,10 @@ impl View {
 
     /// Returns the slot the head is in, none if it is off screen.
     fn head_position(&self) -> Option<SlotPosition> {
-        self.layout.find_byte(self.selection.head())
+        self.wrap.find_byte(self.selection.head())
     }
 
-    /// Returns where a slot of the layout ends up in the frame.
+    /// Returns where a slot of the wrap ends up in the frame.
     fn cell_position(rect: Rect, pos: SlotPosition) -> CellPosition {
         CellPosition::new(
             rect.col + number::exact::<usize, u16>(pos.col),
@@ -166,9 +166,9 @@ impl View {
     pub fn set_config(&mut self, config: &Config) {
         self.scroll_margin = config.scroll.margin;
         self.line_numbers = config.line_numbers;
-        self.layout.set_tab_width(config.text.tab_width);
+        self.wrap.set_tab_width(config.text.tab_width);
         self.line_probe.set_tab_width(config.text.tab_width);
-        self.layout_dirty = true;
+        self.wrap_dirty = true;
     }
 
     pub fn resize(&mut self, rect: Rect) {
@@ -177,7 +177,7 @@ impl View {
         self.desired_col = self
             .desired_col
             .min(self.text_rect().area.width().saturating_sub(1));
-        self.layout_dirty = true;
+        self.wrap_dirty = true;
     }
 
     /// Returns the gutter `buffer` needs in a view at `rect`.
@@ -225,8 +225,8 @@ impl View {
             return;
         }
         assert!(
-            !self.layout_dirty && self.head_position().is_some(),
-            "ensure_cursor_visible rebuilds the layout and scrolls the head on screen"
+            !self.wrap_dirty && self.head_position().is_some(),
+            "ensure_cursor_visible rebuilds the wrap and scrolls the head on screen"
         );
         assert!(
             self.desired_col < self.text_rect().area.width(),
@@ -251,7 +251,7 @@ pub(crate) mod tests {
         view.open_buffer(Buffer::from(text));
         let gutter = gutter_width(&view);
         view.resize(Rect::new(0, 0, Area::new(cols + gutter, rows)));
-        view.refresh_layout();
+        view.refresh_wrap();
         view
     }
 
@@ -353,7 +353,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn grapheme_bounds_from_the_layout_match_the_rope() {
+    fn grapheme_bounds_from_the_wrap_match_the_rope() {
         // Combining marks, wide glyphs, tabs, CRLF and wrapped rows, most of it off screen
         let text = "e\u{301}a漢\t🦀\r\nb a line long enough to wrap\n\n".repeat(4);
         let view = view(&text, 8, 6);
@@ -387,11 +387,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn grapheme_start_ignores_an_out_of_date_layout() {
+    fn grapheme_start_ignores_an_out_of_date_wrap() {
         let mut view = view("ab", 20, 5);
-        // The mark joins a, the layout still has b on byte 1
+        // The mark joins a, the wrap still has b on byte 1
         view.buffer.edit(1..1, "\u{301}");
-        view.layout_dirty = true;
+        view.wrap_dirty = true;
         assert_eq!(view.grapheme_start(1), 0, "reads the edited text");
     }
 
@@ -465,7 +465,7 @@ pub(crate) mod tests {
 
         let frame = rendered(&mut view);
 
-        let rows_with_text = view.layout.last_row().unwrap() + 1;
+        let rows_with_text = view.wrap.last_row().unwrap() + 1;
         assert!(rows_with_text > 2, "the first line wraps");
         for row in 1..rows_with_text {
             assert_eq!(

@@ -96,7 +96,7 @@ impl Buffer {
         Ok(())
     }
 
-    /// Returns `bytes` as text, or says why it can't be: too long for the layout's `u32`
+    /// Returns `bytes` as text, or says why it can't be: too long for the wrap's `u32`
     /// offsets, or not UTF-8.
     fn content(bytes: &[u8]) -> Result<&str> {
         check_len(bytes.len())?;
@@ -191,7 +191,7 @@ impl Buffer {
     }
 }
 
-/// The longest text a buffer takes in. The layout stores byte offsets as `u32`, with one to
+/// The longest text a buffer takes in. The wrap stores byte offsets as `u32`, with one to
 /// spare for the slot after the last byte.
 const MAX_LEN: usize = u32::MAX as usize - 1;
 
@@ -220,7 +220,7 @@ mod tests {
     use crate::syntax;
 
     #[test]
-    fn text_the_layout_cannot_address_is_refused() {
+    fn text_the_wrap_cannot_address_is_refused() {
         assert!(
             check_len(MAX_LEN).is_ok(),
             "the longest text is still taken"
