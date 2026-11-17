@@ -7,6 +7,7 @@ pub mod config;
 pub mod editor;
 pub mod frame;
 pub mod input;
+pub mod layout;
 mod number;
 pub mod output;
 pub mod syntax;

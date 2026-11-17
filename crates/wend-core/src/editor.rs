@@ -5,6 +5,7 @@ use crate::{
     config::Config,
     frame::{Area, Frame, Rect},
     input::{Input, Mode, action::Action, key::Key},
+    layout::{Canvas, Element},
     output::Output,
     syntax::{LanguageTag, Loader},
     view::View,
@@ -14,6 +15,8 @@ mod frame_pool;
 use frame_pool::FramePool;
 mod keymap;
 use keymap::Keymap;
+mod status_bar;
+use status_bar::StatusBar;
 mod error;
 mod language;
 pub use error::{Error, Result};
@@ -28,6 +31,7 @@ pub struct Editor {
     area: Area,
     buffers: Vec<Buffer>,
     view: View,
+    status_bar: StatusBar,
     mode: Mode,
     outputs: Vec<Output>,
     keymap: Keymap,
@@ -44,10 +48,11 @@ impl Editor {
     pub fn new(area: Area, config: &Config) -> Result<Self> {
         let keymap = Keymap::new(config.keys.trees()?);
         let view = View::new(Rect::new(0, 0, area), config);
-        Ok(Self {
+        let mut editor = Self {
             area,
             buffers: vec![],
             view,
+            status_bar: StatusBar,
             mode: Mode::Normal,
             outputs: vec![],
             keymap,
@@ -55,7 +60,9 @@ impl Editor {
             is_stale: false,
             loader: Loader::new()?,
             requested_languages: HashSet::new(),
-        })
+        };
+        editor.fit_view();
+        Ok(editor)
     }
 
     /// Applies `input`, then draws a frame if the screen is out of date and a spare frame is
@@ -89,8 +96,6 @@ impl Editor {
         {
             // Parsed only when a frame is drawn, so a batch of inputs costs one parse
             self.reparse();
-            // Scroll to the cursor before rendering, so the frame shows where the cursor is
-            frame.set_cursor(self.view.cursor_position());
             self.update_frame(&mut frame);
             self.outputs.push(Output::Frame(frame));
             self.is_stale = false;
@@ -164,28 +169,35 @@ impl Editor {
 
     /// Builds a new frame of the terminal's size, with the cursor where the head is now.
     pub fn frame(&mut self) -> Frame {
-        // Scroll to the cursor before rendering, so the frame shows where the cursor is
-        let cursor = self.view.cursor_position();
-        let mut frame = Frame::new(self.area, cursor);
+        let mut frame = Frame::new(self.area, None);
         self.update_frame(&mut frame);
         frame
     }
 
-    /// Redraws the view into `frame`, reusing its cells. `Frame::cursor` stays as it was, only
-    /// `frame` gives a new one.
-    ///
-    /// # Panics
-    ///
-    /// If `frame` is smaller than the view reaches, as one from before a resize can be.
+    /// Draws the whole editor into `frame`, reusing its cells. What it shows from before is
+    /// blanked first.
     pub fn update_frame(&mut self, frame: &mut Frame) {
-        self.view.render(frame);
+        let bounds = Rect::new(0, 0, self.area);
+        let mut canvas = Canvas::root(frame);
+        // The status bar docks first, so the view gets the rows that are left
+        let free = canvas.child(&mut self.status_bar, bounds);
+        canvas.child(&mut self.view, free);
     }
 
     /// Fits the editor to a new terminal size.
     pub fn resize(&mut self, area: Area) {
         self.area = area;
-        self.view.resize(Rect::new(0, 0, area));
+        self.fit_view();
         self.frame_pool.resize(area);
+    }
+
+    /// Gives the view the rect its layout works out to, the same way a draw does, so the keys
+    /// that come before the next draw already act on it.
+    fn fit_view(&mut self) {
+        let bounds = Rect::new(0, 0, self.area);
+        let (_, free) = self.status_bar.layout().place(bounds, bounds);
+        let (rect, _) = self.view.layout().place(free, bounds);
+        self.view.resize(rect);
     }
 
     pub fn set_mode(&mut self, mode: Mode) {

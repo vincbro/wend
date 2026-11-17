@@ -2,6 +2,8 @@ mod area;
 pub use area::{Area, Rect};
 mod grapheme;
 pub use grapheme::Grapheme;
+mod layer;
+pub use layer::Layer;
 mod style;
 pub use style::{Content, Style};
 
@@ -10,6 +12,8 @@ pub use style::{Content, Style};
 pub struct Cell {
     pub grapheme: Grapheme,
     pub style: Style,
+    /// Stamped by the `Canvas` the cell is drawn through, so an element never picks it.
+    pub layer: Layer,
     /// Drawn by the wide grapheme to its left, so there is nothing to print. Printing
     /// into half of a wide grapheme makes the terminal blank all of it.
     pub covered: bool,
@@ -38,6 +42,8 @@ pub struct Frame {
     area: Area,
     cells: Vec<Cell>,
     cursor: Option<CellPosition>,
+    /// The layer the cursor was put on, so a cursor on a higher layer is kept.
+    cursor_layer: Layer,
 }
 
 impl Frame {
@@ -48,6 +54,7 @@ impl Frame {
             area,
             cells: vec![Cell::default(); area.len()],
             cursor,
+            cursor_layer: Layer::BOTTOM,
         }
     }
 
@@ -57,8 +64,20 @@ impl Frame {
         self.cursor
     }
 
-    pub fn set_cursor(&mut self, cursor: Option<CellPosition>) {
-        self.cursor = cursor;
+    /// Puts the cursor at `pos` unless it is already on a higher layer than `layer`.
+    pub(crate) fn put_cursor(&mut self, pos: CellPosition, layer: Layer) {
+        if self.cursor.is_none() || layer >= self.cursor_layer {
+            self.cursor = Some(pos);
+            self.cursor_layer = layer;
+        }
+    }
+
+    /// Blanks every cell and takes the cursor away, so a frame that is drawn again starts with
+    /// nothing from the last draw, on any layer.
+    pub(crate) fn clear(&mut self) {
+        self.cells.fill(Cell::default());
+        self.cursor = None;
+        self.cursor_layer = Layer::BOTTOM;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (CellPosition, &Cell)> {
@@ -93,11 +112,33 @@ impl Frame {
         &self.cells[self.index(pos)]
     }
 
+    /// Writes `cell` unless the cell at `pos` is on a higher layer than it.
+    ///
+    /// Replacing half of a wide grapheme blanks the other half, because a terminal that is
+    /// told to print into half of one blanks all of it.
+    ///
     /// # Panics
     ///
     /// If `pos` is outside the frame's area.
     pub fn write(&mut self, pos: CellPosition, cell: Cell) {
         let index = self.index(pos);
+        let replaced = self.cells[index];
+        if replaced.layer > cell.layer {
+            return;
+        }
+        // The cell to the right is covered only while the one at `index` is the wide head
+        if usize::from(pos.col) + 1 < self.area.width() && self.cells[index + 1].covered {
+            self.cells[index + 1].covered = false;
+        }
+        // The head of a wide grapheme is left without its other half, unless this cell is
+        // the other half of a wide grapheme written in turn
+        if replaced.covered && !cell.covered && pos.col > 0 {
+            self.cells[index - 1] = Cell {
+                grapheme: Grapheme::blank(),
+                layer: replaced.layer,
+                ..Cell::default()
+            };
+        }
         self.cells[index] = cell;
     }
 
@@ -114,6 +155,144 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cell_stays_37_bytes() {
+        assert_eq!(
+            size_of::<Cell>(),
+            37,
+            "32 for the grapheme, 3 for the style, one each for the layer and covered, and the \
+             frame holds one per terminal cell"
+        );
+    }
+
+    fn cell(c: char, layer: Layer) -> Cell {
+        Cell {
+            grapheme: Grapheme::from_char(c),
+            layer,
+            ..Cell::default()
+        }
+    }
+
+    fn wide_head(c: char) -> Cell {
+        cell(c, Layer::BOTTOM)
+    }
+
+    fn tail() -> Cell {
+        Cell {
+            grapheme: Grapheme::blank(),
+            covered: true,
+            ..Cell::default()
+        }
+    }
+
+    #[test]
+    fn a_cell_does_not_replace_one_on_a_higher_layer() {
+        let mut frame = Frame::new(Area::new(1, 1), None);
+        let pos = CellPosition::new(0, 0);
+
+        frame.write(pos, cell('a', Layer::BOTTOM.lift(1)));
+        frame.write(pos, cell('b', Layer::BOTTOM));
+        assert_eq!(
+            frame.get(pos).grapheme.as_str_sanitize(),
+            "a",
+            "the lower loses"
+        );
+
+        frame.write(pos, cell('c', Layer::BOTTOM.lift(1)));
+        assert_eq!(
+            frame.get(pos).grapheme.as_str_sanitize(),
+            "c",
+            "the same layer wins"
+        );
+
+        frame.write(pos, cell('d', Layer::BOTTOM.lift(2)));
+        assert_eq!(
+            frame.get(pos).grapheme.as_str_sanitize(),
+            "d",
+            "the higher wins"
+        );
+    }
+
+    #[test]
+    fn replacing_the_head_of_a_wide_grapheme_uncovers_its_other_half() {
+        let mut frame = Frame::new(Area::new(3, 1), None);
+        frame.write(CellPosition::new(0, 0), wide_head('漢'));
+        frame.write(CellPosition::new(1, 0), tail());
+
+        frame.write(CellPosition::new(0, 0), cell('a', Layer::BOTTOM.lift(1)));
+
+        assert!(
+            !frame.get(CellPosition::new(1, 0)).covered,
+            "nothing is left to cover, so the terminal prints a blank there"
+        );
+    }
+
+    #[test]
+    fn replacing_the_other_half_of_a_wide_grapheme_blanks_its_head() {
+        let mut frame = Frame::new(Area::new(3, 1), None);
+        frame.write(CellPosition::new(0, 0), wide_head('漢'));
+        frame.write(CellPosition::new(1, 0), tail());
+
+        frame.write(CellPosition::new(1, 0), cell('a', Layer::BOTTOM.lift(1)));
+
+        assert_eq!(
+            frame
+                .get(CellPosition::new(0, 0))
+                .grapheme
+                .as_str_sanitize(),
+            " ",
+            "half a wide grapheme is not printed"
+        );
+        assert_eq!(
+            frame
+                .get(CellPosition::new(1, 0))
+                .grapheme
+                .as_str_sanitize(),
+            "a"
+        );
+    }
+
+    #[test]
+    fn writing_a_wide_grapheme_in_order_keeps_both_halves() {
+        let mut frame = Frame::new(Area::new(3, 1), None);
+
+        frame.write(CellPosition::new(0, 0), wide_head('漢'));
+        frame.write(CellPosition::new(1, 0), tail());
+
+        assert_eq!(
+            frame
+                .get(CellPosition::new(0, 0))
+                .grapheme
+                .as_str_sanitize(),
+            "漢"
+        );
+        assert!(frame.get(CellPosition::new(1, 0)).covered, "its other half");
+    }
+
+    #[test]
+    fn clearing_takes_back_the_cells_and_the_cursor() {
+        let mut frame = Frame::new(Area::new(2, 1), None);
+        frame.write(CellPosition::new(0, 0), cell('a', Layer::BOTTOM.lift(3)));
+        frame.put_cursor(CellPosition::new(1, 0), Layer::BOTTOM.lift(3));
+
+        frame.clear();
+        frame.put_cursor(CellPosition::new(0, 0), Layer::BOTTOM);
+        frame.write(CellPosition::new(0, 0), cell('b', Layer::BOTTOM));
+
+        assert_eq!(
+            frame
+                .get(CellPosition::new(0, 0))
+                .grapheme
+                .as_str_sanitize(),
+            "b"
+        );
+        assert_eq!(
+            frame.cursor(),
+            Some(CellPosition::new(0, 0)),
+            "the layers from before don't block the new draw"
+        );
+    }
 
     #[test]
     fn resize_blanks_every_cell() {

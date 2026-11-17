@@ -54,10 +54,14 @@ fn press(editor: &mut Editor, keys: &str) -> Frame {
     frame.expect("there is at least one key to press")
 }
 
-/// An editor of `cols` by `rows` that has opened a plain text file holding `text`.
+/// The rows under the view that the status bar takes.
+const STATUS_ROWS: u16 = 1;
+
+/// An editor whose view is `cols` by `rows`, with a status bar under it, that has opened a
+/// plain text file holding `text`.
 fn editor(text: &str, cols: u16, rows: u16) -> Editor {
-    let mut editor =
-        Editor::new(Area::new(cols, rows), &Config::default()).expect("the wasm engine starts");
+    let mut editor = Editor::new(Area::new(cols, rows + STATUS_ROWS), &Config::default())
+        .expect("the wasm engine starts");
     let file = Input::File {
         path: Path::new("a.txt").into(),
         bytes: text.as_bytes().into(),
@@ -173,6 +177,45 @@ mod tests {
     }
 
     #[test]
+    fn the_status_bar_is_the_last_row() {
+        let mut editor = editor("abc", 20, 3);
+        let frame = press(&mut editor, "l");
+
+        let last: String = frame
+            .row(3)
+            .iter()
+            .map(|cell| cell.grapheme.as_str_sanitize())
+            .collect();
+        assert_eq!(last.trim_end(), "wend", "its text under the view");
+        assert_eq!(row_text(&frame, 2), "", "and the view's own rows above it");
+    }
+
+    #[test]
+    fn a_terminal_wider_than_the_text_centers_it() {
+        // The gutter and 100 columns of text are 104 wide, so 96 columns are left over
+        let mut editor = editor("abc", 200, 3);
+        let frame = press(&mut editor, "l");
+
+        let col = |col| {
+            frame
+                .get(CellPosition::new(col, 0))
+                .grapheme
+                .as_str_sanitize()
+        };
+        assert_eq!(col(47), " ", "blank left of the gutter");
+        assert_eq!(
+            col(52),
+            "a",
+            "the text starts after 48 columns and the gutter"
+        );
+        assert_eq!(
+            frame.cursor(),
+            Some(CellPosition::new(53, 0)),
+            "the cursor moved to the b, in the centered text"
+        );
+    }
+
+    #[test]
     fn a_terminal_with_no_size_has_no_cursor() {
         for (cols, rows) in [(0, 0), (20, 0), (0, 5)] {
             let mut editor = editor("one\ntwo", cols, rows);
@@ -187,7 +230,10 @@ mod tests {
         let empty = last_frame(exchange(&mut editor, Input::Resize(Area::new(0, 0))));
         assert_eq!(empty.cursor(), None, "nowhere to show it");
 
-        let restored = last_frame(exchange(&mut editor, Input::Resize(Area::new(20, 3))));
+        let restored = last_frame(exchange(
+            &mut editor,
+            Input::Resize(Area::new(20, 3 + STATUS_ROWS)),
+        ));
         assert_eq!(
             restored.cursor(),
             Some(CellPosition::new(GUTTER, 0)),

@@ -1,6 +1,7 @@
 use crate::{
     config::LineNumbers,
-    frame::{Cell, CellPosition, Content, Frame, Grapheme, Rect, Style},
+    frame::{Cell, CellPosition, Content, Grapheme, Rect, Style},
+    layout::Canvas,
     number,
 };
 
@@ -38,6 +39,12 @@ impl Gutter {
         }
     }
 
+    /// Returns how many columns the gutter takes.
+    #[must_use]
+    pub(super) fn width(self) -> u16 {
+        self.width
+    }
+
     /// Splits the view's `rect` into the gutter and the part left for the text.
     #[must_use]
     pub(super) fn split(self, rect: Rect) -> (Rect, Rect) {
@@ -51,11 +58,10 @@ impl Gutter {
     /// rows it is from the cursor's, which is how many times a vertical motion takes the
     /// cursor there, wrapped rows included.
     ///
-    /// Every cell of the gutter is written, because the frame is reused and still holds the
-    /// last draw. Nothing is numbered without a `head`.
+    /// Nothing is numbered without a `head`.
     pub(super) fn render(
         self,
-        frame: &mut Frame,
+        canvas: &mut Canvas<'_>,
         rect: Rect,
         rows_with_text: usize,
         head: Option<Head>,
@@ -63,11 +69,11 @@ impl Gutter {
         let (rect, _) = self.split(rect);
         let numbers = rect.pad_right(self.padding);
         for row in 0..rect.area.height() {
-            blank_row(frame, rect, row);
+            blank_row(canvas, rect, row);
             let Some(head) = head.filter(|_| row < rows_with_text) else {
                 continue;
             };
-            write_number(frame, numbers, row, number(row, head), row == head.row);
+            write_number(canvas, numbers, row, number(row, head), row == head.row);
         }
     }
 }
@@ -80,20 +86,20 @@ fn number(row: usize, head: Head) -> usize {
     }
 }
 
-fn blank_row(frame: &mut Frame, rect: Rect, row: usize) {
+fn blank_row(canvas: &mut Canvas<'_>, rect: Rect, row: usize) {
     let blank = Cell {
         grapheme: Grapheme::blank(),
         ..Cell::default()
     };
     let row = rect.row + number::exact::<usize, u16>(row);
     for col in 0..rect.area.cols {
-        frame.write(CellPosition::new(rect.col + col, row), blank);
+        canvas.write(CellPosition::new(rect.col + col, row), blank);
     }
 }
 
 /// Writes `number` ending at the right edge of `rect`. A number that doesn't fit is left out,
 /// because its last digits alone would read as another number.
-fn write_number(frame: &mut Frame, rect: Rect, row: usize, number: usize, current: bool) {
+fn write_number(canvas: &mut Canvas<'_>, rect: Rect, row: usize, number: usize, current: bool) {
     let digits = Digits::new(number);
     if digits.len() > rect.area.width() {
         return;
@@ -115,7 +121,7 @@ fn write_number(frame: &mut Frame, rect: Rect, row: usize, number: usize, curren
             },
             ..Cell::default()
         };
-        frame.write(CellPosition::new(col, row), cell);
+        canvas.write(CellPosition::new(col, row), cell);
     }
 }
 
@@ -181,7 +187,10 @@ impl ExactSizeIterator for Digits {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Config, frame::Area};
+    use crate::{
+        config::Config,
+        frame::{Area, Frame},
+    };
 
     fn line_numbers() -> LineNumbers {
         Config::default().line_numbers
@@ -214,7 +223,12 @@ mod tests {
     fn rendered(rows: u16, rows_with_text: usize, head: Option<Head>) -> Frame {
         let area = Area::new(8, rows);
         let mut frame = Frame::new(area, None);
-        gutter().render(&mut frame, Rect::new(0, 0, area), rows_with_text, head);
+        gutter().render(
+            &mut Canvas::root(&mut frame),
+            Rect::new(0, 0, area),
+            rows_with_text,
+            head,
+        );
         frame
     }
 
@@ -307,9 +321,10 @@ mod tests {
         let mut frame = Frame::new(area, None);
         let rect = Rect::new(0, 0, area);
 
-        gutter().render(&mut frame, rect, 1, Some(Head { row: 0, line: 99 }));
-        assert_eq!(row_text(&frame, 0), "100 ", "line 100 first");
-        gutter().render(&mut frame, rect, 1, Some(Head { row: 0, line: 4 }));
+        // One canvas, so the second draw lands on what the first one wrote
+        let mut canvas = Canvas::root(&mut frame);
+        gutter().render(&mut canvas, rect, 1, Some(Head { row: 0, line: 99 }));
+        gutter().render(&mut canvas, rect, 1, Some(Head { row: 0, line: 4 }));
 
         assert_eq!(row_text(&frame, 0), "  5 ", "no 1 or 0 left of the 5");
     }
@@ -320,7 +335,7 @@ mod tests {
         let mut frame = Frame::new(area, None);
 
         Gutter::new(0, 6, line_numbers()).render(
-            &mut frame,
+            &mut Canvas::root(&mut frame),
             Rect::new(0, 0, area),
             1,
             Some(Head { row: 0, line: 122 }),

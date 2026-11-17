@@ -1,15 +1,22 @@
 use std::{mem, ops};
 
 use super::{Highlighter, Selection, Slot, SlotPosition, View, Wrap, gutter};
-use crate::frame::{Cell, Content, Frame, Grapheme, Style};
+use crate::{
+    frame::{Cell, Content, Grapheme, Rect, Style},
+    layout::{Canvas, Element, Layout},
+};
 
-impl View {
-    /// Writes the view's cells into `frame`, leaving the rest of it alone.
-    ///
-    /// # Panics
-    ///
-    /// If the view's rect reaches outside `frame`.
-    pub fn render(&mut self, frame: &mut Frame) {
+impl Element for View {
+    /// Takes all the room it is given, and centers the text in it itself.
+    fn layout(&self) -> Layout {
+        Layout::FILL
+    }
+
+    /// Writes the view's cells into `canvas`, and puts the cursor where the head is.
+    fn render(&mut self, rect: Rect, canvas: &mut Canvas<'_>) {
+        self.resize(rect);
+        // Scrolls to the cursor first, so what is drawn is where the cursor is
+        let cursor = self.cursor_position();
         self.refresh_wrap();
         let text_rect = self.text_rect();
         let rows_with_text = self.wrap.last_row().map_or(0, |row| row + 1);
@@ -20,7 +27,8 @@ impl View {
                 line: metadata.line,
             })
         });
-        self.gutter.render(frame, self.rect, rows_with_text, head);
+        self.gutter
+            .render(canvas, self.block(), rows_with_text, head);
 
         let selected = self.selection_range();
         let mut open = mem::take(&mut self.open_highlights);
@@ -36,12 +44,17 @@ impl View {
             {
                 cell.style.content = Content::Text(highlight);
             }
-            frame.write(Self::cell_position(text_rect, pos), cell);
+            canvas.write(Self::cell_position(text_rect, pos), cell);
+        }
+        if let Some(cursor) = cursor {
+            canvas.set_cursor(cursor);
         }
 
         self.open_highlights = open;
     }
+}
 
+impl View {
     /// The bytes of the text the wrap shows, from the first row's start to the last row's end.
     fn visible_bytes(&self) -> ops::Range<usize> {
         let mut rows = self.wrap.rows();
@@ -100,6 +113,7 @@ impl View {
                 cursor: glyph.to_range().contains(&selection.head()),
             },
             covered,
+            ..Cell::default()
         }
     }
 }

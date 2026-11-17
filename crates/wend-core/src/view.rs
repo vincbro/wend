@@ -4,6 +4,7 @@ use crate::{
     buffer::Buffer,
     config::{Config, LineNumbers},
     frame::{Area, CellPosition, Rect},
+    layout::{Fit, Layout, Size},
     number,
     syntax::Highlight,
 };
@@ -24,6 +25,9 @@ mod selection;
 pub use selection::Selection;
 mod gutter;
 use gutter::Gutter;
+
+/// The columns of text the wrap is wide at most, until each language has its own.
+const MAX_TEXT_WIDTH: u16 = 100;
 
 /// Decides what a selection change does to the column up and down aim for.
 #[derive(Debug, Clone, Copy)]
@@ -175,7 +179,11 @@ impl View {
         self.wrap_dirty = true;
     }
 
+    /// Moves the view to `rect`, which changes nothing when it is already there.
     pub fn resize(&mut self, rect: Rect) {
+        if self.rect == rect {
+            return;
+        }
         self.rect = rect;
         self.gutter = Self::gutter_for(&self.buffer, rect, self.line_numbers);
         self.desired_col = self
@@ -186,19 +194,33 @@ impl View {
 
     /// Returns the gutter `buffer` needs in a view at `rect`.
     fn gutter_for(buffer: &Buffer, rect: Rect, line_numbers: LineNumbers) -> Gutter {
-        // The cursor can sit on the empty line after a final line break, which the rope does
-        // not count, so the last line number is one more
-        let line_count = buffer.rope().line_len() + 1;
         Gutter::new(
-            line_count.max(rect.area.height()),
+            Self::largest_number(buffer, rect.area.height()),
             rect.area.cols,
             line_numbers,
         )
     }
 
+    /// Returns the largest number a gutter next to `buffer` shows in a view `rows` tall.
+    fn largest_number(buffer: &Buffer, rows: usize) -> usize {
+        // The cursor can sit on the empty line after a final line break, which the rope does
+        // not count, so the last line number is one more
+        let line_count = buffer.rope().line_len() + 1;
+        line_count.max(rows)
+    }
+
+    /// Returns the part of the view the gutter and the text take: the gutter and a full width
+    /// of text, centered in the view, or all of the view when that is narrower.
+    fn block(&self) -> Rect {
+        let width = self.gutter.width() + MAX_TEXT_WIDTH;
+        Layout::Fit(Fit::centered(Size::Fixed(width), Size::Fill))
+            .place(self.rect, self.rect)
+            .0
+    }
+
     /// Returns the part of the view the text is laid out in, to the right of the gutter.
     fn text_rect(&self) -> Rect {
-        self.gutter.split(self.rect).1
+        self.gutter.split(self.block()).1
     }
 
     /// Shows `new_buffer` from its start and returns the buffer shown until now.
@@ -245,6 +267,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         frame::{Area, Content, Frame},
+        layout::{Canvas, Element},
         syntax::{self, LanguageTag},
     };
 
@@ -265,7 +288,8 @@ pub(crate) mod tests {
     /// Renders the view into a frame that is exactly as big as the view.
     fn rendered(view: &mut View) -> Frame {
         let mut frame = Frame::new(view.rect.area, None);
-        view.render(&mut frame);
+        let rect = view.rect;
+        view.render(rect, &mut Canvas::root(&mut frame));
         frame
     }
 
@@ -538,5 +562,22 @@ pub(crate) mod tests {
         assert_eq!(gutter_width(&view), 3, "half of 6, not the 4 it wants");
         assert_eq!(view.text_rect().area.cols, 3);
         assert!(view.cursor_position().is_some());
+    }
+
+    #[test]
+    fn the_text_is_at_most_the_max_text_width_and_centered_in_a_wider_view() {
+        let view = view("abc", 200, 3);
+
+        assert_eq!(
+            view.text_rect().area.cols,
+            MAX_TEXT_WIDTH,
+            "the wrap stops at the max text width"
+        );
+        let block_col = view.block().col;
+        assert_eq!(
+            block_col,
+            (view.rect.area.cols - gutter_width(&view) - MAX_TEXT_WIDTH) / 2,
+            "the gutter and the text share the space around them evenly"
+        );
     }
 }
