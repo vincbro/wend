@@ -58,7 +58,16 @@ impl Default for Style {
     }
 }
 
-pub(crate) fn render_frame(frame: &Frame, theme: &Theme, writer: &mut impl Write) -> Result<()> {
+/// Draws `frame`, leaving out the cells that are the same in `previous`, which is the frame the
+/// terminal shows now. Without one, or with one of another size, it draws every cell.
+pub(crate) fn render_frame(
+    frame: &Frame,
+    previous: Option<&Frame>,
+    theme: &Theme,
+    writer: &mut impl Write,
+) -> Result<()> {
+    // The cells of a frame of another size don't line up with these
+    let previous = previous.filter(|previous| previous.area() == frame.area());
     // Terminals that support it hold the frame back until it is whole, so a half-drawn
     // one never shows. The others ignore it.
     writer.queue(terminal::BeginSynchronizedUpdate)?;
@@ -74,6 +83,11 @@ pub(crate) fn render_frame(frame: &Frame, theme: &Theme, writer: &mut impl Write
         if cell.covered {
             continue;
         }
+        if previous.is_some_and(|previous| unchanged(cell, previous.get(pos))) {
+            // The cursor stays where it is, so the next cell drawn has to move it
+            needs_move = true;
+            continue;
+        }
         if needs_move || pos.col == 0 {
             writer.queue(cursor::MoveTo(pos.col, pos.row))?;
         }
@@ -82,6 +96,12 @@ pub(crate) fn render_frame(frame: &Frame, theme: &Theme, writer: &mut impl Write
     }
     writer.queue(terminal::EndSynchronizedUpdate)?;
     Ok(())
+}
+
+/// Returns whether `cell` looks the same as the `shown` one. The layer is left out, because
+/// it only decides which writes win and not what is drawn.
+fn unchanged(cell: &Cell, shown: &Cell) -> bool {
+    cell.grapheme == shown.grapheme && cell.style == shown.style && cell.covered == shown.covered
 }
 
 fn queue_cell(
@@ -102,6 +122,8 @@ fn queue_cell(
 
 #[cfg(test)]
 mod tests {
+    use wend_core::frame::{Area, CellPosition, Grapheme};
+
     use super::*;
 
     const RED: Color = Color::Rgb { r: 255, g: 0, b: 0 };
@@ -139,6 +161,118 @@ mod tests {
             queued(style, previous),
             "\x1b[0m\x1b[49m\x1b[38;2;255;0;0m\x1b[3m",
             "reset, both colors, then italic"
+        );
+    }
+
+    /// A frame of one row with `text` in it, one glyph to a cell.
+    fn row(text: &str) -> Frame {
+        let cols = u16::try_from(text.chars().count()).unwrap();
+        let mut frame = Frame::new(Area::new(cols, 1), None);
+        for (col, glyph) in (0..).zip(text.chars()) {
+            let cell = Cell {
+                grapheme: Grapheme::from_char(glyph),
+                ..Cell::default()
+            };
+            frame.write(CellPosition::new(col, 0), cell);
+        }
+        frame
+    }
+
+    /// What drawing `frame` over `previous` writes.
+    fn drawn(frame: &Frame, previous: Option<&Frame>) -> String {
+        let theme = Theme::built_in("default").unwrap();
+        let mut bytes = Vec::new();
+        render_frame(frame, previous, &theme, &mut bytes).unwrap();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    /// The text `bytes` prints, without the escape sequences that move and color it.
+    fn printed(bytes: &str) -> String {
+        let mut text = String::new();
+        let mut chars = bytes.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                // An escape sequence ends with a letter, or a symbol like `~` or `@`
+                chars
+                    .by_ref()
+                    .find(|&end| end.is_ascii_alphabetic() || end == '~');
+            } else {
+                text.push(c);
+            }
+        }
+        text
+    }
+
+    #[test]
+    fn without_a_previous_frame_every_cell_is_drawn() {
+        assert_eq!(printed(&drawn(&row("abcd"), None)), "abcd");
+    }
+
+    #[test]
+    fn a_frame_like_the_previous_one_draws_no_cell() {
+        let frame = row("abcd");
+
+        assert_eq!(
+            printed(&drawn(&frame, Some(&frame))),
+            "",
+            "nothing changed, nothing is written"
+        );
+    }
+
+    #[test]
+    fn only_the_cell_that_changed_is_drawn_after_a_move_to_it() {
+        let bytes = drawn(&row("abcd"), Some(&row("abXd")));
+
+        assert_eq!(printed(&bytes), "c", "the rest is left alone");
+        assert!(
+            bytes.contains("\x1b[1;3H"),
+            "a move to the third column: {bytes:?}"
+        );
+    }
+
+    #[test]
+    fn cells_that_changed_next_to_each_other_share_one_move() {
+        let bytes = drawn(&row("abcd"), Some(&row("aXYd")));
+
+        assert_eq!(printed(&bytes), "bc");
+        assert!(bytes.contains("\x1b[1;2H"), "a move to the first of them");
+        assert!(!bytes.contains("\x1b[1;3H"), "and none to the second");
+    }
+
+    #[test]
+    fn a_cell_after_an_unchanged_one_moves_again() {
+        let bytes = drawn(&row("abcd"), Some(&row("Xbcd")));
+
+        assert_eq!(printed(&bytes), "a");
+        let bytes = drawn(&row("abcd"), Some(&row("aXcY")));
+        assert_eq!(printed(&bytes), "bd", "the cell between is left alone");
+        assert!(
+            bytes.contains("\x1b[1;4H"),
+            "and the cursor jumps over it: {bytes:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_of_another_size_is_drawn_whole() {
+        let bytes = drawn(&row("abcd"), Some(&row("ab")));
+
+        assert_eq!(
+            printed(&bytes),
+            "abcd",
+            "the old frame's cells don't line up"
+        );
+    }
+
+    #[test]
+    fn a_cell_that_stopped_being_covered_is_a_change() {
+        let covered = Cell {
+            covered: true,
+            ..Cell::default()
+        };
+
+        assert!(
+            !unchanged(&Cell::default(), &covered),
+            "a blank and the covered half of a wide glyph look the same but aren't"
         );
     }
 }

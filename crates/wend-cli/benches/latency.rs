@@ -7,16 +7,20 @@
 //!
 //! - `input_delay` times one key press from the key to the written frame, per file size.
 //! - `fps` redraws the same frame over and over. Its throughput line is frames per second.
+//!
+//! Each runs twice, `full` drawing every cell of every frame and `diff` drawing only what
+//! differs from the frame before, as the frontend does.
 
 use std::{
     fs::{File, OpenOptions},
     hint,
     io::Write,
+    mem,
     path::Path,
     time::{Duration, Instant},
 };
 
-use criterion::{BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkGroup, BenchmarkId, Criterion, Throughput, measurement::WallTime};
 use wend_core::{
     config::Config,
     editor::Editor,
@@ -46,6 +50,9 @@ mod theme;
 
 /// File sizes in bytes.
 const SIZES: [usize; 2] = [100_000, 1_000_000];
+
+/// How a frame is drawn: every cell of it, or only what differs from the frame on screen.
+const MODES: [(&str, bool); 2] = [("full", false), ("diff", true)];
 
 /// A common terminal size.
 const COLS: u16 = 120;
@@ -92,6 +99,10 @@ struct Session {
     editor: Editor,
     /// The frame `redraw` draws into.
     frame: Frame,
+    /// The frame on screen, kept to draw only what differs from it. None in the `full` mode,
+    /// and before the first frame.
+    screen: Option<Frame>,
+    diff: bool,
     /// Built once, like the frontend's, so a frame doesn't time reading a theme file.
     theme: theme::Theme,
     /// One frame's bytes, reused like the frontend's.
@@ -103,7 +114,7 @@ struct Session {
 
 impl Session {
     /// Opens `text` as a Rust file, with its grammar loaded and the first frame drawn.
-    fn open(text: &str) -> Self {
+    fn open(text: &str, diff: bool) -> Self {
         let area = Area::new(COLS, ROWS);
         let mut editor = Editor::new(area, &Config::default())
             .expect("the wasm engine starts on every platform");
@@ -111,6 +122,8 @@ impl Session {
         let mut session = Self {
             editor,
             frame,
+            screen: None,
+            diff,
             theme: theme::Theme::built_in("default").expect("default is built in"),
             bytes: Vec::new(),
             sink: OpenOptions::new()
@@ -136,12 +149,7 @@ impl Session {
         self.outputs.extend(self.editor.drain_outputs());
         while let Some(output) = self.outputs.pop() {
             match output {
-                Output::Frame(frame) => {
-                    write(&frame, &self.theme, &mut self.bytes, &mut self.sink);
-                    self.editor
-                        .apply(Input::Drawn(frame))
-                        .expect("a frame always fits back in the pool");
-                }
+                Output::Frame(frame) => self.show(frame),
                 Output::Language(tag) => self
                     .editor
                     .apply(Input::Language {
@@ -156,6 +164,27 @@ impl Session {
         }
     }
 
+    /// Draws `frame` and gives the editor back the frame that was on screen before it.
+    fn show(&mut self, frame: Frame) {
+        write(
+            &frame,
+            self.screen.as_ref(),
+            &self.theme,
+            &mut self.bytes,
+            &mut self.sink,
+        );
+        let returned = if self.diff {
+            self.screen.replace(frame)
+        } else {
+            Some(frame)
+        };
+        if let Some(returned) = returned {
+            self.editor
+                .apply(Input::Drawn(returned))
+                .expect("a frame always fits back in the pool");
+        }
+    }
+
     fn press(&mut self, c: char) {
         self.deliver(Input::Key(Key::new(KeyCode::Char(c))));
     }
@@ -163,28 +192,54 @@ impl Session {
     /// Draws the frame again with nothing changed.
     fn redraw(&mut self) {
         self.editor.update_frame(&mut self.frame);
-        write(&self.frame, &self.theme, &mut self.bytes, &mut self.sink);
+        write(
+            &self.frame,
+            self.screen.as_ref(),
+            &self.theme,
+            &mut self.bytes,
+            &mut self.sink,
+        );
+        if !self.diff {
+            return;
+        }
+        match &mut self.screen {
+            Some(screen) => mem::swap(screen, &mut self.frame),
+            None => self.screen = Some(self.frame.clone()),
+        }
     }
 }
 
 /// Turns `frame` into escape sequences in `bytes` and writes them out in one go, as the
-/// frontend does.
-fn write(frame: &Frame, theme: &theme::Theme, bytes: &mut Vec<u8>, sink: &mut File) {
+/// frontend does. `screen` is the frame the terminal shows, if the draw uses it.
+fn write(
+    frame: &Frame,
+    screen: Option<&Frame>,
+    theme: &theme::Theme,
+    bytes: &mut Vec<u8>,
+    sink: &mut File,
+) {
     bytes.clear();
-    draw::render_frame(frame, theme, bytes).expect("a Vec takes any write");
+    draw::render_frame(frame, screen, theme, bytes).expect("a Vec takes any write");
     sink.write_all(bytes).expect("writing to /dev/null works");
 }
 
 /// Times `iterations` key presses, opening a fresh session every `run` presses, so a run
 /// crosses lines, wrapped rows and scrolls and the average covers them. Setup is outside
 /// the timer.
-fn time_keys(source: &str, iterations: u64, run: u64, setup: &str, key: char) -> Duration {
+fn time_keys(
+    source: &str,
+    diff: bool,
+    iterations: u64,
+    run: u64,
+    setup: &str,
+    key: char,
+) -> Duration {
     let mut elapsed = Duration::ZERO;
     let mut left = iterations;
 
     while left > 0 {
         let presses = left.min(run);
-        let mut session = Session::open(source);
+        let mut session = Session::open(source, diff);
         setup.chars().for_each(|c| session.press(c));
 
         let start = Instant::now();
@@ -200,6 +255,20 @@ fn time_keys(source: &str, iterations: u64, run: u64, setup: &str, key: char) ->
     elapsed
 }
 
+/// Times one benchmark of `keys`, which is the presses per session, the keys typed first and
+/// the key pressed.
+fn bench_keys(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    id: BenchmarkId,
+    source: &String,
+    diff: bool,
+    (run, setup, key): (u64, &str, char),
+) {
+    group.bench_with_input(id, source, |bencher, source| {
+        bencher.iter_custom(|iterations| time_keys(source, diff, iterations, run, setup, key));
+    });
+}
+
 /// One key pressed over and over, after `setup` keys. `run` presses share a session.
 fn input_delay(criterion: &mut Criterion) {
     // (name, keys typed first, key timed, presses per session)
@@ -213,14 +282,10 @@ fn input_delay(criterion: &mut Criterion) {
         let mut group = criterion.benchmark_group(format!("input_delay/{name}"));
         for size in SIZES {
             let source = text(size);
-            group.bench_with_input(
-                BenchmarkId::from_parameter(size),
-                &source,
-                |bencher, source| {
-                    bencher
-                        .iter_custom(|iterations| time_keys(source, iterations, run, setup, key));
-                },
-            );
+            for (mode, diff) in MODES {
+                let id = BenchmarkId::new(mode, size);
+                bench_keys(&mut group, id, &source, diff, (run, setup, key));
+            }
         }
         group.finish();
     }
@@ -234,10 +299,12 @@ fn fps(criterion: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     for size in SIZES {
-        let mut session = Session::open(&text(size));
-        group.bench_function(BenchmarkId::from_parameter(size), |bencher| {
-            bencher.iter(|| session.redraw());
-        });
+        for (mode, diff) in MODES {
+            let mut session = Session::open(&text(size), diff);
+            group.bench_function(BenchmarkId::new(mode, size), |bencher| {
+                bencher.iter(|| session.redraw());
+            });
+        }
     }
 
     group.finish();

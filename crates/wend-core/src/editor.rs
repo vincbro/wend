@@ -23,6 +23,11 @@ mod error;
 mod language;
 pub use error::{Error, Result};
 
+/// How many frames pass between the editor and the frontend. The frontend keeps the one on
+/// screen to draw only what differs from it, so one is always away, and the others are the
+/// editor's to draw into.
+const FRAME_COUNT: usize = 3;
+
 /// Holds the whole editor: the terminal's area, the view and the mode, with the buffers that
 /// aren't shown and the loader of the grammars they are written in.
 ///
@@ -62,7 +67,7 @@ impl Editor {
             mode: Mode::Normal,
             outputs: vec![],
             keymap,
-            frame_pool: FramePool::new(2, area),
+            frame_pool: FramePool::new(FRAME_COUNT, area),
             is_stale: false,
             loader: Loader::new()?,
             requested_languages: HashSet::new(),
@@ -456,10 +461,11 @@ mod tests {
     #[test]
     fn inputs_while_every_frame_is_out_share_one_frame() {
         let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        // One key for each frame, the first of them entering insert mode
         press(&mut editor, "i");
-        press(&mut editor, "a");
+        press(&mut editor, &"a".repeat(FRAME_COUNT - 1));
         let drawing = frames(&mut editor);
-        assert_eq!(drawing.len(), 2, "both frames are out");
+        assert_eq!(drawing.len(), FRAME_COUNT, "every frame is out");
 
         press(&mut editor, "bcd");
         assert!(

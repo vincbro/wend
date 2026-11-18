@@ -12,7 +12,13 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use crossterm::{event, terminal};
-use wend_core::{editor::Editor, frame::Area, input::Input, output, syntax::LanguageTag};
+use wend_core::{
+    editor::Editor,
+    frame::{Area, Frame},
+    input::Input,
+    output,
+    syntax::LanguageTag,
+};
 
 use crate::screen::TerminalGuard;
 
@@ -92,19 +98,26 @@ fn main() -> Result<()> {
     // any before
     let mut buf = Vec::new();
 
+    // The frame the terminal shows, so the next one only draws what differs from it
+    let mut on_screen: Option<Frame> = None;
+
     for output in output_rx {
         match output {
             output::Output::Frame(frame) => {
                 buf.clear();
-                draw::render_frame(&frame, &theme, &mut buf)
+                draw::render_frame(&frame, on_screen.as_ref(), &theme, &mut buf)
                     .context("failed to draw the screen")?;
                 let mut out = io::stdout().lock();
                 out.write_all(&buf)
                     .and_then(|()| out.flush())
                     .context("failed to draw the screen")?;
-                input_tx
-                    .send(Input::Drawn(frame))
-                    .context("the editor stopped")?;
+
+                // The editor gets the frame before this one back, which is no longer on screen
+                if let Some(replaced) = on_screen.replace(frame) {
+                    input_tx
+                        .send(Input::Drawn(replaced))
+                        .context("the editor stopped")?;
+                }
             }
             output::Output::Quit => break,
             output::Output::Write { path, rope } => write_file(&path, rope.chunks())

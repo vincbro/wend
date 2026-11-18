@@ -141,7 +141,6 @@ Measured on 2026-11-11, not yet changed. Each one is a candidate for a change th
 | Where | What | Numbers |
 |---|---|---|
 | `syntax.rs`, `Syntax::highlights` | Every frame runs the highlight query over the visible bytes, and its cost grows with the file, not the screen. With highlighting off, a redraw is about 0.17 ms at 100 KB and at 1 MB. | With it on: 0.52 ms at 100 KB and 2.76 ms at 1 MB. Cache the visible spans while the tree and the range are unchanged. |
-| `wend-cli/src/draw.rs` | Every cell is redrawn on every frame. | Frame diffing is in TODO.md. |
 | `Editor::apply`, `reparse` | Typing in a 1 MB file takes about 14 ms, nearly all of it the incremental parse and the highlight query. | Not yet split further. |
 | `view/wrap.rs`, `Wrap::find_byte` | Scans the rows and slots, and one key press calls it several times (`ensure_cursor_visible`, `cursor_position`, `grapheme_start`). | Not measured on its own. Cache the head's slot after a rebuild. |
 | `Cargo.toml` | `panic = "abort"` and a profiling profile aren't set. | Undecided. |
