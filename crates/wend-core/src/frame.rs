@@ -64,7 +64,8 @@ impl Frame {
         self.cursor
     }
 
-    /// Puts the cursor at `pos` unless it is already on a higher layer than `layer`.
+    /// Puts the cursor at `pos` unless it is already on a higher layer than `layer`. A write on
+    /// a higher layer than the cursor's takes the cursor away if it lands on its cell.
     pub(crate) fn put_cursor(&mut self, pos: CellPosition, layer: Layer) {
         if self.cursor.is_none() || layer >= self.cursor_layer {
             self.cursor = Some(pos);
@@ -112,7 +113,8 @@ impl Frame {
         &self.cells[self.index(pos)]
     }
 
-    /// Writes `cell` unless the cell at `pos` is on a higher layer than it.
+    /// Writes `cell` unless the cell at `pos` is on a higher layer than it. A write on a
+    /// higher layer than the cursor's also takes the cursor away when it lands on its cell.
     ///
     /// Replacing half of a wide grapheme blanks the other half, because a terminal that is
     /// told to print into half of one blanks all of it.
@@ -125,6 +127,10 @@ impl Frame {
         let replaced = self.cells[index];
         if replaced.layer > cell.layer {
             return;
+        }
+        // A cursor under a cell of a higher layer would show through it
+        if self.cursor == Some(pos) && cell.layer > self.cursor_layer {
+            self.cursor = None;
         }
         // The cell to the right is covered only while the one at `index` is the wide head
         if usize::from(pos.col) + 1 < self.area.width() && self.cells[index + 1].covered {

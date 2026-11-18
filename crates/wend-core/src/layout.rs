@@ -5,6 +5,8 @@ mod canvas;
 pub use canvas::Canvas;
 mod element;
 pub use element::Element;
+mod pane;
+pub use pane::Pane;
 mod place;
 pub use place::{Align, Edge, Fit, Layout};
 mod size;

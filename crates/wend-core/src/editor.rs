@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     frame::{Area, Frame, Rect},
     input::{Input, Mode, action::Action, key::Key},
-    layout::{Canvas, Element},
+    layout::{Canvas, Element, Pane},
     output::Output,
     syntax::{LanguageTag, Loader},
     view::View,
@@ -17,6 +17,8 @@ mod keymap;
 use keymap::Keymap;
 mod status_bar;
 use status_bar::StatusBar;
+mod test_window;
+use test_window::test_window;
 mod error;
 mod language;
 pub use error::{Error, Result};
@@ -32,6 +34,8 @@ pub struct Editor {
     buffers: Vec<Buffer>,
     view: View,
     status_bar: StatusBar,
+    test_window: Pane<View>,
+    shows_test_window: bool,
     mode: Mode,
     outputs: Vec<Output>,
     keymap: Keymap,
@@ -53,6 +57,8 @@ impl Editor {
             buffers: vec![],
             view,
             status_bar: StatusBar,
+            test_window: test_window(config),
+            shows_test_window: false,
             mode: Mode::Normal,
             outputs: vec![],
             keymap,
@@ -182,6 +188,10 @@ impl Editor {
         // The status bar docks first, so the view gets the rows that are left
         let free = canvas.child(&mut self.status_bar, bounds);
         canvas.child(&mut self.view, free);
+        if self.shows_test_window {
+            // A float is placed in the whole frame, so it doesn't matter what is free
+            canvas.child(&mut self.test_window, bounds);
+        }
     }
 
     /// Fits the editor to a new terminal size.
@@ -198,6 +208,11 @@ impl Editor {
         let (_, free) = self.status_bar.layout().place(bounds, bounds);
         let (rect, _) = self.view.layout().place(free, bounds);
         self.view.resize(rect);
+    }
+
+    /// Shows or hides the floating test window, which is hidden until there is a real float.
+    pub fn show_test_window(&mut self, shown: bool) {
+        self.shows_test_window = shown;
     }
 
     pub fn set_mode(&mut self, mode: Mode) {

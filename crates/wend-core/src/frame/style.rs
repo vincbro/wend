@@ -23,6 +23,8 @@ pub enum Content {
     LineNumber,
     CurrentLineNumber,
     Marker,
+    /// The lines around a floating pane.
+    Border,
 }
 
 #[cfg(test)]

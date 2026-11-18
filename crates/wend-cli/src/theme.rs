@@ -164,6 +164,7 @@ pub(crate) struct Theme {
     pub(crate) line_number: Rule,
     pub(crate) current_line_number: Rule,
     pub(crate) marker: Rule,
+    pub(crate) border: Rule,
     pub(crate) selection: Rule,
     pub(crate) cursor: Rule,
 
@@ -218,6 +219,7 @@ impl Theme {
             Content::LineNumber => self.line_number,
             Content::CurrentLineNumber => self.current_line_number,
             Content::Marker => self.marker,
+            Content::Border => self.border,
         }
     }
 
@@ -431,7 +433,7 @@ mod tests {
             let rules: Vec<_> = (0..lines.len())
                 .filter(|&row| lines[row].starts_with('['))
                 .collect();
-            assert_eq!(rules.len(), 20, "{name} has a section for every rule");
+            assert_eq!(rules.len(), 21, "{name} has a section for every rule");
             for row in rules {
                 assert!(
                     lines[row - 1].starts_with("# "),

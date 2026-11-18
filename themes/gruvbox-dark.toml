@@ -47,6 +47,11 @@ foreground = "#fabd2f"
 # Example: foreground = "#ea83a5".
 [marker]
 
+# The lines around a floating pane.
+# Example: foreground = "#ea83a5".
+[border]
+foreground = "#7c6f64"
+
 # The selected text. Leave the foreground out and the text keeps its colors.
 # Example: background = "#3e3e43".
 [selection]

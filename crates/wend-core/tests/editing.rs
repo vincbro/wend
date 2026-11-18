@@ -436,4 +436,22 @@ mod tests {
             "the fn of the second file"
         );
     }
+
+    #[test]
+    fn a_view_in_the_test_window_floats_over_the_text_and_takes_the_cursor() {
+        let mut editor = editor("abc", 40, 10);
+        editor.show_test_window(true);
+
+        let frame = press(&mut editor, "l");
+
+        let shown = (0..11).any(|row| row_text(&frame, row).contains("a view inside"));
+        assert!(shown, "the window's view is drawn on top of the editor");
+        // The window is 24 by 5 cells in the middle of 40 by 11, so its view starts at
+        // column 9 and row 4, and its gutter is four columns
+        assert_eq!(
+            frame.cursor(),
+            Some(CellPosition::new(13, 4)),
+            "the topmost view has the cursor, not the editor's one under the window"
+        );
+    }
 }

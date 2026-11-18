@@ -111,6 +111,21 @@ impl Rect {
         )
     }
 
+    /// Leaves out `by` cells on every side, which leaves no cells when the rect is smaller than
+    /// that on either axis.
+    #[must_use]
+    pub fn inset(&self, by: u16) -> Self {
+        let both_sides = by.saturating_mul(2);
+        Self::new(
+            self.col + by.min(self.area.cols),
+            self.row + by.min(self.area.rows),
+            Area::new(
+                self.area.cols.saturating_sub(both_sides),
+                self.area.rows.saturating_sub(both_sides),
+            ),
+        )
+    }
+
     /// Returns the part of the rect that is also in `other`, which has no cells when they don't
     /// touch.
     #[must_use]
@@ -267,5 +282,24 @@ mod tests {
             Area::new(0, 3),
             "padding past the width leaves no columns"
         );
+    }
+
+    #[test]
+    fn inset_leaves_out_the_cells_on_every_side() {
+        let rect = Rect::new(2, 1, Area::new(10, 6)).inset(1);
+
+        assert_eq!(
+            rect,
+            Rect::new(3, 2, Area::new(8, 4)),
+            "one cell off every side"
+        );
+    }
+
+    #[test]
+    fn inset_of_a_smaller_rect_leaves_nothing() {
+        let rect = Rect::new(2, 1, Area::new(1, 6)).inset(1);
+
+        assert!(rect.area.is_empty(), "no column is left");
+        assert_eq!(rect.area.rows, 4, "the rows still lose both sides");
     }
 }
