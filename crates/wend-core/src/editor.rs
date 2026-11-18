@@ -1,11 +1,15 @@
-use std::{collections::HashSet, path::Path, vec::Drain};
+use std::{collections::HashSet, mem, path::Path, vec::Drain};
 
 use crate::{
     buffer::Buffer,
     config::Config,
     frame::{Area, Frame, Rect},
-    input::{Input, Mode, action::Action, key::Key},
-    layout::{Canvas, Element, Pane},
+    input::{
+        Input, Mode,
+        action::{Action, EditorAction},
+        key::Key,
+    },
+    layout::{Canvas, Element},
     output::Output,
     syntax::{LanguageTag, Loader},
     view::View,
@@ -13,12 +17,10 @@ use crate::{
 
 mod frame_pool;
 use frame_pool::FramePool;
-mod keymap;
-use keymap::Keymap;
 mod status_bar;
 use status_bar::StatusBar;
-mod test_window;
-use test_window::test_window;
+mod overlay;
+use overlay::{KeyOutcome, Overlay, TestOverlay};
 mod error;
 mod language;
 pub use error::{Error, Result};
@@ -28,8 +30,8 @@ pub use error::{Error, Result};
 /// editor's to draw into.
 const FRAME_COUNT: usize = 3;
 
-/// Holds the whole editor: the terminal's area, the view and the mode, with the buffers that
-/// aren't shown and the loader of the grammars they are written in.
+/// Holds the whole editor: the terminal's area, the view and the overlay over it, with the
+/// buffers that aren't shown and the loader of the grammars they are written in.
 ///
 /// `buffers` holds every open buffer except the one the view shows, so each open file
 /// lives in exactly one place.
@@ -39,11 +41,13 @@ pub struct Editor {
     buffers: Vec<Buffer>,
     view: View,
     status_bar: StatusBar,
-    test_window: Pane<View>,
-    shows_test_window: bool,
-    mode: Mode,
+    /// The window floating over the editor, which gets the keys while it is open.
+    overlay: Option<Overlay>,
+    /// What the editor follows, kept for the views of the windows it opens.
+    config: Config,
     outputs: Vec<Output>,
-    keymap: Keymap,
+    /// What the view asked of the editor, kept so that its memory is reused.
+    requests: Vec<EditorAction>,
     frame_pool: FramePool,
     is_stale: bool,
     loader: Loader,
@@ -55,18 +59,16 @@ pub struct Editor {
 impl Editor {
     /// Starts an editor that follows `config`.
     pub fn new(area: Area, config: &Config) -> Result<Self> {
-        let keymap = Keymap::new(config.keys.trees()?);
-        let view = View::new(Rect::new(0, 0, area), config);
+        let view = View::new(Rect::new(0, 0, area), config)?;
         let mut editor = Self {
             area,
             buffers: vec![],
             view,
             status_bar: StatusBar,
-            test_window: test_window(config),
-            shows_test_window: false,
-            mode: Mode::Normal,
+            overlay: None,
+            config: config.clone(),
             outputs: vec![],
-            keymap,
+            requests: vec![],
             frame_pool: FramePool::new(FRAME_COUNT, area),
             is_stale: false,
             loader: Loader::new()?,
@@ -116,28 +118,51 @@ impl Editor {
 
     /// Follows `config` from now on. A config that fails leaves the editor as it was.
     pub fn set_config(&mut self, config: &Config) -> Result<()> {
-        self.keymap = Keymap::new(config.keys.trees()?);
-        self.view.set_config(config);
+        self.view.set_config(config)?;
+        self.config.clone_from(config);
         Ok(())
     }
 
     fn key_press(&mut self, key: Key) -> Result<()> {
-        // The keymap stays borrowed while the actions run, so they get the other fields
-        let Self {
-            keymap,
-            view,
-            mode,
-            outputs,
-            ..
-        } = self;
-        for &action in keymap.press(*mode, key) {
-            perform(view, mode, outputs, action)?;
+        // An open overlay is first in line for the keys, and takes all of them
+        if let Some(overlay) = &mut self.overlay {
+            if overlay.key(key) == KeyOutcome::Closed {
+                self.overlay = None;
+            }
+            return Ok(());
         }
-        Ok(())
+        self.view.key_press(key, &mut self.requests);
+        // Taken out so the requests can run on the editor, then given back for their memory
+        let mut requests = mem::take(&mut self.requests);
+        let result = requests
+            .drain(..)
+            .try_for_each(|action| self.perform_editor(action));
+        self.requests = requests;
+        result
     }
 
     fn perform(&mut self, action: Action) -> Result<()> {
-        perform(&mut self.view, &mut self.mode, &mut self.outputs, action)
+        match action {
+            Action::Editor(action) => self.perform_editor(action),
+            Action::View(action) => {
+                self.view.perform(action);
+                Ok(())
+            }
+        }
+    }
+
+    fn perform_editor(&mut self, action: EditorAction) -> Result<()> {
+        match action {
+            EditorAction::Save => {
+                let (path, rope) = self.view.save()?;
+                self.outputs.push(Output::Write { path, rope });
+            }
+            EditorAction::OpenTestOverlay => {
+                self.overlay = Some(Overlay::Test(TestOverlay::new(&self.config)?));
+            }
+            EditorAction::Quit => self.outputs.push(Output::Quit),
+        }
+        Ok(())
     }
 
     pub fn drain_outputs(&mut self) -> Drain<'_, Output> {
@@ -155,7 +180,7 @@ impl Editor {
 
     #[must_use]
     pub fn mode(&self) -> Mode {
-        self.mode
+        self.view.mode()
     }
 
     /// Shows the file at `path`, reusing its buffer if it's among the open buffers. The buffer
@@ -193,9 +218,9 @@ impl Editor {
         // The status bar docks first, so the view gets the rows that are left
         let free = canvas.child(&mut self.status_bar, bounds);
         canvas.child(&mut self.view, free);
-        if self.shows_test_window {
+        if let Some(overlay) = &mut self.overlay {
             // A float is placed in the whole frame, so it doesn't matter what is free
-            canvas.child(&mut self.test_window, bounds);
+            canvas.child(overlay, bounds);
         }
     }
 
@@ -215,55 +240,29 @@ impl Editor {
         self.view.resize(rect);
     }
 
-    /// Shows or hides the floating test window, which is hidden until there is a real float.
-    pub fn show_test_window(&mut self, shown: bool) {
-        self.shows_test_window = shown;
-    }
-
     pub fn set_mode(&mut self, mode: Mode) {
-        self.mode = mode;
+        self.view.set_mode(mode);
     }
 
     #[must_use]
     pub fn is_select(&self) -> bool {
-        matches!(self.mode, Mode::Select)
+        matches!(self.view.mode(), Mode::Select)
     }
 
     #[must_use]
     pub fn is_insert(&self) -> bool {
-        matches!(self.mode, Mode::Insert)
+        matches!(self.view.mode(), Mode::Insert)
     }
-}
-
-fn perform(
-    view: &mut View,
-    mode: &mut Mode,
-    outputs: &mut Vec<Output>,
-    action: Action,
-) -> Result<()> {
-    match action {
-        Action::Motion(motion) => view.move_selection(motion, matches!(mode, Mode::Select)),
-        Action::Mode(next) => *mode = next,
-        Action::CollapseSelection => view.collapse_selection(),
-        Action::Insert(c) => view.insert(c),
-        Action::Delete => view.delete(),
-        Action::DeleteSelection => view.delete_selection(),
-        Action::SelectRow => view.select_row(),
-        Action::OpenLine => view.new_line(),
-        Action::Revert => view.revert(),
-        Action::Save => {
-            let (path, rope) = view.save()?;
-            outputs.push(Output::Write { path, rope });
-        }
-        Action::Quit => outputs.push(Output::Quit),
-    }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Actions, input::key::KeyCode, syntax};
+    use crate::{
+        config::Actions,
+        input::{action::ViewAction, key::KeyCode},
+        syntax,
+    };
 
     fn press(editor: &mut Editor, keys: &str) {
         for c in keys.chars() {
@@ -303,7 +302,7 @@ mod tests {
         let mut config = Config::default();
         config.keys.normal.insert(
             "<leader>v".parse().unwrap(),
-            Actions(Box::new([Action::Mode(Mode::Select)])),
+            Actions(Box::new([Action::View(ViewAction::Mode(Mode::Select))])),
         );
         editor.apply(Input::Config(Box::new(config))).unwrap();
         press(&mut editor, " v");
@@ -314,10 +313,10 @@ mod tests {
     fn a_config_that_collides_leaves_the_keys_as_they_were() {
         let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         let mut config = Config::default();
-        config
-            .keys
-            .normal
-            .insert("g".parse().unwrap(), Actions(Box::new([Action::Quit])));
+        config.keys.normal.insert(
+            "g".parse().unwrap(),
+            Actions(Box::new([Action::Editor(EditorAction::Quit)])),
+        );
         assert!(editor.set_config(&config).is_err(), "g also starts gs");
         press(&mut editor, "gs");
         assert!(

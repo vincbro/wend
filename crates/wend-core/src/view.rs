@@ -4,6 +4,11 @@ use crate::{
     buffer::Buffer,
     config::{Config, LineNumbers},
     frame::{Area, CellPosition, Rect},
+    input::{
+        Mode,
+        action::{Action, EditorAction, ViewAction},
+        key::Key,
+    },
     layout::{Fit, Layout, Size},
     number,
     syntax::Highlight,
@@ -25,6 +30,8 @@ mod selection;
 pub use selection::Selection;
 mod gutter;
 use gutter::Gutter;
+mod keymap;
+use keymap::Keymap;
 
 /// The columns of text the wrap is wide at most, until each language has its own.
 const MAX_TEXT_WIDTH: u16 = 100;
@@ -58,14 +65,20 @@ pub struct View {
     scroll_margin: usize,
     line_numbers: LineNumbers,
     desired_col: usize,
+
+    mode: Mode,
+    /// The key trees and the combo being typed, so each view answers to its own keys.
+    keymap: Keymap,
+    /// Scratch space for `key_press`, kept so that its memory is reused.
+    pressed: Vec<Action>,
 }
 
 impl View {
-    #[must_use]
-    pub fn new(rect: Rect, config: &Config) -> Self {
+    /// Fails when the keys of `config` can't make key trees.
+    pub fn new(rect: Rect, config: &Config) -> Result<Self> {
         let buffer = Buffer::new();
         let line_numbers = config.line_numbers;
-        Self {
+        Ok(Self {
             gutter: Self::gutter_for(&buffer, rect, line_numbers),
             buffer,
             rect,
@@ -82,6 +95,52 @@ impl View {
             scroll_margin: config.scroll.margin,
             line_numbers,
             desired_col: 0,
+
+            mode: Mode::Normal,
+            keymap: Keymap::new(config.keys.trees()?),
+            pressed: vec![],
+        })
+    }
+
+    #[must_use]
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
+    /// Feeds `key` to the view's keys and runs the actions of the view's own group. The
+    /// editor's are added to `requests` for it to run, which this clears first.
+    pub fn key_press(&mut self, key: Key, requests: &mut Vec<EditorAction>) {
+        requests.clear();
+        // The keymap stays borrowed while it is read, so the actions are copied out first
+        self.pressed.clear();
+        self.pressed
+            .extend_from_slice(self.keymap.press(self.mode, key));
+        for index in 0..self.pressed.len() {
+            match self.pressed[index] {
+                Action::View(action) => self.perform(action),
+                Action::Editor(action) => requests.push(action),
+            }
+        }
+    }
+
+    /// Does what `action` says to the text, the selection or the mode.
+    pub fn perform(&mut self, action: ViewAction) {
+        match action {
+            ViewAction::Motion(motion) => {
+                self.move_selection(motion, matches!(self.mode, Mode::Select));
+            }
+            ViewAction::Mode(mode) => self.mode = mode,
+            ViewAction::CollapseSelection => self.collapse_selection(),
+            ViewAction::Insert(c) => self.insert(c),
+            ViewAction::Delete => self.delete(),
+            ViewAction::DeleteSelection => self.delete_selection(),
+            ViewAction::SelectRow => self.select_row(),
+            ViewAction::OpenLine => self.new_line(),
+            ViewAction::Revert => self.revert(),
         }
     }
 
@@ -170,13 +229,16 @@ impl View {
         }
     }
 
-    /// Follows the scroll, text and line number settings of `config` from the next frame on.
-    pub fn set_config(&mut self, config: &Config) {
+    /// Follows the scroll, text and line number settings and the keys of `config` from the
+    /// next frame on. A config that fails leaves the view as it was.
+    pub fn set_config(&mut self, config: &Config) -> Result<()> {
+        self.keymap = Keymap::new(config.keys.trees()?);
         self.scroll_margin = config.scroll.margin;
         self.line_numbers = config.line_numbers;
         self.wrap.set_tab_width(config.text.tab_width);
         self.line_probe.set_tab_width(config.text.tab_width);
         self.wrap_dirty = true;
+        Ok(())
     }
 
     /// Moves the view to `rect`, which changes nothing when it is already there.
@@ -277,7 +339,8 @@ pub(crate) mod tests {
         let mut view = View::new(
             Rect::new(0, 0, Area::new(cols + 100, rows)),
             &Config::default(),
-        );
+        )
+        .unwrap();
         view.open_buffer(Buffer::from(text));
         let gutter = gutter_width(&view);
         view.resize(Rect::new(0, 0, Area::new(cols + gutter, rows)));
@@ -345,7 +408,7 @@ pub(crate) mod tests {
         let mut config = Config::default();
         config.text.tab_width = 2.try_into().unwrap();
         config.line_numbers.min_digits = 5;
-        view.set_config(&config);
+        view.set_config(&config).unwrap();
         view.ensure_cursor_visible();
         assert_eq!(view.head_position().unwrap().col, 2, "a tab is 2 wide");
         assert_eq!(
@@ -556,7 +619,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_view_too_narrow_for_its_gutter_still_keeps_half_for_the_text() {
-        let mut view = View::new(Rect::new(0, 0, Area::new(6, 3)), &Config::default());
+        let mut view = View::new(Rect::new(0, 0, Area::new(6, 3)), &Config::default()).unwrap();
         view.open_buffer(Buffer::from("abc"));
 
         assert_eq!(gutter_width(&view), 3, "half of 6, not the 4 it wants");

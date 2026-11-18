@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn a_binding_goes_over_the_defaults() {
         let config =
-            Config::parse("[keys.normal]\n\"<leader>e\" = \"save\"\n\"z\" = \"quit\"\n").unwrap();
+            Config::parse("[keys.normal]\n\"<leader>z\" = \"save\"\n\"z\" = \"quit\"\n").unwrap();
         let default = Config::default();
 
         assert_eq!(config.keys.normal.len(), default.keys.normal.len() + 2);

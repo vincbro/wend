@@ -12,8 +12,25 @@ use crate::{
     view::{Direction, Motion},
 };
 
+/// What a key can do, as a group for each target that takes keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    Editor(EditorAction),
+    View(ViewAction),
+}
+
+/// What any target can do, wherever the keys came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorAction {
+    Save,
+    /// Opens the overlay that tries out arranging two windows.
+    OpenTestOverlay,
+    Quit,
+}
+
+/// What a view does with its text, its selection and its mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewAction {
     Motion(Motion),
     Mode(Mode),
     Insert(char),
@@ -25,11 +42,67 @@ pub enum Action {
     /// Selects the screen row the head is on, a wrapped line one row at a time.
     SelectRow,
     Revert,
-    Save,
-    Quit,
 }
 
 impl Action {
+    /// The name a config gives this action, none for a character typing itself.
+    #[must_use]
+    pub const fn name(self) -> Option<&'static str> {
+        match self {
+            Self::Editor(action) => Some(action.name()),
+            Self::View(action) => action.name(),
+        }
+    }
+
+    /// What the action does, in a few words for a config file to show next to a binding.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Editor(action) => action.description(),
+            Self::View(action) => action.description(),
+        }
+    }
+
+    /// The action a config means by `name`, the inverse of `name`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        EditorAction::from_name(name)
+            .map(Self::Editor)
+            .or_else(|| ViewAction::from_name(name).map(Self::View))
+    }
+}
+
+impl EditorAction {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+            Self::OpenTestOverlay => "open_test_overlay",
+            Self::Quit => "quit",
+        }
+    }
+
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+            Self::OpenTestOverlay => "two windows side by side",
+            Self::Quit => "quit",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "save" => Self::Save,
+            "open_test_overlay" => Self::OpenTestOverlay,
+            "quit" => Self::Quit,
+            _ => return None,
+        })
+    }
+}
+
+impl ViewAction {
     /// The name a config gives this action, none for a character typing itself. The match
     /// has no catch-all, so an action added without a name doesn't compile.
     #[must_use]
@@ -59,12 +132,9 @@ impl Action {
             Self::CollapseSelection => "collapse_selection",
             Self::SelectRow => "select_row",
             Self::Revert => "revert",
-            Self::Save => "save",
-            Self::Quit => "quit",
         })
     }
 
-    /// What the action does, in a few words for a config file to show next to a binding.
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
@@ -92,12 +162,9 @@ impl Action {
             Self::CollapseSelection => "drop the selection down to the cursor",
             Self::SelectRow => "select the screen row the cursor is on",
             Self::Revert => "revert to the last save",
-            Self::Save => "save",
-            Self::Quit => "quit",
         }
     }
 
-    /// The action a config means by `name`, the inverse of `name`.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
@@ -124,8 +191,6 @@ impl Action {
             "collapse_selection" => Self::CollapseSelection,
             "select_row" => Self::SelectRow,
             "revert" => Self::Revert,
-            "save" => Self::Save,
-            "quit" => Self::Quit,
             _ => return None,
         })
     }
@@ -175,24 +240,25 @@ mod tests {
             Motion::Page,
         ];
         let mut actions = vec![
-            Action::Insert('\n'),
-            Action::Insert('\t'),
-            Action::Delete,
-            Action::DeleteSelection,
-            Action::OpenLine,
-            Action::CollapseSelection,
-            Action::SelectRow,
-            Action::Revert,
-            Action::Save,
-            Action::Quit,
+            Action::View(ViewAction::Insert('\n')),
+            Action::View(ViewAction::Insert('\t')),
+            Action::View(ViewAction::Delete),
+            Action::View(ViewAction::DeleteSelection),
+            Action::View(ViewAction::OpenLine),
+            Action::View(ViewAction::CollapseSelection),
+            Action::View(ViewAction::SelectRow),
+            Action::View(ViewAction::Revert),
+            Action::Editor(EditorAction::Save),
+            Action::Editor(EditorAction::OpenTestOverlay),
+            Action::Editor(EditorAction::Quit),
         ];
         for mode in [Mode::Normal, Mode::Select, Mode::Insert] {
-            actions.push(Action::Mode(mode));
+            actions.push(Action::View(ViewAction::Mode(mode)));
         }
         for direction in directions {
-            actions.push(Action::Motion(Motion::File(direction)));
+            actions.push(Action::View(ViewAction::Motion(Motion::File(direction))));
             for motion in motions {
-                actions.push(Action::Motion(motion(direction)));
+                actions.push(Action::View(ViewAction::Motion(motion(direction))));
             }
         }
         actions
@@ -208,6 +274,6 @@ mod tests {
 
     #[test]
     fn a_typed_character_has_no_name() {
-        assert_eq!(Action::Insert('x').name(), None);
+        assert_eq!(Action::View(ViewAction::Insert('x')).name(), None);
     }
 }

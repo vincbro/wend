@@ -2,7 +2,7 @@ use crate::{
     config::KeyTrees,
     input::{
         Mode,
-        action::Action,
+        action::{Action, ViewAction},
         key::{Key, KeyCode, KeyTree},
     },
 };
@@ -28,7 +28,7 @@ impl Keymap {
             pending: vec![],
             pending_mode: Mode::Normal,
             // Overwritten before it is lent out
-            typed: [Action::Insert(' ')],
+            typed: [Action::View(ViewAction::Insert(' '))],
         }
     }
 
@@ -67,7 +67,7 @@ fn typed_action(typed: &mut [Action; 1], mode: Mode, key: Key, is_combo: bool) -
     let is_typed = !key.modifiers.control && !key.modifiers.alt;
     match (mode, key.code) {
         (Mode::Insert, KeyCode::Char(c)) if is_typed && !is_combo => {
-            *typed = [Action::Insert(c)];
+            *typed = [Action::View(ViewAction::Insert(c))];
             typed
         }
         _ => &[],
@@ -79,7 +79,7 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        input::key::Modifiers,
+        input::{action::EditorAction, key::Modifiers},
         view::{Direction, Motion},
     };
 
@@ -103,11 +103,11 @@ mod tests {
         let keymap = default_keymap();
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('v')]),
-            [Action::Mode(Mode::Select)]
+            [Action::View(ViewAction::Mode(Mode::Select))]
         ));
         assert!(matches!(
             actions(&keymap, Mode::Select, &[key('v')]),
-            [Action::Mode(Mode::Normal)]
+            [Action::View(ViewAction::Mode(Mode::Normal))]
         ));
     }
 
@@ -120,7 +120,9 @@ mod tests {
         ));
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('g'), key('e')]),
-            [Action::Motion(Motion::File(Direction::Forward))]
+            [Action::View(ViewAction::Motion(Motion::File(
+                Direction::Forward
+            )))]
         ));
     }
 
@@ -129,7 +131,10 @@ mod tests {
         let keymap = default_keymap();
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('o')]),
-            [Action::OpenLine, Action::Mode(Mode::Insert)]
+            [
+                Action::View(ViewAction::OpenLine),
+                Action::View(ViewAction::Mode(Mode::Insert))
+            ]
         ));
     }
 
@@ -139,10 +144,15 @@ mod tests {
         assert!(keymap.press(Mode::Normal, key('g')).is_empty(), "g waits");
         assert!(matches!(
             keymap.press(Mode::Normal, key('s'))[..],
-            [Action::Motion(Motion::File(Direction::Backward))]
+            [Action::View(ViewAction::Motion(Motion::File(
+                Direction::Backward
+            )))]
         ));
         assert!(
-            matches!(keymap.press(Mode::Normal, key('q'))[..], [Action::Quit]),
+            matches!(
+                keymap.press(Mode::Normal, key('q'))[..],
+                [Action::Editor(EditorAction::Quit)]
+            ),
             "the finished combo is gone, q starts fresh"
         );
     }
@@ -156,7 +166,10 @@ mod tests {
             "normal mode doesn't type"
         );
         assert!(
-            matches!(keymap.press(Mode::Normal, key('q'))[..], [Action::Quit]),
+            matches!(
+                keymap.press(Mode::Normal, key('q'))[..],
+                [Action::Editor(EditorAction::Quit)]
+            ),
             "q isn't read as g q"
         );
     }
@@ -168,7 +181,7 @@ mod tests {
         assert!(
             matches!(
                 keymap.press(Mode::Insert, key('s'))[..],
-                [Action::Insert('s')]
+                [Action::View(ViewAction::Insert('s'))]
             ),
             "s types instead of finishing g s"
         );
@@ -179,7 +192,7 @@ mod tests {
         let mut keymap = default_keymap();
         assert!(matches!(
             keymap.press(Mode::Insert, key('h'))[..],
-            [Action::Insert('h')]
+            [Action::View(ViewAction::Insert('h'))]
         ));
         let control_h = Key {
             code: KeyCode::Char('h'),

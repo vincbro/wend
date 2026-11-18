@@ -90,7 +90,7 @@ pub struct Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::action::Action;
+    use crate::input::action::{Action, EditorAction};
 
     fn key(c: char) -> Key {
         Key::new(KeyCode::Char(c))
@@ -98,8 +98,11 @@ mod tests {
 
     fn tree() -> KeyTree {
         let mut tree = KeyTree::new();
-        assert!(tree.insert(&[key('q')], Box::new([Action::Quit])));
-        assert!(tree.insert(&[key('g'), key('s')], Box::new([Action::Save])));
+        assert!(tree.insert(&[key('q')], Box::new([Action::Editor(EditorAction::Quit)])));
+        assert!(tree.insert(
+            &[key('g'), key('s')],
+            Box::new([Action::Editor(EditorAction::Save)])
+        ));
         tree
     }
 
@@ -108,7 +111,7 @@ mod tests {
         let tree = tree();
         assert!(matches!(
             tree.get(&[key('g'), key('s')]),
-            Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::Save])
+            Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::Editor(EditorAction::Save)])
         ));
     }
 
@@ -160,15 +163,20 @@ mod tests {
     fn insert_refuses_colliding_combos() {
         let mut tree = tree();
         assert!(
-            !tree.insert(&[key('q'), key('x')], Box::new([Action::Save])),
+            !tree.insert(
+                &[key('q'), key('x')],
+                Box::new([Action::Editor(EditorAction::Save)])
+            ),
             "q is a leaf, nothing continues it"
         );
         assert!(
-            !tree.clone().insert(&[key('g')], Box::new([Action::Save])),
+            !tree
+                .clone()
+                .insert(&[key('g')], Box::new([Action::Editor(EditorAction::Save)])),
             "g starts a combo, so it can't be a leaf"
         );
         assert!(
-            !tree.insert(&[], Box::new([Action::Save])),
+            !tree.insert(&[], Box::new([Action::Editor(EditorAction::Save)])),
             "an empty combo is no combo"
         );
     }

@@ -41,6 +41,7 @@ x = "select_row" # select the screen row the cursor is on
   "collapse_selection",
   "normal_mode",
 ] # drop the selection down to the cursor, then normal mode
+"<leader>e" = "open_test_overlay" # two windows side by side
 
 # Keys in select mode, where motions extend the selection.
 [keys.select]

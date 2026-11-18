@@ -5,7 +5,7 @@ use wend_core::{
     editor::Editor,
     frame::{Area, CellPosition, Content, Frame},
     input::{
-        Input,
+        Input, Mode,
         key::{Key, KeyCode},
     },
     output::Output,
@@ -438,20 +438,30 @@ mod tests {
     }
 
     #[test]
-    fn a_view_in_the_test_window_floats_over_the_text_and_takes_the_cursor() {
-        let mut editor = editor("abc", 40, 10);
-        editor.show_test_window(true);
+    fn leader_e_opens_two_windows_that_take_the_keys_until_escape() {
+        let mut editor = editor("abc", 100, 20);
 
-        let frame = press(&mut editor, "l");
-
-        let shown = (0..11).any(|row| row_text(&frame, row).contains("a view inside"));
-        assert!(shown, "the window's view is drawn on top of the editor");
-        // The window is 24 by 5 cells in the middle of 40 by 11, so its view starts at
-        // column 9 and row 4, and its gutter is four columns
-        assert_eq!(
-            frame.cursor(),
-            Some(CellPosition::new(13, 4)),
-            "the topmost view has the cursor, not the editor's one under the window"
+        let frame = press(&mut editor, " e");
+        let window_row = (0..21)
+            .map(|row| row_text(&frame, row))
+            .find(|row| row.contains("left window"))
+            .expect("the left window is drawn");
+        assert!(
+            window_row.contains("right window"),
+            "the right window is next to it: {window_row}"
         );
+
+        let frame = press(&mut editor, "ihello");
+        assert_eq!(row_text(&frame, 0), "abc", "no key was typed into the text");
+        assert_eq!(editor.mode(), Mode::Normal, "and not to the editor's mode");
+
+        let frame = press(&mut editor, "\u{1b}");
+        assert_eq!(row_text(&frame, 0), "abc", "the editor is back as it was");
+        assert!(
+            (0..21).all(|row| !row_text(&frame, row).contains("window")),
+            "and the windows are gone"
+        );
+        let frame = press(&mut editor, "l");
+        assert!(frame.cursor().is_some(), "the editor takes keys again");
     }
 }
