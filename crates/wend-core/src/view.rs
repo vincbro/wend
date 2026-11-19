@@ -34,7 +34,7 @@ use gutter::Gutter;
 mod keymap;
 use keymap::Keymap;
 #[cfg(test)]
-mod fuzz;
+pub(crate) mod fuzz;
 
 /// The columns of text the wrap is wide at most, until each language has its own.
 const MAX_TEXT_WIDTH: u16 = 100;

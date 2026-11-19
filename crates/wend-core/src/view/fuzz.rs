@@ -38,7 +38,7 @@ impl Call {
 
 /// Text made of the pieces that break naive code: wide, zero-width and combining glyphs,
 /// tabs, both line breaks and empty lines.
-fn text() -> impl Strategy<Value = String> {
+pub(crate) fn text() -> impl Strategy<Value = String> {
     let pieces = prop::sample::select(vec![
         "a",
         "b",
@@ -83,8 +83,9 @@ fn mode() -> impl Strategy<Value = Mode> {
     prop_oneof![Just(Mode::Normal), Just(Mode::Select), Just(Mode::Insert)]
 }
 
-fn call() -> impl Strategy<Value = Call> {
-    let action = prop_oneof![
+/// Any action a view performs, with its arguments.
+pub(crate) fn view_action() -> impl Strategy<Value = ViewAction> {
+    prop_oneof![
         motion().prop_map(ViewAction::Motion),
         mode().prop_map(ViewAction::Mode),
         any::<char>().prop_map(ViewAction::Insert),
@@ -94,9 +95,12 @@ fn call() -> impl Strategy<Value = Call> {
         Just(ViewAction::CollapseSelection),
         Just(ViewAction::SelectRow),
         Just(ViewAction::Revert),
-    ];
+    ]
+}
+
+fn call() -> impl Strategy<Value = Call> {
     prop_oneof![
-        8 => action.prop_map(Call::Perform),
+        8 => view_action().prop_map(Call::Perform),
         2 => rect().prop_map(Call::Resize),
         1 => Just(Call::CursorPosition),
         1 => text().prop_map(Call::Update),
