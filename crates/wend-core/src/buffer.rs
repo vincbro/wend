@@ -6,6 +6,8 @@ mod change;
 pub use change::Change;
 mod error;
 pub use error::{Error, Result};
+#[cfg(test)]
+mod fuzz;
 
 use crate::syntax::{Grammar, Highlight, LanguageTag, Loader, Syntax};
 
@@ -14,6 +16,10 @@ use crate::syntax::{Grammar, Highlight, LanguageTag, Loader, Syntax};
 /// There is no undo history. `clean_rope` is the text as it was last loaded or saved, and
 /// undoing reverts to it. crop shares tree nodes between clones, so keeping it around only
 /// costs the parts that differ.
+///
+/// After every public call the text is no longer than `MAX_LEN`, a buffer that isn't dirty
+/// holds exactly its clean text, and the syntax, when there is one, is of the grammar of the
+/// buffer's language. `check_invariants` checks them.
 #[derive(Debug, Clone)]
 pub struct Buffer {
     path: Option<Box<Path>>,
@@ -39,6 +45,7 @@ impl Buffer {
             self.syntax = None;
         }
         self.language = language;
+        self.check_invariants();
     }
 
     /// Gives the buffer `grammar` to parse and highlight with, if it is the grammar of the
@@ -56,6 +63,7 @@ impl Buffer {
             return;
         }
         self.syntax = Some(Syntax::new(Arc::clone(grammar)));
+        self.check_invariants();
     }
 
     /// The highlighted stretches of the text that touch `bytes`, see `Syntax::highlights`.
@@ -93,6 +101,7 @@ impl Buffer {
                 syntax.reset();
             }
         }
+        self.check_invariants();
         Ok(())
     }
 
@@ -104,14 +113,16 @@ impl Buffer {
     }
 
     fn from_rope(path: Option<Box<Path>>, rope: Rope) -> Self {
-        Self {
+        let buffer = Self {
             path,
             clean_rope: rope.clone(),
             rope,
             is_dirty: false,
             language: None,
             syntax: None,
-        }
+        };
+        buffer.check_invariants();
+        buffer
     }
 
     #[must_use]
@@ -134,7 +145,8 @@ impl Buffer {
     ///
     /// # Panics
     ///
-    /// If `range` is out of bounds or doesn't fall on char boundaries.
+    /// If `range` is out of bounds or doesn't fall on char boundaries, or if the text would
+    /// get longer than `MAX_LEN`.
     pub fn edit(&mut self, range: ops::Range<usize>, text: &str) -> Change {
         assert!(
             range.start <= range.end && range.end <= self.rope.byte_len(),
@@ -143,6 +155,11 @@ impl Buffer {
         assert!(
             self.rope.is_char_boundary(range.start) && self.rope.is_char_boundary(range.end),
             "edit ranges come from selections, which sit on grapheme starts, got {range:?}"
+        );
+
+        assert!(
+            self.rope.byte_len() - range.len() + text.len() <= MAX_LEN,
+            "edits insert what a key or a paste holds, which can't outgrow the wrap's u32 offsets"
         );
 
         let change = Change::new(range.start, range.len(), text.len());
@@ -156,6 +173,7 @@ impl Buffer {
         }
         self.rope.replace(range, text);
         self.is_dirty = true;
+        self.check_invariants();
         change
     }
 
@@ -168,6 +186,7 @@ impl Buffer {
         if let Some(syntax) = &mut self.syntax {
             syntax.reset();
         }
+        self.check_invariants();
     }
 
     /// Makes the text the new clean state, and returns the path and text to write.
@@ -178,7 +197,9 @@ impl Buffer {
 
         self.clean_rope = self.rope.clone();
         self.is_dirty = false;
-        Ok((path.clone(), self.rope.clone()))
+        let written = (path.clone(), self.rope.clone());
+        self.check_invariants();
+        Ok(written)
     }
 
     /// Brings the tree up to date with the text. Does nothing for plain text, or when the tree
@@ -187,13 +208,48 @@ impl Buffer {
         if let Some(syntax) = &mut self.syntax {
             loader.parse(&self.rope, syntax)?;
         }
+        self.check_invariants();
         Ok(())
+    }
+
+    /// Checks the rules every public function has to leave the buffer in. Debug builds only.
+    ///
+    /// Comparing the texts costs as much as they are long, so it is skipped for the big
+    /// ones.
+    pub(crate) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        assert!(
+            self.rope.byte_len() <= MAX_LEN,
+            "check_len and edit keep the text within the wrap's u32 offsets, got {} bytes",
+            self.rope.byte_len()
+        );
+        if !self.is_dirty && self.rope.byte_len() <= MAX_COMPARED_LEN {
+            assert!(
+                self.rope == self.clean_rope,
+                "edit is the only way the text changes and it sets is_dirty, revert, save and \
+                 update bring the two texts together"
+            );
+        }
+        if let Some(syntax) = &self.syntax {
+            assert!(
+                self.language.as_ref() == Some(syntax.tag()),
+                "set_language drops the syntax of another language and attach only takes the \
+                 grammar of the buffer's language"
+            );
+        }
     }
 }
 
 /// The longest text a buffer takes in. The wrap stores byte offsets as `u32`, with one to
 /// spare for the slot after the last byte.
 const MAX_LEN: usize = u32::MAX as usize - 1;
+
+/// The longest text `check_invariants` compares with the clean one, which costs as much as
+/// the text is long.
+const MAX_COMPARED_LEN: usize = 1 << 16;
 
 fn check_len(len: usize) -> Result<()> {
     if len > MAX_LEN {

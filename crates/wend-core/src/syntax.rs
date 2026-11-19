@@ -73,6 +73,12 @@ impl Syntax {
         }
     }
 
+    /// Returns the language of the grammar this syntax parses with.
+    #[must_use]
+    pub(crate) fn tag(&self) -> &LanguageTag {
+        self.grammar.tag()
+    }
+
     /// Returns whether this is the syntax of `grammar` itself, and not of an older load of
     /// the same language.
     #[must_use]
@@ -197,7 +203,7 @@ fn capture_highlight(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::sync::Arc;
+    use std::{cell::RefCell, sync::Arc};
 
     use super::*;
     use crate::buffer::Buffer;
@@ -212,6 +218,19 @@ pub(crate) mod tests {
             .load(LanguageTag::new("rust"), RUST_WASM, RUST_HIGHLIGHTS)
             .unwrap();
         (loader, grammar)
+    }
+
+    thread_local! {
+        static RUST: (RefCell<Loader>, Arc<Grammar>) = {
+            let (loader, grammar) = rust();
+            (RefCell::new(loader), grammar)
+        };
+    }
+
+    /// Runs `test` with the Rust grammar and its loader, which each thread builds once, as
+    /// loading a grammar takes far longer than a property test case.
+    pub(crate) fn with_rust<R>(test: impl FnOnce(&mut Loader, &Arc<Grammar>) -> R) -> R {
+        RUST.with(|(loader, grammar)| test(&mut loader.borrow_mut(), grammar))
     }
 
     /// A buffer of Rust code, parsed.
