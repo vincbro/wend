@@ -33,6 +33,7 @@ impl Wrap {
         }
 
         Builder::new(self, scroll_offset).lay_out(buffer);
+        self.check_invariants();
     }
 }
 

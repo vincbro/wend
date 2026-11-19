@@ -11,6 +11,11 @@ pub(super) use slot::{Glyph, Row, RowMetadata, ScrollOffset, Slot, SlotPosition}
 ///
 /// `slots` always holds `area.len()` slots row by row, and `row_metadata` one entry per row,
 /// `None` for the rows past the end of the buffer.
+///
+/// After every call the rows that show text come first and each starts where the one before
+/// stopped. On a row the glyphs follow each other without a gap, each followed by exactly
+/// its tails, which never leave the row. Everything past the last used slot is blank.
+/// `check_invariants` checks them.
 #[derive(Debug, Clone)]
 pub(super) struct Wrap {
     slots: Vec<Slot>,
@@ -32,6 +37,7 @@ impl Wrap {
             tab_width: tab_width.get(),
         };
         wrap.resize(area, scroll_offset);
+        wrap.check_invariants();
         wrap
     }
 
@@ -85,6 +91,110 @@ impl Wrap {
             ScrollOffset::new(line, usize::MAX),
         );
         self.scroll_offset().row
+    }
+
+    /// Checks the rules every function has to leave the wrap in. Debug builds only.
+    pub(super) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        assert_eq!(
+            (self.slots.len(), self.row_metadata.len()),
+            (self.area.len(), self.area.height()),
+            "resize sizes the grid and the metadata to the area"
+        );
+        if self.area.is_empty() {
+            return;
+        }
+
+        let mut previous: Option<RowMetadata> = None;
+        for (row, metadata) in self.row_metadata.iter().enumerate() {
+            let start = self.slot_index(SlotPosition::new(0, row));
+            let slots = &self.slots[start..start + self.area.width()];
+            let Some(metadata) = *metadata else {
+                assert!(
+                    slots.iter().all(|slot| matches!(slot, Slot::Blank)),
+                    "a row without text is all blank, row {row} isn't"
+                );
+                previous = None;
+                continue;
+            };
+            self.check_row(row, metadata, slots, previous);
+            previous = Some(metadata);
+        }
+        assert!(
+            self.row_metadata
+                .iter()
+                .skip_while(|metadata| metadata.is_some())
+                .all(Option::is_none),
+            "the rows that show text come first"
+        );
+    }
+
+    /// Checks that `slots` hold the glyphs of row `row`, described by `metadata`, from where
+    /// the row `previous` stopped.
+    fn check_row(
+        &self,
+        row: usize,
+        metadata: RowMetadata,
+        slots: &[Slot],
+        previous: Option<RowMetadata>,
+    ) {
+        match previous {
+            Some(previous) => assert!(
+                metadata.from_byte == previous.to_byte
+                    && (previous.line..=previous.line + 1).contains(&metadata.line),
+                "a row starts where the row before it stopped, row {row}"
+            ),
+            None if row == 0 => assert_eq!(
+                metadata.line, self.scroll_offset.line,
+                "the first row is on the line the wrap starts at"
+            ),
+            None => {}
+        }
+        assert!(
+            metadata.len <= slots.len() && metadata.from_byte <= metadata.to_byte,
+            "rebuild seals a row with the slots and bytes it used, row {row}"
+        );
+        assert!(
+            slots[metadata.len..]
+                .iter()
+                .all(|slot| matches!(slot, Slot::Blank)),
+            "seal blanks what the row didn't use, row {row}"
+        );
+
+        let mut byte = metadata.from_byte;
+        let mut col = 0;
+        while col < metadata.len {
+            let Slot::Glyph(glyph) = slots[col] else {
+                assert!(
+                    byte == metadata.from_byte && !matches!(slots[col], Slot::Tail(_)),
+                    "only the markers a wrapped row starts with come before its first glyph, \
+                     row {row} col {col}"
+                );
+                col += 1;
+                continue;
+            };
+            assert_eq!(
+                glyph.start(),
+                byte,
+                "glyphs follow each other, row {row} col {col}"
+            );
+            byte = glyph.end();
+            let head = self.slot_index(SlotPosition::new(col, row));
+            for tail in col + 1..=col + glyph.tails() {
+                assert!(
+                    matches!(slots.get(tail), Some(Slot::Tail(index)) if *index == head),
+                    "a glyph is followed by its tails on its own row, row {row} col {col}"
+                );
+            }
+            col += glyph.tails() + 1;
+        }
+        assert_eq!(
+            byte, metadata.to_byte,
+            "the glyphs fill the row's bytes, row {row}"
+        );
     }
 
     /// Returns the glyph a slot belongs to, following a tail to its glyph, none for markers
@@ -204,6 +314,9 @@ impl Wrap {
         }
     }
 }
+
+#[cfg(test)]
+mod fuzz;
 
 #[cfg(test)]
 mod tests {
