@@ -69,6 +69,13 @@ Go through every rule in `STYLE.md` whose *Enforced* line includes "review". The
 - Any struct that mixes visibilities across its fields, including `pub(crate)` mixed with private, which clippy's `partial_pub_fields` misses.
 - Plain-data structs that are mutated field by field across the code where building and overwriting a new value would be clearer.
 
+**S-INVARIANTS**
+- A stateful struct whose doc comment doesn't state what holds after every public call.
+- A stateful struct with no `check_invariants`, or one that isn't debug-only, or a mutating public method that doesn't call it before returning.
+- A check whose assertion messages describe the failure instead of the rule that should have held.
+- A type that holds other stateful types but whose check doesn't call theirs.
+- A stateful struct with no property test that drives random public-call sequences and runs the check after each call, or a fuzz test with no fixed seed or shrinking, or without the awkward inputs (empty, huge, past-the-end, wide or zero-width glyphs, mid-sequence resizes).
+
 **S-ERRORS / S-ERROR-TEXT**
 - A module that can fail without a `foo/error.rs` holding `pub enum Error` and `pub type Result<T> = result::Result<T, Error>`, both re-exported (`pub use error::{Error, Result}`) so callers write `foo::Error` and `foo::Result<T>`.
 - A signature spelling out `Result<T, foo::Error>` where `foo::Result<T>` exists.
@@ -128,7 +135,7 @@ Step 4 is where you look for problems. This step makes sure you didn't miss any.
    - Should it be `///` instead of `//`, or deleted?
    - Is it propping up code that should be clearer instead?
 3. **Sweep every name introduced or changed in scope.** That covers types, functions, fields, bindings and closure parameters. Check each against S-NAMES-*, the abbreviation table in `STYLE.md` included.
-4. **Sweep every struct in scope.** Is it plain data or stateful? Check its field visibility against S-FIELDS.
+4. **Sweep every struct in scope.** Is it plain data or stateful? Check its field visibility against S-FIELDS, and for a stateful one that it states, checks and fuzzes its invariants (S-INVARIANTS).
 5. **Check the commits** in scope against S-COMMITS, if any.
 
 If `STYLE.md` has a rule this skill doesn't mention, it still gets checked: this step is driven by `STYLE.md`, not by step 4's list.

@@ -72,6 +72,7 @@ The lint policy lives in `[workspace.lints]` in the root `Cargo.toml`. In short:
 - **No `unwrap()`, `panic!` or `std::process::exit` outside tests.** A panic loses the user's unsaved work, and `exit` skips the code that restores the terminal. Use `?`, or `expect("...")` stating the invariant when one really holds.
 - **Docs where they add insight, not everywhere.** Document what a type is for, what a function promises, and when it panics (`# Panics` is linted). Don't restate what names and types already say (STYLE.md S-DOCS).
 - **Fields are all public or all private.** Stateful structs keep every field private (STYLE.md S-FIELDS).
+- **Stateful types state, check and fuzz their invariants.** A doc comment, a debug-only `check_invariants` called by every mutating method, and a property test (STYLE.md S-INVARIANTS).
 - **Code stays flat.** Nothing nests deeper than 4 blocks (STYLE.md S-FLAT).
 - **Unsafe is opt-in per site.** Mark it with `#[allow(unsafe_code, reason = "...")]` and put a `// SAFETY:` comment on every `unsafe` block.
 - **Escape hatches are local.** Silence a lint with `#[allow(lint)]` on the smallest item that needs it, never crate-wide.
