@@ -268,8 +268,8 @@ Most structs are the stateful kind, so the default is private fields. A struct n
 Every stateful type (S-FIELDS) keeps its invariants in three places:
 
 - **Stated.** Its doc comment lists them, the way `View`'s does: what holds after every public call.
-- **Checked.** A private `check_invariants` asserts them. It does nothing in release builds (`if !cfg!(debug_assertions) { return; }`), every public method that mutates calls it before returning, and its messages state the rule that should have held, not the failure (S-PANICS). A type whose state spans other stateful types, like `Editor` over its views and overlay, calls their checks too.
-- **Fuzzed.** A property test drives the type with random sequences of its public calls and runs the check after every call. It uses a fixed seed or a shrinking property-test runner, so a failure reproduces from the printed case. The sequences include the awkward inputs: empty, one-cell and huge areas, offsets past the end, wide and zero-width glyphs, and resizes in the middle of a sequence.
+- **Checked.** A `check_invariants` asserts them. It is private, and `pub(crate)` when the type that holds this one calls it. It does nothing in release builds (`if !cfg!(debug_assertions) { return; }`), every public method that mutates calls it before returning, and its messages state the rule that should have held, not the failure (S-PANICS). A type whose state spans other stateful types, like `Editor` over its views and overlay, calls their checks too.
+- **Fuzzed.** A property test in a `fuzz.rs` beside the type, `#[cfg(test)] mod fuzz;`, drives the type with random sequences of its public calls and runs the check after every call. It uses a fixed seed or a shrinking property-test runner, so a failure reproduces from the printed case. The sequences include the awkward inputs: empty, one-cell and huge areas, offsets past the end, wide and zero-width glyphs, and resizes in the middle of a sequence.
 
 A type with no invariant to state is plain data, and S-FIELDS says it should look like it.
 
@@ -349,7 +349,7 @@ Put it on the smallest item that needs it, never at the crate level. A workspace
 
 - Unit tests live at the bottom of the file they test, in `#[cfg(test)] mod tests { use super::*; … }`. They cover exact edge cases, like wrapping and grapheme handling.
 - Integration tests live in `crates/<crate>/tests/`. They drive `Editor` the way a user does: keys in, frame out.
-- A stateful type also has a property test that fuzzes it against its invariants (S-INVARIANTS).
+- A stateful type also has a property test in its own `fuzz.rs` that fuzzes it against its invariants (S-INVARIANTS).
 - Test names describe the behavior, with no `test_` prefix: `wide_glyph_wraps_whole`.
 - An assertion's message says what the case means: `assert_eq!(a, b, "snaps into the grapheme start")`.
 - `unwrap` and `panic!` are fine in tests.
