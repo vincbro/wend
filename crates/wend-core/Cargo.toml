@@ -25,6 +25,7 @@ unicode-width.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

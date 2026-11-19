@@ -40,6 +40,10 @@ fix:
 # The CI gate: run it before you push
 check: fmt-check clippy doc test deps
 
+# The CI gate with every property test run for 40000 cases instead of 256, which takes
+# a minute or more: run it before a release and after touching a stateful type
+check-full: fmt-check clippy doc test-full deps
+
 # Fail on any file `just fmt` would change
 fmt-check:
     cargo +{{ fmt_toolchain }} fmt --all -- --check
@@ -57,6 +61,10 @@ doc:
 # Run every test in the workspace
 test:
     cargo test --workspace --locked
+
+# Run every test in the workspace, the property tests for 40000 cases each
+test-full:
+    PROPTEST_CASES=40000 cargo test --workspace --locked
 
 # Time an editing session over growing files; criterion compares with the last
 # run. Extra args go to criterion: just bench [args]

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ca6291ef01747e97ffd886282067f122057c8812f5e502a0a1588d90866962b7 # shrinks to start = Rect { col: 0, row: 0, area: Area { cols: 0, rows: 0 } }, initial = "", calls = [Resize(Rect { col: 0, row: 0, area: Area { cols: 1, rows: 1 } })]
+cc f1cf85d5b24f7e1743bdb031bc629bbfe9f5da3219d1d1a0b24d67393659c22d # shrinks to start = Rect { col: 0, row: 0, area: Area { cols: 0, rows: 0 } }, initial = "", calls = [OpenBuffer("éa line long enough to wrap around a narrow view, more than oncee\u{301}👨\u{200d}👩\u{200d}👧\na line long enough to wrap around a narrow view, more than once\r\n"), Resize(Rect { col: 0, row: 0, area: Area { cols: 71, rows: 1 } }), Perform(SelectRow), Perform(Motion(Word(Backward)))]
+cc 7f89934138afea126f896315b5a56130e6943cfe2a8ee0b32df4d2131d2c2789 # shrinks to start = Rect { col: 0, row: 0, area: Area { cols: 0, rows: 0 } }, initial = "a\n\n\na\na漢", calls = [Perform(Insert('¡')), Perform(Insert('\u{3fffe}')), Resize(Rect { col: 0, row: 0, area: Area { cols: 1, rows: 11 } }), Perform(Motion(Page(Forward)))]

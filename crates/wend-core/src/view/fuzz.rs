@@ -1,0 +1,123 @@
+//! Drives a view with random calls and checks its invariants after each one (S-INVARIANTS).
+
+use proptest::{collection, prelude::*};
+
+use super::{Direction, Motion, View};
+use crate::{
+    buffer::Buffer,
+    config::Config,
+    frame::{Area, Rect},
+    input::{Mode, action::ViewAction},
+};
+
+/// One public call on a view, with its arguments.
+#[derive(Debug, Clone)]
+enum Call {
+    Perform(ViewAction),
+    Resize(Rect),
+    CursorPosition,
+    Update(String),
+    OpenBuffer(String),
+}
+
+impl Call {
+    fn run(self, view: &mut View) {
+        match self {
+            Self::Perform(action) => view.perform(action),
+            Self::Resize(rect) => view.resize(rect),
+            Self::CursorPosition => {
+                view.cursor_position();
+            }
+            Self::Update(text) => view.update(text.as_bytes()).unwrap(),
+            Self::OpenBuffer(text) => {
+                view.open_buffer(Buffer::from(text.as_str()));
+            }
+        }
+    }
+}
+
+/// Text made of the pieces that break naive code: wide, zero-width and combining glyphs,
+/// tabs, both line breaks and empty lines.
+fn text() -> impl Strategy<Value = String> {
+    let pieces = prop::sample::select(vec![
+        "a",
+        "b",
+        " ",
+        "\t",
+        "\n",
+        "\r\n",
+        "\n\n",
+        "é",
+        "e\u{301}",
+        "漢",
+        "🦀",
+        "👨‍👩‍👧",
+        "\u{200b}",
+        "word_word",
+        "a line long enough to wrap around a narrow view, more than once",
+    ]);
+    collection::vec(pieces, 0..40).prop_map(|pieces| pieces.concat())
+}
+
+/// From no cells at all to wider than the text ever gets.
+fn rect() -> impl Strategy<Value = Rect> {
+    (0..=150u16, 0..=12u16).prop_map(|(cols, rows)| Rect::new(0, 0, Area::new(cols, rows)))
+}
+
+fn direction() -> impl Strategy<Value = Direction> {
+    prop_oneof![Just(Direction::Backward), Just(Direction::Forward)]
+}
+
+fn motion() -> impl Strategy<Value = Motion> {
+    prop_oneof![
+        direction().prop_map(Motion::Horizontal),
+        direction().prop_map(Motion::Vertical),
+        direction().prop_map(Motion::Word),
+        direction().prop_map(Motion::Line),
+        direction().prop_map(Motion::Page),
+        direction().prop_map(Motion::File),
+    ]
+}
+
+fn mode() -> impl Strategy<Value = Mode> {
+    prop_oneof![Just(Mode::Normal), Just(Mode::Select), Just(Mode::Insert)]
+}
+
+fn call() -> impl Strategy<Value = Call> {
+    let action = prop_oneof![
+        motion().prop_map(ViewAction::Motion),
+        mode().prop_map(ViewAction::Mode),
+        any::<char>().prop_map(ViewAction::Insert),
+        Just(ViewAction::Delete),
+        Just(ViewAction::DeleteSelection),
+        Just(ViewAction::OpenLine),
+        Just(ViewAction::CollapseSelection),
+        Just(ViewAction::SelectRow),
+        Just(ViewAction::Revert),
+    ];
+    prop_oneof![
+        8 => action.prop_map(Call::Perform),
+        2 => rect().prop_map(Call::Resize),
+        1 => Just(Call::CursorPosition),
+        1 => text().prop_map(Call::Update),
+        1 => text().prop_map(Call::OpenBuffer),
+    ]
+}
+
+proptest! {
+    #[test]
+    fn no_sequence_of_calls_breaks_the_invariants(
+        start in rect(),
+        initial in text(),
+        calls in collection::vec(call(), 0..40),
+    ) {
+        let mut view = View::new(start, &Config::default()).unwrap();
+        view.open_buffer(Buffer::from(initial.as_str()));
+        view.check_invariants();
+
+        for call in calls {
+            call.run(&mut view);
+            view.check_invariants();
+        }
+    }
+}

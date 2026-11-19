@@ -10,6 +10,7 @@ You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just).
 just toolchain   # installs the pinned Rust, nightly rustfmt, the cargo tools and the git hooks
 just run FILE    # runs wend from source, opening FILE
 just check       # what CI runs: fmt, clippy, docs, tests, dependencies
+just check-full  # the same, with the property tests run for 40000 cases
 just theme NAME  # a new built-in theme: a copy of themes/default.toml to edit
 ```
 
