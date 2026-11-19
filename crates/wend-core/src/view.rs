@@ -281,6 +281,12 @@ impl View {
         line_count.max(rows)
     }
 
+    /// Returns the rectangle of the frame the view is in.
+    #[must_use]
+    pub(crate) fn rect(&self) -> Rect {
+        self.rect
+    }
+
     /// Returns the part of the view the gutter and the text take: the gutter and a full width
     /// of text, centered in the view, or all of the view when that is narrower.
     fn block(&self) -> Rect {
@@ -305,11 +311,16 @@ impl View {
         new_buffer
     }
 
-    /// Checks the rules every public function has to leave the view in. Debug builds only.
-    fn check_invariants(&self) {
+    /// Checks the rules every public function has to leave the view in, and the ones of the
+    /// buffer and the wraps it holds. Debug builds only.
+    pub(crate) fn check_invariants(&self) {
         if !cfg!(debug_assertions) {
             return;
         }
+
+        self.buffer.check_invariants();
+        self.wrap.check_invariants();
+        self.line_probe.check_invariants();
 
         let rope = self.buffer.rope();
         for byte in [self.selection.anchor(), self.selection.head()] {

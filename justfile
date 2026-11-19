@@ -41,7 +41,7 @@ fix:
 check: fmt-check clippy doc test deps
 
 # The CI gate with every property test run for 40000 cases instead of 256, which takes
-# a minute or more: run it before a release and after touching a stateful type
+# a few minutes: run it before a release and after touching a stateful type
 check-full: fmt-check clippy doc test-full deps
 
 # Fail on any file `just fmt` would change

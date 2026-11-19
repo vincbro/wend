@@ -1,4 +1,4 @@
-use std::{collections::HashSet, mem, path::Path, vec::Drain};
+use std::{collections::HashSet, iter, mem, path::Path, vec::Drain};
 
 use crate::{
     buffer::Buffer,
@@ -35,6 +35,11 @@ const FRAME_COUNT: usize = 3;
 ///
 /// `buffers` holds every open buffer except the one the view shows, so each open file
 /// lives in exactly one place.
+///
+/// After every public call the view fills what the status bar leaves of the terminal, every
+/// buffer and the view keep their own invariants, a language that is being waited for isn't
+/// loaded yet, and the editor is only out of date when every frame is out being drawn.
+/// `check_invariants` checks them.
 #[derive(Debug)]
 pub struct Editor {
     area: Area,
@@ -59,6 +64,11 @@ pub struct Editor {
 impl Editor {
     /// Starts an editor that follows `config`.
     pub fn new(area: Area, config: &Config) -> Result<Self> {
+        Self::with_loader(area, config, Loader::new()?)
+    }
+
+    /// Starts an editor that follows `config` and loads grammars with `loader`.
+    fn with_loader(area: Area, config: &Config, loader: Loader) -> Result<Self> {
         let view = View::new(Rect::new(0, 0, area), config)?;
         let mut editor = Self {
             area,
@@ -71,16 +81,24 @@ impl Editor {
             requests: vec![],
             frame_pool: FramePool::new(FRAME_COUNT, area),
             is_stale: false,
-            loader: Loader::new()?,
+            loader,
             requested_languages: HashSet::new(),
         };
         editor.fit_view();
+        editor.check_invariants();
         Ok(editor)
     }
 
     /// Applies `input`, then draws a frame if the screen is out of date and a spare frame is
     /// in the pool. Inputs that arrive while every frame is out share the next frame.
     pub fn apply(&mut self, input: Input) -> Result<()> {
+        // Checked whether or not the input worked, a failure leaves the editor consistent too
+        let result = self.apply_input(input);
+        self.check_invariants();
+        result
+    }
+
+    fn apply_input(&mut self, input: Input) -> Result<()> {
         let changed = !matches!(input, Input::Drawn(_));
         match input {
             Input::Action(action) => self.perform(action)?,
@@ -107,11 +125,12 @@ impl Editor {
         if self.is_stale
             && let Some(mut frame) = self.frame_pool.take()
         {
+            // Cleared first, so the editor is never out of date with a frame in hand
+            self.is_stale = false;
             // Parsed only when a frame is drawn, so a batch of inputs costs one parse
             self.reparse();
             self.update_frame(&mut frame);
             self.outputs.push(Output::Frame(frame));
-            self.is_stale = false;
         }
         Ok(())
     }
@@ -120,6 +139,7 @@ impl Editor {
     pub fn set_config(&mut self, config: &Config) -> Result<()> {
         self.view.set_config(config)?;
         self.config.clone_from(config);
+        self.check_invariants();
         Ok(())
     }
 
@@ -222,6 +242,7 @@ impl Editor {
             // A float is placed in the whole frame, so it doesn't matter what is free
             canvas.child(overlay, bounds);
         }
+        self.check_invariants();
     }
 
     /// Fits the editor to a new terminal size.
@@ -229,15 +250,21 @@ impl Editor {
         self.area = area;
         self.fit_view();
         self.frame_pool.resize(area);
+        self.check_invariants();
     }
 
     /// Gives the view the rect its layout works out to, the same way a draw does, so the keys
     /// that come before the next draw already act on it.
     fn fit_view(&mut self) {
+        self.view.resize(self.view_rect());
+    }
+
+    /// Returns the rect the view fills, what the status bar leaves of the terminal.
+    fn view_rect(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.area);
         let (_, free) = self.status_bar.layout().place(bounds, bounds);
         let (rect, _) = self.view.layout().place(free, bounds);
-        self.view.resize(rect);
+        rect
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
@@ -254,6 +281,52 @@ impl Editor {
         matches!(self.view.mode(), Mode::Insert)
     }
 }
+
+impl Editor {
+    /// Checks the rules every public function has to leave the editor in, and the ones of what
+    /// it holds. Debug builds only.
+    fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        self.view.check_invariants();
+        for buffer in &self.buffers {
+            buffer.check_invariants();
+        }
+        let paths: Vec<_> = iter::once(self.view.buffer())
+            .chain(&self.buffers)
+            .filter_map(Buffer::path)
+            .collect();
+        for (index, path) in paths.iter().enumerate() {
+            assert!(
+                !paths[..index].contains(path),
+                "show_file reuses the buffer of a file that is open, so {} is in one place",
+                path.display()
+            );
+        }
+
+        assert_eq!(
+            self.view.rect(),
+            self.view_rect(),
+            "new and resize fit the view to what the status bar leaves"
+        );
+        assert!(
+            self.requested_languages
+                .iter()
+                .all(|tag| self.loader.grammar(tag).is_none()),
+            "a language is only asked for while its grammar isn't loaded, and load_language \
+             stops waiting for it"
+        );
+        assert!(
+            !self.is_stale || self.frame_pool.is_empty(),
+            "apply draws a stale editor as soon as a frame is spare"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fuzz;
 
 #[cfg(test)]
 mod tests {
