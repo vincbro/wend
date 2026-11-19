@@ -144,36 +144,54 @@ impl<'a> Builder<'a> {
     }
 
     fn write_grapheme(&mut self, grapheme: &str) {
-        if grapheme == "\t" {
-            // Up to the next tab stop, a whole tab width when already on one
-            let tab_width = self.wrap.tab_width;
-            let tails = tab_width - self.col_cursor % tab_width - 1;
-            self.write(Slot::Glyph(self.glyph_at_cursor(grapheme, tails)));
-            return;
-        }
-
+        let width = self.wrap.area.width();
+        let is_tab = grapheme == "\t";
         // A wide glyph that doesn't fit the rest of the row moves to the next one, the
         // terminal can't draw half of it. Unless it wouldn't fit there either.
-        let tails = grapheme.width().saturating_sub(1);
-        let cols = tails + 1;
-        let width = self.wrap.area.width();
-        let fits_row = self.col_cursor + cols <= width;
-        let fits_wrapped = self.wrap_col() + cols <= width;
-        if !fits_row && fits_wrapped && self.col_cursor < width {
-            self.wrap();
+        let wide_tails = grapheme.width().saturating_sub(1);
+        if !is_tab {
+            let cols = wide_tails + 1;
+            let fits_row = self.col_cursor + cols <= width;
+            let fits_wrapped = self.wrap_col() + cols <= width;
+            if !fits_row && fits_wrapped && self.col_cursor < width {
+                self.wrap();
+            }
         }
-        self.write(Slot::Glyph(self.glyph_at_cursor(grapheme, tails)));
+
+        // A glyph never spills onto the next row: a row that starts there, such as the top
+        // of a scrolled view, would hold tails without their glyph
+        let start_col = if self.col_cursor >= width {
+            self.wrap_col()
+        } else {
+            self.col_cursor
+        };
+        let room = (width - start_col).max(1);
+        let shown = Grapheme::from_bytes_iter(grapheme.bytes());
+        let glyph = if is_tab {
+            // Up to the next tab stop, a whole tab width when already on one
+            let tab_width = self.wrap.tab_width;
+            let tails = tab_width - start_col % tab_width - 1;
+            self.glyph_at_cursor(grapheme, tails.min(room - 1), shown)
+        } else if wide_tails < room {
+            self.glyph_at_cursor(grapheme, wide_tails, shown)
+        } else {
+            // Nowhere to put its tails, so it is shown as U+FFFD, the way a grapheme too
+            // long for a glyph is
+            self.glyph_at_cursor(grapheme, 0, Grapheme::from_char('\u{FFFD}'))
+        };
+        self.write(Slot::Glyph(glyph));
         if grapheme.ends_with('\n') {
             self.new_line();
         }
     }
 
-    fn glyph_at_cursor(&self, grapheme: &str, tails: usize) -> Glyph {
+    /// A glyph for the bytes of `grapheme` that prints as `shown`.
+    fn glyph_at_cursor(&self, grapheme: &str, tails: usize, shown: Grapheme) -> Glyph {
         Glyph::new(
             self.byte_cursor,
             self.byte_cursor + grapheme.len(),
             tails,
-            Grapheme::from_bytes_iter(grapheme.bytes()),
+            shown,
         )
     }
 

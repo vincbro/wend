@@ -272,6 +272,56 @@ mod tests {
         );
     }
 
+    /// Asserts that every tail follows its glyph on the same row.
+    fn assert_tails_have_heads(wrap: &Wrap) {
+        for (pos, slot) in wrap.slots() {
+            let Slot::Tail(head_index) = slot else {
+                continue;
+            };
+            let index = wrap.slot_index(pos);
+            assert!(
+                head_index < index && head_index / wrap.area.width() == index / wrap.area.width(),
+                "the tail at {pos:?} points at {head_index}, off its row"
+            );
+            assert!(
+                matches!(wrap.slot(head_index), Some(Slot::Glyph(_))),
+                "the tail at {pos:?} points at {head_index}, which isn't a glyph"
+            );
+        }
+    }
+
+    #[test]
+    fn a_glyph_wider_than_the_view_is_shown_as_a_replacement() {
+        let wrap = wrap("a漢b", 1, 4);
+        let Some(Slot::Glyph(glyph)) = wrap.slot(1) else {
+            panic!("漢 is the second slot");
+        };
+        assert_eq!(glyph.tails(), 0, "it has no room for a tail");
+        assert_eq!(
+            glyph.grapheme().as_str_sanitize(),
+            "\u{FFFD}",
+            "shown as U+FFFD"
+        );
+        assert_eq!(glyph.to_range(), 1..4, "it still covers 漢's bytes");
+        assert_tails_have_heads(&wrap);
+    }
+
+    #[test]
+    fn a_tab_ends_at_the_end_of_its_row() {
+        // Width 6: the tab would span cols 4..8, so it stops at 6, and a view scrolled to
+        // the next row doesn't start on a tail
+        let text = "abcd\txyz";
+        for row in 0..2 {
+            let wrap = scrolled_wrap(text, 6, 3, ScrollOffset::new(0, row));
+            assert_tails_have_heads(&wrap);
+        }
+        let wrap = wrap(text, 6, 3);
+        let Some(Slot::Glyph(tab)) = wrap.slot(4) else {
+            panic!("the tab follows abcd");
+        };
+        assert_eq!(tab.tails(), 1, "up to the end of the row");
+    }
+
     #[test]
     fn wrapped_rows() {
         // Width 4: "abcd" then "↩ ef"
