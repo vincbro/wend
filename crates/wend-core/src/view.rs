@@ -23,6 +23,7 @@ use highlight::Highlighter;
 mod wrap;
 use wrap::{Glyph, ScrollOffset, Slot, SlotPosition, Wrap};
 mod motion;
+use motion::WordClass;
 pub use motion::{Direction, Motion};
 mod render;
 mod scroll;
@@ -61,6 +62,8 @@ pub struct View {
     selection: Selection,
     /// Scratch space for `render`, kept so that its memory is reused.
     open_highlights: Vec<(usize, Highlight)>,
+    /// Scratch space for `word_backward`, kept so that its memory is reused.
+    word_scratch: Vec<(usize, WordClass)>,
 
     scroll_margin: usize,
     line_numbers: LineNumbers,
@@ -91,6 +94,7 @@ impl View {
             ),
             selection: Selection::point(0),
             open_highlights: vec![],
+            word_scratch: vec![],
 
             scroll_margin: config.scroll.margin,
             line_numbers,

@@ -25,18 +25,12 @@ impl View {
 
     /// Deletes the grapheme before the selection, joins lines when at the start of one.
     pub fn delete(&mut self) {
-        // Done on the buffer, not the wrap, so it works across wrapped rows and lines
         let to_byte = self.selection.start();
-        let Some(len) = self
-            .buffer
-            .rope()
-            .byte_slice(..to_byte)
-            .graphemes()
-            .next_back()
-            .map(|grapheme| grapheme.len())
-        else {
+        if to_byte == 0 {
             return;
-        };
+        }
+        // Asked for from the byte before, as `crop` can't walk back over every emoji sequence
+        let len = to_byte - self.grapheme_start(to_byte - 1);
         self.edit(to_byte - len..to_byte, "");
         self.check_invariants();
     }
@@ -109,5 +103,40 @@ mod tests {
             "the whole emoji is deleted, not half of it"
         );
         assert_eq!(view.selection, Selection::point(1), "the cursor stays on b");
+    }
+
+    #[test]
+    fn delete_removes_a_whole_emoji_sequence() {
+        // The family is three emoji joined by two zero-width joiners, one grapheme
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let mut view = tests::view(&format!("a{family}b"), 20, 5);
+        view.set_selection(Selection::point(1 + family.len()), ColumnPolicy::Sync);
+        view.delete();
+        assert_eq!(
+            view.buffer.rope().to_string(),
+            "ab",
+            "all of the family goes"
+        );
+        assert_eq!(view.selection, Selection::point(1), "the cursor stays on b");
+    }
+
+    #[test]
+    fn delete_removes_an_emoji_sequence_that_is_off_screen() {
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let text = format!("{family}\n\n\n\n\n\n\nx");
+        let mut view = tests::view(&text, 20, 2);
+        // The head scrolls the view down, which leaves the anchor behind the family off screen
+        let selection = Selection::new(family.len(), text.len() - 1);
+        view.set_selection(selection, ColumnPolicy::Sync);
+        assert!(
+            view.wrap.find_byte(family.len()).is_none(),
+            "the anchor is off screen"
+        );
+        view.delete();
+        assert_eq!(
+            view.buffer.rope().to_string(),
+            "\n\n\n\n\n\n\nx",
+            "the whole family is gone"
+        );
     }
 }

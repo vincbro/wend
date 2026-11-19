@@ -1,11 +1,13 @@
 use std::iter::Peekable;
 
+use crop::Rope;
+
 use crate::view::{Selection, View};
 
 /// Says what words are made of. Only letters and numbers make a word, `_` separates them just
 /// like whitespace, so each part of a `snake_case_name` is its own word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WordClass {
+pub(in crate::view) enum WordClass {
     Word,
     Separator,
     Punctuation,
@@ -45,19 +47,10 @@ impl View {
     }
 
     /// Selects from the head back through any separators and the word before them.
-    pub(super) fn word_backward(&self) -> Option<Selection> {
+    pub(super) fn word_backward(&mut self) -> Option<Selection> {
         let end = self.clamped_grapheme_end(self.selection.head());
-        let mut graphemes = self
-            .buffer
-            .rope()
-            .byte_slice(..end)
-            .graphemes()
-            .rev()
-            .scan(end, |byte, grapheme| {
-                *byte -= grapheme.len();
-                Some((*byte, word_class(&grapheme)))
-            })
-            .peekable();
+        let rope = self.buffer.rope();
+        let mut graphemes = BackwardGraphemes::new(rope, end, &mut self.word_scratch).peekable();
 
         let (anchor, class) = word_start(&mut graphemes)?;
         let mut head = take_run(&mut graphemes, class, anchor);
@@ -69,6 +62,62 @@ impl View {
             head = take_run(&mut graphemes, word, byte);
         }
         Some(Selection::new(anchor, head))
+    }
+}
+
+/// Walks the graphemes before a byte from the last to the first, as their start and class.
+///
+/// `crop` overflows walking a rope backward over some emoji sequences, such as a family
+/// joined with zero-width joiners. So each line is walked forward into `line`, which this
+/// borrows so that its memory is reused, and handed out from its end.
+struct BackwardGraphemes<'a> {
+    rope: &'a Rope,
+    line: &'a mut Vec<(usize, WordClass)>,
+    /// How many lines before the one in `line` are still to read.
+    lines_left: usize,
+    /// Where the text still to read ends.
+    limit: usize,
+}
+
+impl<'a> BackwardGraphemes<'a> {
+    fn new(rope: &'a Rope, end: usize, line: &'a mut Vec<(usize, WordClass)>) -> Self {
+        line.clear();
+        Self {
+            rope,
+            line,
+            lines_left: rope.line_of_byte(end) + 1,
+            limit: end,
+        }
+    }
+}
+
+impl Iterator for BackwardGraphemes<'_> {
+    type Item = (usize, WordClass);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // A line can be empty, the one a cursor sits at the start of, or the one after a
+        // final line break
+        while self.line.is_empty() {
+            self.lines_left = self.lines_left.checked_sub(1)?;
+            let from = self.rope.byte_of_line(self.lines_left);
+            let mut byte = from;
+            self.line.extend(
+                self.rope
+                    .byte_slice(from..self.limit)
+                    .graphemes()
+                    .map(|grapheme| {
+                        let start = byte;
+                        byte += grapheme.len();
+                        (start, word_class(&grapheme))
+                    }),
+            );
+            self.limit = from;
+        }
+        self.line.pop()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.line.len(), None)
     }
 }
 
@@ -106,7 +155,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::{Direction, Motion, tests};
+    use crate::view::{ColumnPolicy, Direction, Motion, tests};
 
     #[test]
     fn word_stops_at_line_breaks() {
@@ -158,5 +207,35 @@ mod tests {
         );
         view.move_selection(Motion::Word(Direction::Backward), false);
         assert_eq!(view.selection.head(), 12, "back to the start of with");
+    }
+
+    #[test]
+    fn word_backward_walks_over_an_emoji_sequence() {
+        // Only letters make a word, so the family is punctuation, one grapheme of it
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let text = format!("ab {family}{family} cd");
+        let mut view = tests::view(&text, 40, 5);
+        view.set_selection(Selection::point(text.len() - 1), ColumnPolicy::Sync);
+        view.move_selection(Motion::Word(Direction::Backward), false);
+        assert_eq!(
+            view.selection.head(),
+            3 + 2 * family.len() + 1,
+            "back to the start of cd"
+        );
+        view.move_selection(Motion::Word(Direction::Backward), false);
+        assert_eq!(view.selection.head(), 3, "both families are one run");
+    }
+
+    #[test]
+    fn word_backward_crosses_lines_and_empty_lines() {
+        let mut view = tests::view("one\n\n\ntwo\n", 40, 3);
+        view.set_selection(
+            Selection::point(view.buffer.rope().byte_len()),
+            ColumnPolicy::Sync,
+        );
+        view.move_selection(Motion::Word(Direction::Backward), false);
+        assert_eq!(view.selection.head(), 6, "back to the start of two");
+        view.move_selection(Motion::Word(Direction::Backward), false);
+        assert_eq!(view.selection.head(), 0, "over the empty lines onto one");
     }
 }

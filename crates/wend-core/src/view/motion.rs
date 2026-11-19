@@ -23,6 +23,7 @@ pub enum Motion {
 }
 
 mod word;
+pub(super) use word::WordClass;
 
 impl View {
     /// Moves the selection. With `extend` the anchor stays and only the head moves.
@@ -51,7 +52,7 @@ impl View {
     }
 
     /// Where a motion would put the selection, without moving it.
-    fn motion(&self, motion: Motion) -> Option<Selection> {
+    fn motion(&mut self, motion: Motion) -> Option<Selection> {
         Some(match motion {
             Motion::Horizontal(direction) => Selection::point(self.horizontal(direction)?),
             Motion::Vertical(direction) => Selection::point(self.vertical(direction)?),
