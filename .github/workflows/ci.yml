@@ -79,7 +79,7 @@ jobs:
       - name: Dependencies
         run: just deps
 
-  # STYLE.md S-COMMITS for every commit the PR adds, the same check as the
+  # code-standards/COMMITS.md S-COMMITS for every commit the PR adds, the same check as the
   # commit-msg hook from `just hooks`.
   commits:
     name: commits

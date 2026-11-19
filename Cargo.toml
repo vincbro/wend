@@ -29,7 +29,7 @@ tree-sitter = { version = "0.27.1", features = ["wasm"] }
 unicode-width = { version = "0.2.2" }
 wend-core = { path = "crates/wend-core", version = "=0.0.1" }
 
-# Lint policy: CONTRIBUTING.md#lints, and STYLE.md for the rules each lint
+# Lint policy: CONTRIBUTING.md#lints, and code-standards/rust/STYLE.md for the rules each lint
 # enforces (S-* ids below). A new lint from a toolchain bump is fixed, or
 # allowed here with a comment, in the same change.
 [workspace.lints.rust]

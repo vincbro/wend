@@ -1,6 +1,6 @@
 # Run through `just fmt`, which uses the nightly pinned in the justfile: the
 # import options below are nightly-only. A stable `cargo fmt` warns and skips
-# them, so `just fmt-check` is the source of truth. Style: STYLE.md.
+# them, so `just fmt-check` is the source of truth. Style: code-standards/rust/STYLE.md.
 edition = "2024"
 style_edition = "2024"
 use_field_init_shorthand = true

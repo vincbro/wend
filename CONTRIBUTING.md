@@ -6,6 +6,8 @@ Thanks for taking an interest. wend has strong opinions (see the [README](README
 
 You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just).
 
+The coding rules are in the `code-standards/` submodule: clone with `--recurse-submodules`, or run `git submodule update --init` in a clone you already have. Building wend doesn't need it, reading and reviewing code does.
+
 ```sh
 just toolchain   # installs the pinned Rust, nightly rustfmt, the cargo tools and the git hooks
 just run FILE    # runs wend from source, opening FILE
@@ -27,11 +29,13 @@ Every other crate is named after its folder, with the `wend-` prefix. Every crat
 
 ## Style
 
-[STYLE.md](STYLE.md) is how wend's Rust is written: layout, naming, errors, API shape, tests and commits, each rule with its reason. Most rules are enforced by the checks below. The rest are flagged in review, citing the rule's `S-…` id.
+The coding rules are shared by every project through the `code-standards/` submodule. [code-standards/rust/STYLE.md](code-standards/rust/STYLE.md) is how Rust is written: layout, naming, errors, API shape and tests, each rule with its reason. Most rules are enforced by the checks below. The rest are flagged in review, citing the rule's `S-…` id.
 
-[PERFORMANCE.md](PERFORMANCE.md) is the same for the code that runs on every key press and every frame: what may allocate, what is borrowed and what is measured, each rule with an id (`P-…`) and a reason.
+[code-standards/rust/PERFORMANCE.md](code-standards/rust/PERFORMANCE.md) is the same for the code that runs on every key press and every frame: what may allocate, what is borrowed and what is measured, each rule with an id (`P-…`) and a reason.
 
-To check a change against the rules tools can't enforce, ask your coding agent to run the `wend-review` skill (`.claude/skills/wend-review/SKILL.md`). It runs `just check`, then `style-review` against STYLE.md and `perf-review` against PERFORMANCE.md, and lists what it found without changing anything. Any agent that reads [AGENTS.md](AGENTS.md) finds them.
+[STANDARDS.local.md](STANDARDS.local.md) holds what is specific to wend: the gate, the hot paths, the performance problems that are measured and not yet fixed, and the overrides of the shared rules.
+
+To check a change against the rules tools can't enforce, ask your coding agent to run the `review` skill (`.claude/skills/review/SKILL.md`). It runs `just check`, then checks the code against both rule files, and lists what it found without changing anything. The `commit` skill does the same before it commits. Any agent that reads [AGENTS.md](AGENTS.md) finds them.
 
 ## Before you push
 
@@ -67,13 +71,13 @@ Declare every dependency once, in `[workspace.dependencies]` in the root `Cargo.
 
 The lint policy lives in `[workspace.lints]` in the root `Cargo.toml`. In short:
 
-- clippy's `all`, `pedantic` and `cargo` groups are on, plus a set of `restriction` lints chosen for an editor and to enforce [STYLE.md](STYLE.md). Each is listed with its reason, or the `S-…` rule it enforces. Thresholds, such as nesting depth and the banned names, live in `clippy.toml`.
+- clippy's `all`, `pedantic` and `cargo` groups are on, plus a set of `restriction` lints chosen for an editor and to enforce [STYLE.md](code-standards/rust/STYLE.md). Each is listed with its reason, or the `S-…` rule it enforces. Thresholds, such as nesting depth and the banned names, live in `clippy.toml`.
 - **No printing.** The terminal is the UI, and a stray `println!` or `eprintln!` corrupts the screen. Log or return errors instead.
 - **No `unwrap()`, `panic!` or `std::process::exit` outside tests.** A panic loses the user's unsaved work, and `exit` skips the code that restores the terminal. Use `?`, or `expect("...")` stating the invariant when one really holds.
-- **Docs where they add insight, not everywhere.** Document what a type is for, what a function promises, and when it panics (`# Panics` is linted). Don't restate what names and types already say (STYLE.md S-DOCS).
-- **Fields are all public or all private.** Stateful structs keep every field private (STYLE.md S-FIELDS).
-- **Stateful types state, check and fuzz their invariants.** A doc comment, a debug-only `check_invariants` called by every mutating method, and a property test (STYLE.md S-INVARIANTS).
-- **Code stays flat.** Nothing nests deeper than 4 blocks (STYLE.md S-FLAT).
+- **Docs where they add insight, not everywhere.** Document what a type is for, what a function promises, and when it panics (`# Panics` is linted). Don't restate what names and types already say (code-standards/rust/STYLE.md S-DOCS).
+- **Fields are all public or all private.** Stateful structs keep every field private (code-standards/rust/STYLE.md S-FIELDS).
+- **Stateful types state, check and fuzz their invariants.** A doc comment, a debug-only `check_invariants` called by every mutating method, and a property test (code-standards/rust/STYLE.md S-INVARIANTS).
+- **Code stays flat.** Nothing nests deeper than 4 blocks (code-standards/rust/STYLE.md S-FLAT).
 - **Unsafe is opt-in per site.** Mark it with `#[allow(unsafe_code, reason = "...")]` and put a `// SAFETY:` comment on every `unsafe` block.
 - **Escape hatches are local.** Silence a lint with `#[allow(lint)]` on the smallest item that needs it, never crate-wide.
 
@@ -83,13 +87,13 @@ The toolchain is pinned in `rust-toolchain.toml`, so everyone sees the same lint
 
 `just fmt` formats everything, and `just check` fails on anything it would change:
 
-- Rust: rustfmt with the options in `rustfmt.toml`. The import options (STYLE.md S-IMPORTS) are nightly-only, so `just fmt` runs the nightly pinned as `fmt_toolchain` in the `justfile`, and `just toolchain` installs it. A plain `cargo fmt` on stable warns and skips them. Point your editor at the pinned nightly; `.helix/languages.toml` already does for Helix.
+- Rust: rustfmt with the options in `rustfmt.toml`. The import options (code-standards/rust/STYLE.md S-IMPORTS) are nightly-only, so `just fmt` runs the nightly pinned as `fmt_toolchain` in the `justfile`, and `just toolchain` installs it. A plain `cargo fmt` on stable warns and skips them. Point your editor at the pinned nightly; `.helix/languages.toml` already does for Helix.
 - `Cargo.toml` dependency tables: sorted alphabetically by `cargo sort`.
 - Every TOML file: formatted by `taplo` (`taplo.toml`). It never reorders keys, so hand-grouped tables such as the lints keep their order.
 
 ## Commits
 
-Commit messages follow STYLE.md S-COMMITS: `area: lowercase imperative summary`, at most 72 characters with no trailing period, then a blank line and a body saying why.
+Commit messages follow code-standards/COMMITS.md S-COMMITS: `area: lowercase imperative summary`, at most 72 characters with no trailing period, then a blank line and a body saying why.
 
 ```
 view: scroll by row instead of by line

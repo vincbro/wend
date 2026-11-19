@@ -1,6 +1,6 @@
 set shell := ["bash", "-uc"]
 
-# rustfmt's import options (STYLE.md S-IMPORTS) are nightly-only, so formatting
+# rustfmt's import options (code-standards/rust/STYLE.md S-IMPORTS) are nightly-only, so formatting
 # runs on this pinned nightly. Bump it like the toolchain: in its own change.
 fmt_toolchain := "nightly-2026-10-13"
 
@@ -105,18 +105,18 @@ toolchain:
     rustup toolchain install {{ fmt_toolchain }} --profile minimal --component rustfmt
     @[ -n "${CI:-}" ] || just _tools hooks
 
-# Use the hooks in .githooks: commit-msg checks STYLE.md S-COMMITS
+# Use the hooks in .githooks: commit-msg checks code-standards/COMMITS.md S-COMMITS
 hooks:
     git config core.hooksPath .githooks
 
-# Fail on a commit message that breaks STYLE.md S-COMMITS: just commit-msg <file>
+# Fail on a commit message that breaks code-standards/COMMITS.md S-COMMITS: just commit-msg <file>
 commit-msg file:
     #!/usr/bin/env bash
     set -euo pipefail
     # Comments and the diff `git commit -v` appends aren't part of the message
     message=$(sed '/^# ------------------------ >8 ------------------------$/,$d' {{ quote(file) }} | grep -v '^#' || true)
     subject=$(printf '%s\n' "$message" | head -n 1)
-    fail() { printf 'commit message: %s\n  %s\nSee STYLE.md S-COMMITS.\n' "$1" "$subject" >&2; exit 1; }
+    fail() { printf 'commit message: %s\n  %s\nSee code-standards/COMMITS.md S-COMMITS.\n' "$1" "$subject" >&2; exit 1; }
     # Merges and fixups are rewritten or generated, not written
     [[ "$subject" =~ ^(Merge|fixup!|squash!|amend!) ]] && exit 0
     [[ "$subject" =~ ^[a-z0-9][a-z0-9_/-]*(,\ [a-z0-9][a-z0-9_/-]*)*:\ [^\ ] ]] || fail "first line must be 'area: summary', area lowercase"
@@ -127,7 +127,7 @@ commit-msg file:
     second=$(printf '%s\n' "$message" | sed -n 2p)
     [[ -z "$second" ]] || fail "second line must be blank"
 
-# Check every commit since `base` against STYLE.md S-COMMITS: just commits [base]
+# Check every commit since `base` against code-standards/COMMITS.md S-COMMITS: just commits [base]
 commits base="origin/main":
     #!/usr/bin/env bash
     set -euo pipefail
