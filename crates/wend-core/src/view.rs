@@ -242,6 +242,8 @@ impl View {
         self.wrap.set_tab_width(config.text.tab_width);
         self.line_probe.set_tab_width(config.text.tab_width);
         self.wrap_dirty = true;
+        self.set_selection(self.selection, ColumnPolicy::Sync);
+        self.check_invariants();
         Ok(())
     }
 
@@ -256,6 +258,8 @@ impl View {
             .desired_col
             .min(self.text_rect().area.width().saturating_sub(1));
         self.wrap_dirty = true;
+        self.set_selection(self.selection, ColumnPolicy::Keep);
+        self.check_invariants();
     }
 
     /// Returns the gutter `buffer` needs in a view at `rect`.
