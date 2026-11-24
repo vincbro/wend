@@ -32,13 +32,19 @@ impl Editor {
 
     /// Does `action` without drawing, so the next frame shows it. The editor's own actions
     /// run whatever is open, the others go to the overlay when one is, else to the view.
-    pub fn perform(&mut self, action: Action) -> Result<()> {
+    pub fn perform(&mut self, action: &Action) -> Result<()> {
         let result = match action {
-            Action::Editor(action) => self.perform_editor(action),
+            Action::Editor(action) => self.perform_editor(*action),
             Action::View(action) => {
                 match &mut self.overlay {
-                    Some(overlay) => overlay.perform(action),
-                    None => self.view.perform(action),
+                    Some(overlay) => overlay.perform(*action),
+                    None => self.view.perform(*action),
+                }
+                Ok(())
+            }
+            Action::Overlay(action) => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.act(*action);
                 }
                 Ok(())
             }
@@ -75,11 +81,11 @@ mod tests {
     fn an_open_overlay_takes_the_view_actions() {
         let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
         editor
-            .perform(Action::Editor(EditorAction::OpenTestOverlay))
+            .perform(&Action::Editor(EditorAction::OpenTestOverlay))
             .unwrap();
 
         editor
-            .perform(Action::View(ViewAction::Mode(Mode::Insert)))
+            .perform(&Action::View(ViewAction::Mode(Mode::Insert)))
             .unwrap();
 
         assert_eq!(

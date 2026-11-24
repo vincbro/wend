@@ -129,6 +129,8 @@ impl View {
             match self.pressed[index] {
                 Action::View(action) => self.perform(action),
                 Action::Editor(action) => requests.push(action),
+                // `Scope::View` doesn't name them, so a view's keys can't bind one
+                Action::Overlay(_) => {}
             }
         }
     }

@@ -1,7 +1,7 @@
 use crate::{
     frame::Rect,
     input::{
-        action::ViewAction,
+        action::{OverlayAction, ViewAction},
         key::{Key, KeyCode},
     },
     layout::{Canvas, Element, Layout},
@@ -47,6 +47,15 @@ impl Overlay {
     pub(super) fn perform(&mut self, _action: ViewAction) {
         match self {
             Self::Test(_) => {}
+        }
+    }
+}
+
+impl Overlay {
+    /// Does an action of an overlay's own group. One of another overlay's group is dropped.
+    pub(super) fn act(&mut self, action: OverlayAction) {
+        match (self, action) {
+            (Self::Test(_), OverlayAction::Test(action)) => match action {},
         }
     }
 }

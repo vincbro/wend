@@ -98,7 +98,7 @@ fn opened(text: &str) -> (Editor, Frame) {
 /// Does a view action without drawing, the draw is timed on its own.
 fn act(editor: &mut Editor, action: ViewAction) {
     editor
-        .perform(Action::View(action))
+        .perform(&Action::View(action))
         .expect("view actions don't fail");
 }
 

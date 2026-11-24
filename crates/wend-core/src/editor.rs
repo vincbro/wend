@@ -98,7 +98,7 @@ impl Editor {
     fn apply_input(&mut self, input: Input) -> Result<()> {
         let changed = !matches!(input, Input::Drawn(_));
         match input {
-            Input::Action(action) => self.perform(action)?,
+            Input::Action(action) => self.perform(&action)?,
             Input::Key(key) => self.key_press(key)?,
             Input::Resize(area) => self.resize(area),
             Input::File {

@@ -18,6 +18,8 @@ pub enum Error {
     ShiftedCharacter(Box<str>),
     #[error("unknown action `{0}`")]
     UnknownAction(Box<str>),
+    #[error("`{0}` takes no arguments")]
+    UnexpectedArguments(Box<str>),
     #[error("the leader can't be `<leader>`")]
     LeaderIsLeader,
     #[error("in {mode} mode, `{chord}` is bound as a key and also as the start of a longer combo")]

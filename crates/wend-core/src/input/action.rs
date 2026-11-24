@@ -6,17 +6,23 @@ use serde::{
     ser,
 };
 
+mod overlay;
+pub use overlay::{OverlayAction, OverlayKind, TestOverlayAction};
+
 use crate::{
-    config::Error,
+    config::{self, Error},
     input::Mode,
     view::{Direction, Motion},
 };
 
 /// What a key can do, as a group for each target that takes keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Not `Copy`, because an action that takes arguments owns them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Editor(EditorAction),
     View(ViewAction),
+    Overlay(OverlayAction),
 }
 
 /// What any target can do, wherever the keys came from.
@@ -44,31 +50,56 @@ pub enum ViewAction {
     Revert,
 }
 
+/// The groups of actions a piece of text can name, which is what a place that takes actions as
+/// text accepts. The editor's group is in every scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Only what any target can do.
+    Editor,
+    /// What any target can do and what a view does.
+    View,
+    /// What any target can do and what the given overlay does.
+    Overlay(OverlayKind),
+}
+
 impl Action {
     /// The name a config gives this action, none for a character typing itself.
     #[must_use]
-    pub const fn name(self) -> Option<&'static str> {
+    pub const fn name(&self) -> Option<&'static str> {
         match self {
             Self::Editor(action) => Some(action.name()),
             Self::View(action) => action.name(),
+            Self::Overlay(action) => Some(action.name()),
         }
     }
 
     /// What the action does, in a few words for a config file to show next to a binding.
     #[must_use]
-    pub const fn description(self) -> &'static str {
+    pub const fn description(&self) -> &'static str {
         match self {
             Self::Editor(action) => action.description(),
             Self::View(action) => action.description(),
+            Self::Overlay(action) => action.description(),
         }
     }
 
-    /// The action a config means by `name`, the inverse of `name`.
-    #[must_use]
-    pub fn from_name(name: &str) -> Option<Self> {
-        EditorAction::from_name(name)
+    /// Reads the action `text` writes: the name of one in `scope`, then its arguments
+    /// separated by spaces. No action takes arguments yet, so any are refused.
+    pub fn parse(scope: Scope, text: &str) -> config::Result<Self> {
+        let text = text.trim();
+        let (name, arguments) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+        let action = EditorAction::from_name(name)
             .map(Self::Editor)
-            .or_else(|| ViewAction::from_name(name).map(Self::View))
+            .or_else(|| match scope {
+                Scope::Editor => None,
+                Scope::View => ViewAction::from_name(name).map(Self::View),
+                Scope::Overlay(kind) => OverlayAction::from_name(kind, name).map(Self::Overlay),
+            })
+            .ok_or_else(|| Error::UnknownAction(name.into()))?;
+        if !arguments.trim().is_empty() {
+            return Err(Error::UnexpectedArguments(name.into()));
+        }
+        Ok(action)
     }
 }
 
@@ -217,7 +248,7 @@ impl<'de> Deserialize<'de> for Action {
             }
 
             fn visit_str<E: de::Error>(self, name: &str) -> Result<Action, E> {
-                Action::from_name(name).ok_or_else(|| E::custom(Error::UnknownAction(name.into())))
+                Action::parse(Scope::View, name).map_err(E::custom)
             }
         }
 
@@ -268,8 +299,55 @@ mod tests {
     fn every_name_reads_back_as_its_action() {
         for action in all() {
             let name = action.name().expect("every bindable action has a name");
-            assert_eq!(Action::from_name(name), Some(action), "{name}");
+            assert_eq!(Action::parse(Scope::View, name).unwrap(), action, "{name}");
         }
+    }
+
+    #[test]
+    fn the_editor_scope_names_only_the_editor_group() {
+        assert_eq!(
+            Action::parse(Scope::Editor, "quit").unwrap(),
+            Action::Editor(EditorAction::Quit)
+        );
+        assert!(
+            matches!(
+                Action::parse(Scope::Editor, "left"),
+                Err(Error::UnknownAction(_))
+            ),
+            "a motion is the view's"
+        );
+    }
+
+    #[test]
+    fn the_overlay_scope_names_the_editor_group_and_not_the_views() {
+        let scope = Scope::Overlay(OverlayKind::Test);
+        assert_eq!(
+            Action::parse(scope, "quit").unwrap(),
+            Action::Editor(EditorAction::Quit)
+        );
+        assert!(
+            matches!(Action::parse(scope, "left"), Err(Error::UnknownAction(_))),
+            "a motion is the view's"
+        );
+    }
+
+    #[test]
+    fn surrounding_space_is_ignored() {
+        assert_eq!(
+            Action::parse(Scope::View, "  save  ").unwrap(),
+            Action::Editor(EditorAction::Save)
+        );
+    }
+
+    #[test]
+    fn arguments_to_an_action_that_takes_none_are_refused() {
+        assert!(
+            matches!(
+                Action::parse(Scope::View, "save now"),
+                Err(Error::UnexpectedArguments(name)) if &*name == "save"
+            ),
+            "save has no arguments"
+        );
     }
 
     #[test]
