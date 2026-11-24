@@ -74,3 +74,6 @@ impl FramePool {
         );
     }
 }
+
+#[cfg(test)]
+mod fuzz;

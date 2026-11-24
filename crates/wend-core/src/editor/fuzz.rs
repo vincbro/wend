@@ -67,7 +67,7 @@ fn call() -> impl Strategy<Value = Call> {
         1 => Just(Action::Editor(EditorAction::OpenTestOverlay)),
         1 => Just(Action::Editor(EditorAction::Save)),
     ];
-    let area = (0..=150u16, 0..=40u16).prop_map(|(cols, rows)| Area::new(cols, rows));
+    let area = view_fuzz::area();
     let bytes = prop_oneof![
         4 => view_fuzz::text().prop_map(String::into_bytes),
         1 => collection::vec(any::<u8>(), 0..16),
@@ -183,7 +183,7 @@ proptest! {
 
     #[test]
     fn no_sequence_of_inputs_breaks_the_invariants(
-        area in (0..=150u16, 0..=40u16).prop_map(|(cols, rows)| Area::new(cols, rows)),
+        area in view_fuzz::area(),
         calls in collection::vec(call(), 0..40),
     ) {
         let loader = LOADER.take().unwrap_or_else(|| Loader::new().unwrap());

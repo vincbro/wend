@@ -6,15 +6,20 @@
 
 use std::{
     hint,
+    path::Path,
     time::{Duration, Instant},
 };
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use wend_core::{
-    buffer::Buffer,
     config::Config,
     editor::Editor,
     frame::{Area, Frame},
+    input::{
+        Input,
+        action::{Action, ViewAction},
+    },
+    output::Output,
     view::{Direction, Motion},
 };
 
@@ -72,12 +77,29 @@ fn text(len: usize) -> String {
 fn opened(text: &str) -> (Editor, Frame) {
     let mut editor = Editor::new(Area::new(COLS, ROWS), &Config::default())
         .expect("the wasm engine starts on every supported platform");
-    editor.view_mut().open_buffer(Buffer::from(text));
-
-    let mut frame = editor.frame();
-    draw(&mut editor, &mut frame);
+    // The file reaches the editor the way the frontend sends it, and the editor draws it
+    let file = Input::File {
+        path: Path::new("bench.txt").into(),
+        bytes: text.as_bytes().into(),
+        language: None,
+    };
+    editor.apply(file).expect("the text is valid");
+    let frame = editor
+        .drain_outputs()
+        .find_map(|output| match output {
+            Output::Frame(frame) => Some(frame),
+            _ => None,
+        })
+        .expect("a new file is drawn into a spare frame");
 
     (editor, frame)
+}
+
+/// Does a view action without drawing, the draw is timed on its own.
+fn act(editor: &mut Editor, action: ViewAction) {
+    editor
+        .perform(Action::View(action))
+        .expect("view actions don't fail");
 }
 
 /// Updates the existing frame, reusing it between draws.
@@ -88,14 +110,14 @@ fn draw(editor: &mut Editor, frame: &mut Frame) {
 
 fn press(editor: &mut Editor, frame: &mut Frame, motion: Motion, times: usize) {
     for _ in 0..times {
-        editor.view_mut().move_selection(motion, false);
+        act(editor, ViewAction::Motion(motion));
         draw(editor, frame);
     }
 }
 
 fn type_text(editor: &mut Editor, frame: &mut Frame) {
     for c in TYPED.chars() {
-        editor.view_mut().insert(c);
+        act(editor, ViewAction::Insert(c));
         draw(editor, frame);
     }
 }
@@ -238,12 +260,12 @@ fn type_and_delete(criterion: &mut Criterion) {
     let run = TYPED.len() as u64;
 
     phase(criterion, "type", run, nothing, |editor, frame| {
-        editor.view_mut().insert('x');
+        act(editor, ViewAction::Insert('x'));
         draw(editor, frame);
     });
 
     phase(criterion, "delete", run, type_text, |editor, frame| {
-        editor.view_mut().delete();
+        act(editor, ViewAction::Delete);
         draw(editor, frame);
     });
 }
@@ -254,9 +276,9 @@ fn revert(criterion: &mut Criterion) {
         criterion,
         "revert",
         1,
-        |editor, _frame| editor.view_mut().insert('x'),
+        |editor, _frame| act(editor, ViewAction::Insert('x')),
         |editor, frame| {
-            editor.view_mut().revert();
+            act(editor, ViewAction::Revert);
             draw(editor, frame);
         },
     );

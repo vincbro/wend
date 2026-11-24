@@ -19,6 +19,11 @@ impl<Inner: Element> Pane<Inner> {
     pub fn new(layout: Layout, inner: Inner) -> Self {
         Self { layout, inner }
     }
+
+    #[must_use]
+    pub fn inner(&self) -> &Inner {
+        &self.inner
+    }
 }
 
 impl<Inner: Element> Element for Pane<Inner> {

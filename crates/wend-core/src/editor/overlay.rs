@@ -1,6 +1,9 @@
 use crate::{
     frame::Rect,
-    input::key::{Key, KeyCode},
+    input::{
+        action::ViewAction,
+        key::{Key, KeyCode},
+    },
     layout::{Canvas, Element, Layout},
 };
 
@@ -36,6 +39,23 @@ impl Overlay {
         }
         match self {
             Self::Test(_) => KeyOutcome::Consumed,
+        }
+    }
+
+    /// Does a view action the overlay is the target of. No overlay has actions of its own yet,
+    /// so it is dropped.
+    pub(super) fn perform(&mut self, _action: ViewAction) {
+        match self {
+            Self::Test(_) => {}
+        }
+    }
+}
+
+impl Overlay {
+    /// Checks the rules of what the overlay holds. Debug builds only.
+    pub(super) fn check_invariants(&self) {
+        match self {
+            Self::Test(overlay) => overlay.check_invariants(),
         }
     }
 }

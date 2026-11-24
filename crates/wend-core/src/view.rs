@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
 use crate::{
     buffer::Buffer,
@@ -11,7 +11,7 @@ use crate::{
     },
     layout::{Fit, Layout, Size},
     number,
-    syntax::Highlight,
+    syntax::{Grammar, Highlight, LanguageTag, Loader},
 };
 
 mod edit;
@@ -155,9 +155,24 @@ impl View {
         &self.buffer
     }
 
-    #[must_use]
-    pub fn buffer_mut(&mut self) -> &mut Buffer {
-        &mut self.buffer
+    /// Sets the language of the shown buffer, see `Buffer::set_language`. It leaves the text
+    /// alone, so the wrap and the selection stay as they are.
+    pub fn set_language(&mut self, language: Option<LanguageTag>) {
+        self.buffer.set_language(language);
+        self.check_invariants();
+    }
+
+    /// Gives the shown buffer `grammar`, see `Buffer::attach`.
+    pub(crate) fn attach(&mut self, grammar: &Arc<Grammar>) {
+        self.buffer.attach(grammar);
+        self.check_invariants();
+    }
+
+    /// Brings the shown buffer's syntax up to date with its text, see `Buffer::reparse`.
+    pub(crate) fn reparse(&mut self, loader: &mut Loader) -> Result<()> {
+        let result = self.buffer.reparse(loader).map_err(Error::from);
+        self.check_invariants();
+        result
     }
 
     /// Takes in the file's new contents. The selection keeps its bytes as far as the new
@@ -534,10 +549,9 @@ pub(crate) mod tests {
     fn render_colors_the_highlighted_text() {
         let (mut loader, grammar) = syntax::tests::rust();
         let mut view = view("fn main() {}", 20, 2);
-        view.buffer_mut()
-            .set_language(Some(LanguageTag::new("rust")));
-        view.buffer_mut().attach(&grammar);
-        view.buffer_mut().reparse(&mut loader).unwrap();
+        view.set_language(Some(LanguageTag::new("rust")));
+        view.attach(&grammar);
+        view.reparse(&mut loader).unwrap();
 
         let frame = rendered(&mut view);
 

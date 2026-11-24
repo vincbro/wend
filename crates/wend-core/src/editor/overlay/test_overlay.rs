@@ -14,6 +14,9 @@ const RIGHT: &str = "the right window\nnext to the left one";
 
 /// Two windows side by side in a float, to try arranging windows in an overlay until the
 /// file picker needs it.
+///
+/// Both windows are views, so what holds for a view holds for them. `check_invariants` checks
+/// it.
 #[derive(Debug)]
 pub(in crate::editor) struct TestOverlay {
     left: Pane<View>,
@@ -30,6 +33,18 @@ impl TestOverlay {
             left: Pane::new(left, view(LEFT, config)?),
             right: Pane::new(Layout::FILL, view(RIGHT, config)?),
         })
+    }
+}
+
+impl TestOverlay {
+    /// Checks the rules of both windows. Debug builds only.
+    pub(in crate::editor) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        self.left.inner().check_invariants();
+        self.right.inner().check_invariants();
     }
 }
 

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 16081d58ccb2103b030f551c26cb1d2eeafe4548017a7bff9fb10821f1e3750f # shrinks to count = 1, start = Area { cols: 0, rows: 0 }, calls = [Take, Stranger(Area { cols: 0, rows: 1 })]

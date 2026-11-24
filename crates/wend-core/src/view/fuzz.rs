@@ -64,6 +64,11 @@ fn rect() -> impl Strategy<Value = Rect> {
     (0..=150u16, 0..=12u16).prop_map(|(cols, rows)| Rect::new(0, 0, Area::new(cols, rows)))
 }
 
+/// Any size a terminal reports, from no cells at all to a big one.
+pub(crate) fn area() -> impl Strategy<Value = Area> {
+    (0..=150u16, 0..=40u16).prop_map(|(cols, rows)| Area::new(cols, rows))
+}
+
 fn direction() -> impl Strategy<Value = Direction> {
     prop_oneof![Just(Direction::Backward), Just(Direction::Forward)]
 }

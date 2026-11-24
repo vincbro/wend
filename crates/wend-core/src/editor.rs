@@ -1,14 +1,10 @@
-use std::{collections::HashSet, iter, mem, path::Path, vec::Drain};
+use std::{collections::HashSet, iter, path::Path, vec::Drain};
 
 use crate::{
     buffer::Buffer,
     config::Config,
     frame::{Area, Frame, Rect},
-    input::{
-        Input, Mode,
-        action::{Action, EditorAction},
-        key::Key,
-    },
+    input::{Input, Mode, action::EditorAction},
     layout::{Canvas, Element},
     output::Output,
     syntax::{LanguageTag, Loader},
@@ -20,9 +16,10 @@ use frame_pool::FramePool;
 mod status_bar;
 use status_bar::StatusBar;
 mod overlay;
-use overlay::{KeyOutcome, Overlay, TestOverlay};
+use overlay::{Overlay, TestOverlay};
 mod error;
 mod language;
+mod route;
 pub use error::{Error, Result};
 
 /// How many frames pass between the editor and the frontend. The frontend keeps the one on
@@ -143,48 +140,6 @@ impl Editor {
         Ok(())
     }
 
-    fn key_press(&mut self, key: Key) -> Result<()> {
-        // An open overlay is first in line for the keys, and takes all of them
-        if let Some(overlay) = &mut self.overlay {
-            if overlay.key(key) == KeyOutcome::Closed {
-                self.overlay = None;
-            }
-            return Ok(());
-        }
-        self.view.key_press(key, &mut self.requests);
-        // Taken out so the requests can run on the editor, then given back for their memory
-        let mut requests = mem::take(&mut self.requests);
-        let result = requests
-            .drain(..)
-            .try_for_each(|action| self.perform_editor(action));
-        self.requests = requests;
-        result
-    }
-
-    fn perform(&mut self, action: Action) -> Result<()> {
-        match action {
-            Action::Editor(action) => self.perform_editor(action),
-            Action::View(action) => {
-                self.view.perform(action);
-                Ok(())
-            }
-        }
-    }
-
-    fn perform_editor(&mut self, action: EditorAction) -> Result<()> {
-        match action {
-            EditorAction::Save => {
-                let (path, rope) = self.view.save()?;
-                self.outputs.push(Output::Write { path, rope });
-            }
-            EditorAction::OpenTestOverlay => {
-                self.overlay = Some(Overlay::Test(TestOverlay::new(&self.config)?));
-            }
-            EditorAction::Quit => self.outputs.push(Output::Quit),
-        }
-        Ok(())
-    }
-
     pub fn drain_outputs(&mut self) -> Drain<'_, Output> {
         self.outputs.drain(..)
     }
@@ -192,10 +147,6 @@ impl Editor {
     #[must_use]
     pub fn view(&self) -> &View {
         &self.view
-    }
-
-    pub fn view_mut(&mut self) -> &mut View {
-        &mut self.view
     }
 
     #[must_use]
@@ -291,6 +242,9 @@ impl Editor {
         }
 
         self.view.check_invariants();
+        if let Some(overlay) = &self.overlay {
+            overlay.check_invariants();
+        }
         for buffer in &self.buffers {
             buffer.check_invariants();
         }
@@ -333,7 +287,10 @@ mod tests {
     use super::*;
     use crate::{
         config::Actions,
-        input::{action::ViewAction, key::KeyCode},
+        input::{
+            action::{Action, ViewAction},
+            key::{Key, KeyCode},
+        },
         syntax,
     };
 
