@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::{
     config::{Error, Result, notation},
-    input::key::{Key, KeyCode},
+    input::key::{Key, KeyCode, KeyPattern},
 };
 
 /// One step of a chord.
@@ -12,6 +12,8 @@ use crate::{
 pub enum Stroke {
     /// Whichever key the config makes the leader, so a whole family of combos moves together.
     Leader,
+    /// Any key that types a character, written `<char>`.
+    Character,
     Key(Key),
 }
 
@@ -21,14 +23,15 @@ pub enum Stroke {
 pub struct Chord(Box<[Stroke]>);
 
 impl Chord {
-    /// The keys of the chord, with `leader` where it says `<leader>`.
+    /// The steps of the chord, with `leader` where it says `<leader>`.
     #[must_use]
-    pub fn keys(&self, leader: Key) -> Box<[Key]> {
+    pub fn patterns(&self, leader: Key) -> Box<[KeyPattern]> {
         self.0
             .iter()
             .map(|stroke| match *stroke {
-                Stroke::Leader => leader,
-                Stroke::Key(key) => key,
+                Stroke::Leader => KeyPattern::Key(leader),
+                Stroke::Character => KeyPattern::Character,
+                Stroke::Key(key) => KeyPattern::Key(key),
             })
             .collect()
     }
@@ -49,10 +52,10 @@ impl FromStr for Chord {
             let (inner, after) = rest[1..]
                 .split_once('>')
                 .ok_or_else(|| Error::UnclosedBracket(text.into()))?;
-            strokes.push(if inner == "leader" {
-                Stroke::Leader
-            } else {
-                Stroke::Key(notation::parse_key(inner)?)
+            strokes.push(match inner {
+                "leader" => Stroke::Leader,
+                "char" => Stroke::Character,
+                _ => Stroke::Key(notation::parse_key(inner)?),
             });
             rest = after;
         }
@@ -68,6 +71,7 @@ impl fmt::Display for Chord {
         for stroke in &self.0 {
             match *stroke {
                 Stroke::Leader => formatter.write_str("<leader>")?,
+                Stroke::Character => formatter.write_str("<char>")?,
                 Stroke::Key(key) => formatter.write_str(&notation::format_key(key))?,
             }
         }
@@ -132,8 +136,11 @@ mod tests {
     fn leader_takes_the_place_of_its_stroke() {
         let space = Key::new(KeyCode::Char(' '));
         assert_eq!(
-            chord("<leader>e").keys(space)[..],
-            [space, Key::new(KeyCode::Char('e'))]
+            chord("<leader>e").patterns(space)[..],
+            [
+                KeyPattern::Key(space),
+                KeyPattern::Key(Key::new(KeyCode::Char('e')))
+            ]
         );
     }
 
@@ -142,6 +149,7 @@ mod tests {
         for text in [
             "gs",
             "<leader>e",
+            "<char>",
             "<C-x>",
             "<A-S-tab>",
             "<space>",

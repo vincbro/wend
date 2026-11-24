@@ -104,7 +104,7 @@ impl Keys {
 fn build_tree(mode: &'static str, bindings: &Bindings, leader: Key) -> Result<KeyTree> {
     let mut tree = KeyTree::new();
     for (chord, actions) in bindings {
-        if !tree.insert(&chord.keys(leader), actions.0.clone()) {
+        if !tree.insert(&chord.patterns(leader), actions.0.clone()) {
             return Err(Error::Conflict {
                 mode,
                 chord: chord.to_string().into(),

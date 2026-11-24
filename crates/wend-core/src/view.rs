@@ -129,6 +129,7 @@ impl View {
         let pressed = mem::take(&mut self.pressed);
         for action in &pressed {
             match action {
+                Action::View(ViewAction::InsertTyped) => self.insert_typed(key),
                 Action::View(action) => self.perform(*action),
                 Action::Editor(action) => requests.push(action.clone()),
                 // `Scope::View` doesn't name them, so a view's keys can't bind one
@@ -136,6 +137,13 @@ impl View {
             }
         }
         self.pressed = pressed;
+    }
+
+    /// Inserts the character `key` types, nothing for a key that types none.
+    fn insert_typed(&mut self, key: Key) {
+        if let Some(character) = key.character() {
+            self.insert(character);
+        }
     }
 
     /// Does what `action` says to the text, the selection or the mode.
@@ -147,6 +155,8 @@ impl View {
             ViewAction::Mode(mode) => self.mode = mode,
             ViewAction::CollapseSelection => self.collapse_selection(),
             ViewAction::Insert(c) => self.insert(c),
+            // Needs the key that ran it, which only `key_press` has
+            ViewAction::InsertTyped => {}
             ViewAction::Delete => self.delete(),
             ViewAction::DeleteSelection => self.delete_selection(),
             ViewAction::SelectRow => self.select_row(),

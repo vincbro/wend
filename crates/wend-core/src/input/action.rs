@@ -44,6 +44,9 @@ pub enum ViewAction {
     Motion(Motion),
     Mode(Mode),
     Insert(char),
+    /// Inserts the character of the key that ran it, so a binding can type through the config.
+    /// It does nothing when run without a key.
+    InsertTyped,
     Delete,
     DeleteSelection,
     OpenLine,
@@ -67,7 +70,7 @@ pub enum Scope {
 }
 
 impl Action {
-    /// The name a config gives this action, none for a character typing itself.
+    /// The name a config gives this action, none for a character that is typed.
     #[must_use]
     pub const fn name(&self) -> Option<&'static str> {
         match self {
@@ -157,7 +160,7 @@ impl EditorAction {
 }
 
 impl ViewAction {
-    /// The name a config gives this action, none for a character typing itself. The match
+    /// The name a config gives this action, none for a character that is typed. The match
     /// has no catch-all, so an action added without a name doesn't compile.
     #[must_use]
     pub const fn name(self) -> Option<&'static str> {
@@ -180,6 +183,7 @@ impl ViewAction {
             Self::Insert('\n') => "insert_newline",
             Self::Insert('\t') => "insert_tab",
             Self::Insert(_) => return None,
+            Self::InsertTyped => "insert_char",
             Self::Delete => "delete",
             Self::DeleteSelection => "delete_selection",
             Self::OpenLine => "open_line",
@@ -210,6 +214,7 @@ impl ViewAction {
             Self::Insert('\n') => "a line break",
             Self::Insert('\t') => "a tab",
             Self::Insert(_) => "a character",
+            Self::InsertTyped => "the character of the key",
             Self::Delete => "delete the grapheme before the cursor",
             Self::DeleteSelection => "delete the selection",
             Self::OpenLine => "open a line below",
@@ -239,6 +244,7 @@ impl ViewAction {
             "insert_mode" => Self::Mode(Mode::Insert),
             "insert_newline" => Self::Insert('\n'),
             "insert_tab" => Self::Insert('\t'),
+            "insert_char" => Self::InsertTyped,
             "delete" => Self::Delete,
             "delete_selection" => Self::DeleteSelection,
             "open_line" => Self::OpenLine,
@@ -299,6 +305,7 @@ mod tests {
         let mut actions = vec![
             Action::View(ViewAction::Insert('\n')),
             Action::View(ViewAction::Insert('\t')),
+            Action::View(ViewAction::InsertTyped),
             Action::View(ViewAction::Delete),
             Action::View(ViewAction::DeleteSelection),
             Action::View(ViewAction::OpenLine),

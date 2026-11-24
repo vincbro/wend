@@ -2,12 +2,13 @@ use crate::{
     config::KeyTrees,
     input::{
         Mode,
-        action::{Action, ViewAction},
-        key::{Key, KeyCode, KeyTree},
+        action::Action,
+        key::{Key, KeyTree},
     },
 };
 
-/// Turns keys into actions, one key at a time, with a key tree for each mode.
+/// Turns keys into actions, one key at a time, with a key tree for each mode. A character
+/// types because the tree binds `<char>`, so nothing here is hard-coded.
 ///
 /// `pending` is the combo so far. It always leads to a node of `pending_mode`'s tree,
 /// which is the mode the combo started in.
@@ -16,8 +17,6 @@ pub(super) struct Keymap {
     trees: KeyTrees,
     pending: Vec<Key>,
     pending_mode: Mode,
-    /// Holds the action of a character typing itself, so `press` can lend it like a leaf's.
-    typed: [Action; 1],
 }
 
 impl Keymap {
@@ -27,14 +26,11 @@ impl Keymap {
             trees,
             pending: vec![],
             pending_mode: Mode::Normal,
-            // Overwritten before it is lent out
-            typed: [Action::View(ViewAction::Insert(' '))],
         }
     }
 
-    /// Adds `key` to the combo and returns the actions to run: a leaf's, or a character
-    /// typing itself in insert mode. Empty while the combo waits for its next key, and
-    /// after a key nothing binds, which drops the combo.
+    /// Adds `key` to the combo and returns the actions to run: a leaf's. Empty while the
+    /// combo waits for its next key, and after a key nothing binds, which drops the combo.
     ///
     /// A combo started in another mode is dropped first, so a mode change from an action
     /// can't leave it pointing into the wrong tree.
@@ -52,25 +48,10 @@ impl Keymap {
                 actions
             }
             None => {
-                let is_combo = self.pending.len() > 1;
                 self.pending.clear();
-                typed_action(&mut self.typed, mode, key, is_combo)
+                &[]
             }
         }
-    }
-}
-
-/// A character the insert tree doesn't bind types itself, unless it ends a combo or comes
-/// with control or alt. Anything else does nothing. Takes the scratch space and not the
-/// keymap, so `press` can keep the trees borrowed.
-fn typed_action(typed: &mut [Action; 1], mode: Mode, key: Key, is_combo: bool) -> &[Action] {
-    let is_typed = !key.modifiers.control && !key.modifiers.alt;
-    match (mode, key.code) {
-        (Mode::Insert, KeyCode::Char(c)) if is_typed && !is_combo => {
-            *typed = [Action::View(ViewAction::Insert(c))];
-            typed
-        }
-        _ => &[],
     }
 }
 
@@ -79,7 +60,10 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        input::{action::EditorAction, key::Modifiers},
+        input::{
+            action::{EditorAction, ViewAction},
+            key::{KeyCode, Modifiers},
+        },
         view::{Direction, Motion},
     };
 
@@ -181,7 +165,7 @@ mod tests {
         assert!(
             matches!(
                 keymap.press(Mode::Insert, key('s'))[..],
-                [Action::View(ViewAction::Insert('s'))]
+                [Action::View(ViewAction::InsertTyped)]
             ),
             "s types instead of finishing g s"
         );
@@ -192,7 +176,7 @@ mod tests {
         let mut keymap = default_keymap();
         assert!(matches!(
             keymap.press(Mode::Insert, key('h'))[..],
-            [Action::View(ViewAction::Insert('h'))]
+            [Action::View(ViewAction::InsertTyped)]
         ));
         let control_h = Key {
             code: KeyCode::Char('h'),
@@ -217,11 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn insert_leaves_characters_unbound() {
+    fn insert_binds_characters_to_typing() {
         let keymap = default_keymap();
         assert!(
-            keymap.trees.get(Mode::Insert).get(&[key('h')]).is_none(),
-            "the editor types it"
+            matches!(
+                keymap.trees.get(Mode::Insert).get(&[key('h')]),
+                Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::View(ViewAction::InsertTyped)])
+            ),
+            "the config types it"
         );
     }
 }

@@ -2,12 +2,24 @@ use std::collections::HashMap;
 
 use crate::input::action::Action;
 
+/// One step of a combo a tree binds: a key, or any character that types itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyPattern {
+    Key(Key),
+    /// Any key that has a `Key::character`, unless the node has a child for the key itself.
+    Character,
+}
+
 /// A tree of key combos: each key leads to the actions it runs, or to a node of keys that
 /// continue the combo. A key is never both, so a combo is done the moment it reaches a leaf.
 #[derive(Debug, Clone)]
 pub enum KeyTree {
     Leaf(Box<[Action]>),
-    Node { children: HashMap<Key, Self> },
+    Node {
+        children: HashMap<Key, Self>,
+        /// Where a key goes that types a character and has no child of its own.
+        character: Option<Box<Self>>,
+    },
 }
 
 impl KeyTree {
@@ -16,31 +28,54 @@ impl KeyTree {
     pub fn new() -> Self {
         Self::Node {
             children: HashMap::new(),
+            character: None,
         }
     }
 
-    /// Binds `actions` to the combo `keys`. `false`, with the tree maybe half grown, when the
+    /// Binds `actions` to the combo `pattern`. `false`, with the tree maybe half grown, when the
     /// combo is empty or collides with another: one is the start of the other, or both are
     /// the same.
-    pub fn insert(&mut self, keys: &[Key], actions: Box<[Action]>) -> bool {
-        let (Some((&first, rest)), Self::Node { children }) = (keys.split_first(), self) else {
+    pub fn insert(&mut self, pattern: &[KeyPattern], actions: Box<[Action]>) -> bool {
+        let (
+            Some((&first, rest)),
+            Self::Node {
+                children,
+                character,
+            },
+        ) = (pattern.split_first(), self)
+        else {
             return false;
         };
-        if rest.is_empty() {
-            return children.insert(first, Self::Leaf(actions)).is_none();
+        match first {
+            KeyPattern::Key(key) if rest.is_empty() => {
+                children.insert(key, Self::Leaf(actions)).is_none()
+            }
+            KeyPattern::Key(key) => children
+                .entry(key)
+                .or_insert_with(Self::new)
+                .insert(rest, actions),
+            KeyPattern::Character if rest.is_empty() => {
+                character.replace(Box::new(Self::Leaf(actions))).is_none()
+            }
+            KeyPattern::Character => character
+                .get_or_insert_with(|| Box::new(Self::new()))
+                .insert(rest, actions),
         }
-        children
-            .entry(first)
-            .or_insert_with(Self::new)
-            .insert(rest, actions)
     }
 
-    /// Walks `keys` down from this tree. `None` when a key isn't bound, or the walk goes
-    /// on past a leaf.
+    /// Walks `keys` down from this tree, a key that types a character going to the node's
+    /// character child when it has none of its own. `None` when a key isn't bound, or the walk
+    /// goes on past a leaf.
     #[must_use]
     pub fn get(&self, keys: &[Key]) -> Option<&Self> {
         keys.iter().try_fold(self, |tree, key| match tree {
-            Self::Node { children, .. } => children.get(key),
+            Self::Node {
+                children,
+                character,
+            } => children.get(key).or_else(|| {
+                key.character()?;
+                character.as_deref()
+            }),
             Self::Leaf(_) => None,
         })
     }
@@ -64,6 +99,17 @@ impl Key {
         Self {
             code,
             modifiers: Modifiers::default(),
+        }
+    }
+
+    /// The character the key types, none for a named key or one held with control or alt.
+    #[must_use]
+    pub fn character(self) -> Option<char> {
+        match self.code {
+            KeyCode::Char(character) if !self.modifiers.control && !self.modifiers.alt => {
+                Some(character)
+            }
+            _ => None,
         }
     }
 }
@@ -96,11 +142,18 @@ mod tests {
         Key::new(KeyCode::Char(c))
     }
 
+    fn pattern(c: char) -> KeyPattern {
+        KeyPattern::Key(key(c))
+    }
+
     fn tree() -> KeyTree {
         let mut tree = KeyTree::new();
-        assert!(tree.insert(&[key('q')], Box::new([Action::Editor(EditorAction::Quit)])));
         assert!(tree.insert(
-            &[key('g'), key('s')],
+            &[pattern('q')],
+            Box::new([Action::Editor(EditorAction::Quit)])
+        ));
+        assert!(tree.insert(
+            &[pattern('g'), pattern('s')],
             Box::new([Action::Editor(EditorAction::Save)])
         ));
         tree
@@ -164,20 +217,66 @@ mod tests {
         let mut tree = tree();
         assert!(
             !tree.insert(
-                &[key('q'), key('x')],
+                &[pattern('q'), pattern('x')],
                 Box::new([Action::Editor(EditorAction::Save)])
             ),
             "q is a leaf, nothing continues it"
         );
         assert!(
-            !tree
-                .clone()
-                .insert(&[key('g')], Box::new([Action::Editor(EditorAction::Save)])),
+            !tree.clone().insert(
+                &[pattern('g')],
+                Box::new([Action::Editor(EditorAction::Save)])
+            ),
             "g starts a combo, so it can't be a leaf"
         );
         assert!(
             !tree.insert(&[], Box::new([Action::Editor(EditorAction::Save)])),
             "an empty combo is no combo"
         );
+    }
+
+    #[test]
+    fn a_character_pattern_catches_the_keys_that_type() {
+        let mut tree = tree();
+        assert!(tree.insert(
+            &[KeyPattern::Character],
+            Box::new([Action::Editor(EditorAction::Save)])
+        ));
+
+        assert!(
+            matches!(tree.get(&[key('z')]), Some(KeyTree::Leaf(_))),
+            "z types"
+        );
+        assert!(
+            matches!(
+                tree.get(&[key('q')]),
+                Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::Editor(EditorAction::Quit)])
+            ),
+            "a key with a child of its own doesn't fall back"
+        );
+        assert!(
+            tree.get(&[Key::new(KeyCode::Enter)]).is_none(),
+            "enter types no character"
+        );
+        let control_z = Key {
+            code: KeyCode::Char('z'),
+            modifiers: Modifiers {
+                control: true,
+                ..Modifiers::default()
+            },
+        };
+        assert!(tree.get(&[control_z]).is_none(), "control makes a command");
+        assert!(
+            tree.get(&[key('g'), key('z')]).is_none(),
+            "g has no character child of its own"
+        );
+    }
+
+    #[test]
+    fn two_character_patterns_collide() {
+        let mut tree = KeyTree::new();
+        let save = || Box::new([Action::Editor(EditorAction::Save)]);
+        assert!(tree.insert(&[KeyPattern::Character], save()));
+        assert!(!tree.insert(&[KeyPattern::Character], save()));
     }
 }
