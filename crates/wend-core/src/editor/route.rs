@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, path::Path};
 
 use super::{Editor, Overlay, Result, TestOverlay, overlay::KeyOutcome};
 use crate::{
@@ -25,7 +25,7 @@ impl Editor {
         let mut requests = mem::take(&mut self.requests);
         let result = requests
             .drain(..)
-            .try_for_each(|action| self.perform_editor(action));
+            .try_for_each(|action| self.perform_editor(&action));
         self.requests = requests;
         result
     }
@@ -34,7 +34,7 @@ impl Editor {
     /// run whatever is open, the others go to the overlay when one is, else to the view.
     pub fn perform(&mut self, action: &Action) -> Result<()> {
         let result = match action {
-            Action::Editor(action) => self.perform_editor(*action),
+            Action::Editor(action) => self.perform_editor(action),
             Action::View(action) => {
                 match &mut self.overlay {
                     Some(overlay) => overlay.perform(*action),
@@ -53,12 +53,13 @@ impl Editor {
         result
     }
 
-    fn perform_editor(&mut self, action: EditorAction) -> Result<()> {
+    fn perform_editor(&mut self, action: &EditorAction) -> Result<()> {
         match action {
             EditorAction::Save => {
                 let (path, rope) = self.view.save()?;
                 self.outputs.push(Output::Write { path, rope });
             }
+            EditorAction::Open(path) => self.outputs.push(Output::Read { path: path.clone() }),
             EditorAction::OpenTestOverlay => {
                 self.overlay = Some(Overlay::Test(TestOverlay::new(&self.config)?));
             }
@@ -74,7 +75,10 @@ mod tests {
     use crate::{
         config::Config,
         frame::Area,
-        input::{Mode, action::ViewAction},
+        input::{
+            Mode,
+            action::{Scope, ViewAction},
+        },
     };
 
     #[test]
@@ -92,6 +96,21 @@ mod tests {
             editor.mode(),
             Mode::Normal,
             "the view under it didn't see it"
+        );
+    }
+
+    #[test]
+    fn open_asks_the_frontend_to_read_the_file() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        let action = Action::parse(Scope::View, "open src/main.rs").unwrap();
+
+        editor.perform(&action).unwrap();
+
+        assert!(
+            editor.drain_outputs().any(
+                |output| matches!(output, Output::Read { path } if &*path == Path::new("src/main.rs"))
+            ),
+            "the path is what was typed"
         );
     }
 }

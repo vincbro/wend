@@ -121,18 +121,21 @@ impl View {
     /// editor's are added to `requests` for it to run, which this clears first.
     pub fn key_press(&mut self, key: Key, requests: &mut Vec<EditorAction>) {
         requests.clear();
-        // The keymap stays borrowed while it is read, so the actions are copied out first
+        // The keymap stays borrowed while it is read, so the actions are copied out first, and
+        // taken out of the view so it can run them
         self.pressed.clear();
         self.pressed
             .extend_from_slice(self.keymap.press(self.mode, key));
-        for index in 0..self.pressed.len() {
-            match self.pressed[index] {
-                Action::View(action) => self.perform(action),
-                Action::Editor(action) => requests.push(action),
+        let pressed = mem::take(&mut self.pressed);
+        for action in &pressed {
+            match action {
+                Action::View(action) => self.perform(*action),
+                Action::Editor(action) => requests.push(action.clone()),
                 // `Scope::View` doesn't name them, so a view's keys can't bind one
                 Action::Overlay(_) => {}
             }
         }
+        self.pressed = pressed;
     }
 
     /// Does what `action` says to the text, the selection or the mode.

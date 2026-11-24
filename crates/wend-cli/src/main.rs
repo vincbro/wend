@@ -122,6 +122,18 @@ fn main() -> Result<()> {
             output::Output::Quit => break,
             output::Output::Write { path, rope } => write_file(&path, rope.chunks())
                 .with_context(|| format!("failed to save {}", path.display()))?,
+            output::Output::Read { path } => {
+                let bytes = fs::read(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?
+                    .into_boxed_slice();
+                input_tx
+                    .send(Input::File {
+                        path,
+                        bytes,
+                        language: Some(LanguageTag::new("rust")),
+                    })
+                    .context("the editor stopped")?;
+            }
             output::Output::Language(tag) => input_tx
                 .send(Input::Language {
                     tag,

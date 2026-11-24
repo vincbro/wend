@@ -158,7 +158,7 @@ impl Session {
                         highlights: Box::from(RUST_HIGHLIGHTS),
                     })
                     .expect("the bundled grammar loads"),
-                Output::Write { .. } | Output::Quit => {}
+                Output::Write { .. } | Output::Read { .. } | Output::Quit => {}
             }
             self.outputs.extend(self.editor.drain_outputs());
         }

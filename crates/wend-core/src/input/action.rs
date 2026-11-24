@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::Path};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -26,9 +26,11 @@ pub enum Action {
 }
 
 /// What any target can do, wherever the keys came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorAction {
     Save,
+    /// Asks the frontend for the file at the path, which the editor then shows.
+    Open(Box<Path>),
     /// Opens the overlay that tries out arranging two windows.
     OpenTestOverlay,
     Quit,
@@ -83,11 +85,15 @@ impl Action {
         }
     }
 
-    /// Reads the action `text` writes: the name of one in `scope`, then its arguments
-    /// separated by spaces. No action takes arguments yet, so any are refused.
+    /// Reads the action `text` writes: the name of one in `scope`, then its arguments,
+    /// which are the rest of the text. An action that takes none refuses any.
     pub fn parse(scope: Scope, text: &str) -> config::Result<Self> {
         let text = text.trim();
         let (name, arguments) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+        let arguments = arguments.trim();
+        if let Some(action) = EditorAction::with_arguments(name, arguments) {
+            return action.map(Self::Editor);
+        }
         let action = EditorAction::from_name(name)
             .map(Self::Editor)
             .or_else(|| match scope {
@@ -96,7 +102,7 @@ impl Action {
                 Scope::Overlay(kind) => OverlayAction::from_name(kind, name).map(Self::Overlay),
             })
             .ok_or_else(|| Error::UnknownAction(name.into()))?;
-        if !arguments.trim().is_empty() {
+        if !arguments.is_empty() {
             return Err(Error::UnexpectedArguments(name.into()));
         }
         Ok(action)
@@ -104,24 +110,36 @@ impl Action {
 }
 
 impl EditorAction {
+    /// The action with arguments that `name` means, none when `name` takes none.
+    fn with_arguments(name: &str, arguments: &str) -> Option<config::Result<Self>> {
+        match name {
+            "open" if arguments.is_empty() => Some(Err(Error::MissingArguments(name.into()))),
+            "open" => Some(Ok(Self::Open(Path::new(arguments).into()))),
+            _ => None,
+        }
+    }
+
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             Self::Save => "save",
+            Self::Open(_) => "open",
             Self::OpenTestOverlay => "open_test_overlay",
             Self::Quit => "quit",
         }
     }
 
     #[must_use]
-    pub const fn description(self) -> &'static str {
+    pub const fn description(&self) -> &'static str {
         match self {
             Self::Save => "save",
+            Self::Open(_) => "open a file",
             Self::OpenTestOverlay => "two windows side by side",
             Self::Quit => "quit",
         }
     }
 
+    /// The action `name` means when it takes no arguments, the inverse of `name`.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
@@ -229,6 +247,9 @@ impl ViewAction {
 
 impl Serialize for Action {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Self::Editor(EditorAction::Open(path)) = self {
+            return serializer.collect_str(&format_args!("open {}", path.display()));
+        }
         let name = self
             .name()
             .ok_or_else(|| ser::Error::custom(format!("{self:?} has no name to bind")))?;
@@ -328,6 +349,26 @@ mod tests {
         assert!(
             matches!(Action::parse(scope, "left"), Err(Error::UnknownAction(_))),
             "a motion is the view's"
+        );
+    }
+
+    #[test]
+    fn open_takes_the_rest_of_the_text_as_its_path() {
+        assert_eq!(
+            Action::parse(Scope::Editor, "open  src/my file.rs ").unwrap(),
+            Action::Editor(EditorAction::Open(Path::new("src/my file.rs").into())),
+            "spaces inside the path stay"
+        );
+    }
+
+    #[test]
+    fn open_without_a_path_is_refused() {
+        assert!(
+            matches!(
+                Action::parse(Scope::View, "open"),
+                Err(Error::MissingArguments(name)) if &*name == "open"
+            ),
+            "there is nothing to open"
         );
     }
 

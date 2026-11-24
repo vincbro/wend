@@ -20,6 +20,8 @@ pub enum Error {
     UnknownAction(Box<str>),
     #[error("`{0}` takes no arguments")]
     UnexpectedArguments(Box<str>),
+    #[error("`{0}` needs arguments")]
+    MissingArguments(Box<str>),
     #[error("the leader can't be `<leader>`")]
     LeaderIsLeader,
     #[error("in {mode} mode, `{chord}` is bound as a key and also as the start of a longer combo")]

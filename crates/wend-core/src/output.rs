@@ -13,6 +13,10 @@ pub enum Output {
         path: Box<Path>,
         rope: Rope,
     },
+    /// Asks the frontend to read the file at `path`, which it answers with `Input::File`.
+    Read {
+        path: Box<Path>,
+    },
     /// The screen to draw. Send it back with `Input::Drawn` once it is drawn, the editor
     /// has no other frames to draw into.
     Frame(Frame),
