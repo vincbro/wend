@@ -65,16 +65,24 @@ impl View {
     }
 }
 
+/// How many bytes `BackwardGraphemes` reads at least in one go. A bigger chunk means fewer
+/// reads and more bytes read for a motion that stops after one word.
+const CHUNK: usize = 64;
+
 /// Walks the graphemes before a byte from the last to the first, as their start and class.
 ///
 /// `crop` overflows walking a rope backward over some emoji sequences, such as a family
-/// joined with zero-width joiners. So each line is walked forward into `line`, which this
-/// borrows so that its memory is reused, and handed out from its end.
+/// joined with zero-width joiners. So the text is read in chunks, each walked forward into
+/// `line`, which this borrows so that its memory is reused, and handed out from its end. A
+/// chunk starts at a place that is a grapheme boundary whatever comes before it, so a motion
+/// that ends after a word reads a chunk and not the whole line.
 struct BackwardGraphemes<'a> {
     rope: &'a Rope,
     line: &'a mut Vec<(usize, WordClass)>,
-    /// How many lines before the one in `line` are still to read.
+    /// How many lines before the one `line_start` is on are still to read.
     lines_left: usize,
+    /// Where the line being read starts, no chunk goes before it.
+    line_start: usize,
     /// Where the text still to read ends.
     limit: usize,
 }
@@ -86,8 +94,54 @@ impl<'a> BackwardGraphemes<'a> {
             rope,
             line,
             lines_left: rope.line_of_byte(end) + 1,
+            line_start: end,
             limit: end,
         }
+    }
+
+    /// Moves to the line before the one that is read, none if there is no such line.
+    fn step_to_previous_line(&mut self) -> Option<()> {
+        self.lines_left = self.lines_left.checked_sub(1)?;
+        self.line_start = self.rope.byte_of_line(self.lines_left);
+        Some(())
+    }
+
+    /// Returns where the chunk that ends at `limit` starts: at least `CHUNK` bytes back, on the
+    /// first boundary that holds whatever is before it, or at the start of the line.
+    ///
+    /// A boundary holds between two ASCII bytes. ASCII never combines with what is next to it,
+    /// except for `\r` and `\n`, which stay together. Ends of lines are no problem, since a
+    /// line starts after a `\n`.
+    fn chunk_start(&self) -> usize {
+        let Some(top) = self
+            .limit
+            .checked_sub(CHUNK)
+            .filter(|&top| top > self.line_start)
+        else {
+            return self.line_start;
+        };
+        // Skips the bytes after `top`, which can be in the middle of a char, so no slice
+        // starts or ends there
+        let mut bytes = self
+            .rope
+            .byte_slice(self.line_start..self.limit)
+            .bytes()
+            .rev()
+            .skip(CHUNK - 1);
+        let mut after = bytes.next();
+        let mut start = top;
+        for before in bytes {
+            if let Some(after) = after
+                && before.is_ascii()
+                && after.is_ascii()
+                && !(before == b'\r' && after == b'\n')
+            {
+                return start;
+            }
+            after = Some(before);
+            start -= 1;
+        }
+        self.line_start
     }
 }
 
@@ -95,11 +149,15 @@ impl Iterator for BackwardGraphemes<'_> {
     type Item = (usize, WordClass);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // A line can be empty, the one a cursor sits at the start of, or the one after a
-        // final line break
+        // A chunk can be empty, the one a cursor sits at the start of a line, or the one
+        // after a final line break
         while self.line.is_empty() {
-            self.lines_left = self.lines_left.checked_sub(1)?;
-            let from = self.rope.byte_of_line(self.lines_left);
+            // An empty line is stepped over by the next round
+            if self.limit == self.line_start {
+                self.step_to_previous_line()?;
+                continue;
+            }
+            let from = self.chunk_start();
             let mut byte = from;
             self.line.extend(
                 self.rope
@@ -154,6 +212,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::view::{ColumnPolicy, Direction, Motion, tests};
 
@@ -237,5 +297,79 @@ mod tests {
         assert_eq!(view.selection.head(), 6, "back to the start of two");
         view.move_selection(Motion::Word(Direction::Backward), false);
         assert_eq!(view.selection.head(), 0, "over the empty lines onto one");
+    }
+
+    /// What `BackwardGraphemes` has to give: every line before `end` read forward whole, the
+    /// way it was before it read in chunks.
+    fn whole_lines(rope: &Rope, end: usize) -> Vec<(usize, WordClass)> {
+        let mut all = vec![];
+        for line in 0..=rope.line_of_byte(end) {
+            let from = rope.byte_of_line(line);
+            let to = if line < rope.line_of_byte(end) {
+                rope.byte_of_line(line + 1)
+            } else {
+                end
+            };
+            let mut byte = from;
+            for grapheme in rope.byte_slice(from..to.max(from)).graphemes() {
+                all.push((byte, word_class(&grapheme)));
+                byte += grapheme.len();
+            }
+        }
+        all.reverse();
+        all
+    }
+
+    fn piece() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec![
+            "a",
+            "b",
+            "word",
+            "_",
+            " ",
+            "  ",
+            "\t",
+            ".",
+            "(",
+            "\n",
+            "\r\n",
+            "\r",
+            "é",
+            "e\u{301}",
+            "漢",
+            "か",
+            "🦀",
+            "👨\u{200d}👩\u{200d}👧",
+            "🇯🇵",
+            "🇯",
+            "\u{200d}",
+            "\u{301}",
+            "😀\u{fe0f}",
+            "한",
+            "\u{600}",
+            "\u{1100}",
+        ])
+    }
+
+    proptest! {
+        /// Long lines, so chunks split in places that are boundaries and in places that
+        /// aren't (inside flags and joined sequences).
+        #[test]
+        fn chunks_give_the_graphemes_of_whole_lines(
+            pieces in prop::collection::vec(piece(), 0..300),
+            at in 0..=1000usize,
+        ) {
+            let text: String = pieces.concat();
+            let rope = Rope::from(text.as_str());
+            let mut end = at.min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+
+            let mut scratch = vec![];
+            let chunks: Vec<_> = BackwardGraphemes::new(&rope, end, &mut scratch).collect();
+
+            prop_assert_eq!(chunks, whole_lines(&rope, end));
+        }
     }
 }

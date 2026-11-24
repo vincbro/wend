@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fe5bd30f061252acdb413b3580e86842e93c828e5f92a5dea03d9c6e543c258b # shrinks to pieces = ["a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "👨\u{200d}👩\u{200d}👧", "e\u{301}", "e\u{301}", "e\u{301}", "é", "a", "a", "🦀", "_", "a", "🦀", "_", "_", "a", "👨\u{200d}👩\u{200d}👧", "_", "a"], at = 96
+cc d812ea083b97557c53cc1ade761d9a59eae5d8447bec242da90824227188c699 # shrinks to pieces = [], at = 0
+cc eb256fcf92f527b85f8560d880a112c04fe43d73afbb72aafd18b5b8c828b84a # shrinks to pieces = ["\u{600}", "_", "👨\u{200d}👩\u{200d}👧", "a", "a", "a", "a", "a", "a", "a", "a", "🦀", "é", "🦀", "👨\u{200d}👩\u{200d}👧", "\r", "a", "a", "a", "a", "a", "a", "\r\n", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a"], at = 66
