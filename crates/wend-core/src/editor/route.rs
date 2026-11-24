@@ -1,6 +1,6 @@
-use std::{mem, path::Path};
+use std::mem;
 
-use super::{Editor, Overlay, Result, TestOverlay, overlay::KeyOutcome};
+use super::{Editor, Overlay, Result, TestOverlay};
 use crate::{
     input::{
         action::{Action, EditorAction},
@@ -14,13 +14,10 @@ use crate::{
 impl Editor {
     pub(super) fn key_press(&mut self, key: Key) -> Result<()> {
         // An open overlay is first in line for the keys, and takes all of them
-        if let Some(overlay) = &mut self.overlay {
-            if overlay.key(key) == KeyOutcome::Closed {
-                self.overlay = None;
-            }
-            return Ok(());
+        match &mut self.overlay {
+            Some(overlay) => overlay.key_press(key, &mut self.requests),
+            None => self.view.key_press(key, &mut self.requests),
         }
-        self.view.key_press(key, &mut self.requests);
         // Taken out so the requests can run on the editor, then given back for their memory
         let mut requests = mem::take(&mut self.requests);
         let result = requests
@@ -60,6 +57,7 @@ impl Editor {
                 self.outputs.push(Output::Write { path, rope });
             }
             EditorAction::Open(path) => self.outputs.push(Output::Read { path: path.clone() }),
+            EditorAction::CloseOverlay => self.overlay = None,
             EditorAction::OpenTestOverlay => {
                 self.overlay = Some(Overlay::Test(TestOverlay::new(&self.config)?));
             }
@@ -71,13 +69,16 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::{
         config::Config,
         frame::Area,
         input::{
-            Mode,
+            Input, Mode,
             action::{Scope, ViewAction},
+            key::KeyCode,
         },
     };
 
@@ -112,5 +113,50 @@ mod tests {
             ),
             "the path is what was typed"
         );
+    }
+
+    fn editor_with_overlay() -> Editor {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        editor
+            .perform(&Action::Editor(EditorAction::OpenTestOverlay))
+            .unwrap();
+        editor
+    }
+
+    fn press(editor: &mut Editor, code: KeyCode) {
+        editor.apply(Input::Key(Key::new(code))).unwrap();
+    }
+
+    #[test]
+    fn escape_closes_the_overlay_through_its_own_keys() {
+        let mut editor = editor_with_overlay();
+
+        press(&mut editor, KeyCode::Esc);
+
+        assert!(editor.overlay.is_none(), "esc is bound to close_overlay");
+    }
+
+    #[test]
+    fn a_key_the_overlay_doesnt_bind_stays_in_it() {
+        let mut editor = editor_with_overlay();
+
+        press(&mut editor, KeyCode::Char('i'));
+
+        assert!(editor.overlay.is_some(), "nothing closed it");
+        assert_eq!(editor.mode(), Mode::Normal, "i didn't reach the view");
+    }
+
+    #[test]
+    fn the_overlay_follows_the_keys_of_the_config_it_opened_with() {
+        let config = Config::parse("[keys.test]\n\"<esc>\" = []\nx = \"close_overlay\"\n").unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &config).unwrap();
+        editor
+            .perform(&Action::Editor(EditorAction::OpenTestOverlay))
+            .unwrap();
+
+        press(&mut editor, KeyCode::Esc);
+        assert!(editor.overlay.is_some(), "esc was unbound");
+        press(&mut editor, KeyCode::Char('x'));
+        assert!(editor.overlay.is_none(), "x closes it now");
     }
 }

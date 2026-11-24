@@ -172,4 +172,27 @@ mod tests {
         );
         assert!(Config::parse("[scroll\n").is_err(), "not TOML");
     }
+
+    #[test]
+    fn an_overlay_table_must_keep_a_way_out() {
+        assert!(
+            matches!(
+                Config::parse("[keys.test]\n\"<esc>\" = []\n"),
+                Err(Error::Invalid(_))
+            ),
+            "nothing is left to close it"
+        );
+    }
+
+    #[test]
+    fn an_overlay_table_binds_only_its_own_group_and_the_editors() {
+        assert!(
+            Config::parse("[keys.test]\nx = \"left\"\n").is_err(),
+            "a motion is the view's"
+        );
+        assert!(
+            Config::parse("[keys.test]\nx = [\"save\", \"close_overlay\"]\n").is_ok(),
+            "the editor's group is allowed, in a list too"
+        );
+    }
 }

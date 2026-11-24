@@ -1,23 +1,15 @@
 use crate::{
     frame::Rect,
     input::{
-        action::{OverlayAction, ViewAction},
-        key::{Key, KeyCode},
+        action::{EditorAction, OverlayAction, ViewAction},
+        key::Key,
     },
     layout::{Canvas, Element, Layout},
 };
 
+mod keymap;
 mod test_overlay;
 pub(super) use test_overlay::TestOverlay;
-
-/// What an overlay did with a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum KeyOutcome {
-    /// The overlay used the key, so the editor under it doesn't see it.
-    Consumed,
-    /// The overlay is done and goes away.
-    Closed,
-}
 
 /// A window floating over the editor, which gets the keys while it is open.
 ///
@@ -29,16 +21,12 @@ pub(super) enum Overlay {
 }
 
 impl Overlay {
-    /// Handles `key` and says whether the overlay is done with it. A key the overlay doesn't
-    /// use doesn't reach the editor under it either.
-    ///
-    /// Escape closes every overlay, so it is decided here and no overlay can take it.
-    pub(super) fn key(&mut self, key: Key) -> KeyOutcome {
-        if key.code == KeyCode::Esc {
-            return KeyOutcome::Closed;
-        }
+    /// Feeds `key` to the overlay's keys and runs the actions of the overlay's own group. The
+    /// editor's are added to `requests` for it to run, which this clears first. A key the
+    /// overlay doesn't bind is dropped, so it never reaches the editor under it.
+    pub(super) fn key_press(&mut self, key: Key, requests: &mut Vec<EditorAction>) {
         match self {
-            Self::Test(_) => KeyOutcome::Consumed,
+            Self::Test(overlay) => overlay.key_press(key, requests),
         }
     }
 
@@ -79,46 +67,6 @@ impl Element for Overlay {
     fn render(&mut self, rect: Rect, canvas: &mut Canvas<'_>) {
         match self {
             Self::Test(overlay) => overlay.render(rect, canvas),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
-
-    fn overlay() -> Overlay {
-        Overlay::Test(TestOverlay::new(&Config::default()).unwrap())
-    }
-
-    #[test]
-    fn escape_closes_the_overlay() {
-        assert_eq!(
-            overlay().key(Key::new(KeyCode::Esc)),
-            KeyOutcome::Closed,
-            "the way out of every overlay"
-        );
-    }
-
-    #[test]
-    fn escape_closes_the_overlay_with_a_modifier_held() {
-        let mut key = Key::new(KeyCode::Esc);
-        key.modifiers.alt = true;
-
-        assert_eq!(overlay().key(key), KeyOutcome::Closed, "alt-escape too");
-    }
-
-    #[test]
-    fn every_other_key_is_taken_by_the_overlay() {
-        let mut overlay = overlay();
-
-        for code in [KeyCode::Char('i'), KeyCode::Enter, KeyCode::Tab] {
-            assert_eq!(
-                overlay.key(Key::new(code)),
-                KeyOutcome::Consumed,
-                "{code:?} doesn't reach the editor"
-            );
         }
     }
 }

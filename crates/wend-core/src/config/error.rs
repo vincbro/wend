@@ -22,6 +22,8 @@ pub enum Error {
     UnexpectedArguments(Box<str>),
     #[error("`{0}` needs arguments")]
     MissingArguments(Box<str>),
+    #[error("`[keys.{overlay}]` doesn't bind `close_overlay`, so there is no way out of it")]
+    NoWayOut { overlay: &'static str },
     #[error("the leader can't be `<leader>`")]
     LeaderIsLeader,
     #[error("in {mode} mode, `{chord}` is bound as a key and also as the start of a longer combo")]

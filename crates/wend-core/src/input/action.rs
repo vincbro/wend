@@ -33,6 +33,8 @@ pub enum EditorAction {
     Open(Box<Path>),
     /// Opens the overlay that tries out arranging two windows.
     OpenTestOverlay,
+    /// Closes the overlay that has the keys.
+    CloseOverlay,
     Quit,
 }
 
@@ -125,6 +127,7 @@ impl EditorAction {
             Self::Save => "save",
             Self::Open(_) => "open",
             Self::OpenTestOverlay => "open_test_overlay",
+            Self::CloseOverlay => "close_overlay",
             Self::Quit => "quit",
         }
     }
@@ -135,6 +138,7 @@ impl EditorAction {
             Self::Save => "save",
             Self::Open(_) => "open a file",
             Self::OpenTestOverlay => "two windows side by side",
+            Self::CloseOverlay => "close the overlay",
             Self::Quit => "quit",
         }
     }
@@ -145,6 +149,7 @@ impl EditorAction {
         Some(match name {
             "save" => Self::Save,
             "open_test_overlay" => Self::OpenTestOverlay,
+            "close_overlay" => Self::CloseOverlay,
             "quit" => Self::Quit,
             _ => return None,
         })
@@ -302,6 +307,7 @@ mod tests {
             Action::View(ViewAction::Revert),
             Action::Editor(EditorAction::Save),
             Action::Editor(EditorAction::OpenTestOverlay),
+            Action::Editor(EditorAction::CloseOverlay),
             Action::Editor(EditorAction::Quit),
         ];
         for mode in [Mode::Normal, Mode::Select, Mode::Insert] {

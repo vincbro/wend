@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, result};
+use std::{collections::BTreeMap, result, slice};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
@@ -6,6 +6,7 @@ use crate::{
     config::{Actions, Chord, Error, Result, notation},
     input::{
         Mode,
+        action::{Action, EditorAction, OverlayKind, Scope},
         key::{Key, KeyTree},
     },
 };
@@ -55,6 +56,8 @@ pub struct Keys {
     pub normal: Bindings,
     pub select: Bindings,
     pub insert: Bindings,
+    /// The keys of the test overlay, which binds its own actions and the editor's.
+    pub test: Bindings,
 }
 
 /// The key tree of each mode.
@@ -89,6 +92,15 @@ impl Keys {
     }
 }
 
+impl Keys {
+    /// Builds the key tree of `overlay`, with `<leader>` resolved.
+    pub fn overlay_tree(&self, overlay: OverlayKind) -> Result<KeyTree> {
+        match overlay {
+            OverlayKind::Test => build_tree("test", &self.test, self.leader.0),
+        }
+    }
+}
+
 fn build_tree(mode: &'static str, bindings: &Bindings, leader: Key) -> Result<KeyTree> {
     let mut tree = KeyTree::new();
     for (chord, actions) in bindings {
@@ -110,6 +122,56 @@ struct Merged {
     normal: Bindings,
     select: Bindings,
     insert: Bindings,
+    test: BTreeMap<Chord, Names>,
+}
+
+/// What a file binds a combo of an overlay to: an action as text, or a list of them. They
+/// are read once the table is known, because the table says which groups they may name.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Names {
+    One(Box<str>),
+    Many(Box<[Box<str>]>),
+}
+
+impl Names {
+    fn actions(&self, scope: Scope) -> Result<Actions> {
+        let names = match self {
+            Self::One(name) => slice::from_ref(name),
+            Self::Many(names) => names,
+        };
+        names
+            .iter()
+            .map(|name| Action::parse(scope, name))
+            .collect::<Result<_>>()
+            .map(Actions)
+    }
+}
+
+/// Reads the actions of an overlay's table, dropping the combos a file unbinds. Fails when
+/// nothing left closes the overlay, since its keys would then trap the user.
+fn overlay_bindings(
+    name: &'static str,
+    kind: OverlayKind,
+    table: &BTreeMap<Chord, Names>,
+) -> Result<Bindings> {
+    let scope = Scope::Overlay(kind);
+    let mut bindings = Bindings::new();
+    for (chord, names) in table {
+        let actions = names.actions(scope)?;
+        if !actions.0.is_empty() {
+            bindings.insert(chord.clone(), actions);
+        }
+    }
+    let closes = bindings.values().any(|actions| {
+        actions
+            .0
+            .contains(&Action::Editor(EditorAction::CloseOverlay))
+    });
+    if !closes {
+        return Err(Error::NoWayOut { overlay: name });
+    }
+    Ok(bindings)
 }
 
 impl TryFrom<Merged> for Keys {
@@ -125,6 +187,7 @@ impl TryFrom<Merged> for Keys {
             normal: merged.normal,
             select: merged.select,
             insert: merged.insert,
+            test: overlay_bindings("test", OverlayKind::Test, &merged.test)?,
         };
         // A file that collides is refused here, while it can still be reported
         keys.trees()?;

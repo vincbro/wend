@@ -77,6 +77,10 @@ x = "select_row" # select the screen row the cursor is on
 "<backspace>" = "delete"     # delete the grapheme before the cursor
 "<tab>" = "insert_tab"       # a tab
 
+# Keys in the test overlay. It must keep a binding that closes it.
+[keys.test]
+"<esc>" = "close_overlay" # close the overlay
+
 
 [scroll]
 # The rows kept between the cursor and the edge of the view.

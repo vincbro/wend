@@ -1,7 +1,12 @@
+use super::keymap::Keymap;
 use crate::{
     buffer::Buffer,
     config::Config,
     frame::{Area, Rect},
+    input::{
+        action::{Action, EditorAction, OverlayAction, OverlayKind},
+        key::Key,
+    },
     layout::{Canvas, Edge, Element, Fit, Layout, Pane, Size},
     view::{Result, View},
 };
@@ -15,12 +20,15 @@ const RIGHT: &str = "the right window\nnext to the left one";
 /// Two windows side by side in a float, to try arranging windows in an overlay until the
 /// file picker needs it.
 ///
+/// It owns its keys, built from `[keys.test]` when it opens.
+///
 /// Both windows are views, so what holds for a view holds for them. `check_invariants` checks
 /// it.
 #[derive(Debug)]
 pub(in crate::editor) struct TestOverlay {
     left: Pane<View>,
     right: Pane<View>,
+    keymap: Keymap,
 }
 
 impl TestOverlay {
@@ -32,7 +40,22 @@ impl TestOverlay {
         Ok(Self {
             left: Pane::new(left, view(LEFT, config)?),
             right: Pane::new(Layout::FILL, view(RIGHT, config)?),
+            keymap: Keymap::new(config.keys.overlay_tree(OverlayKind::Test)?),
         })
+    }
+
+    /// Runs what `key` is bound to: the actions of the overlay's own group, and the editor's
+    /// added to `requests`, which this clears first.
+    pub(in crate::editor) fn key_press(&mut self, key: Key, requests: &mut Vec<EditorAction>) {
+        requests.clear();
+        for action in self.keymap.press(key) {
+            match action {
+                Action::Editor(action) => requests.push(action.clone()),
+                Action::Overlay(OverlayAction::Test(action)) => match *action {},
+                // The overlay's table can't bind the groups of the view or of other overlays
+                Action::View(_) => {}
+            }
+        }
     }
 }
 
