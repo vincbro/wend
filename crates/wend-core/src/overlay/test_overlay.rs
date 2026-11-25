@@ -26,14 +26,14 @@ const RIGHT: &str = "the right window\nnext to the left one";
 /// Both windows are views, so what holds for a view holds for them. `check_invariants` checks
 /// it.
 #[derive(Debug)]
-pub(in crate::editor) struct TestOverlay {
+pub(crate) struct TestOverlay {
     left: Pane<TextBox>,
     right: Pane<TextBox>,
     keymap: Keymap,
 }
 
 impl TestOverlay {
-    pub(in crate::editor) fn new(config: &Config) -> Result<Self> {
+    pub(crate) fn new(config: &Config) -> Result<Self> {
         let left = Layout::Dock {
             edge: Edge::Left,
             size: Size::Percent(40),
@@ -47,7 +47,7 @@ impl TestOverlay {
 
     /// Runs what `key` is bound to: the actions of the overlay's own group, and the editor's
     /// added to `requests`, which this clears first.
-    pub(in crate::editor) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) {
+    pub(crate) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) {
         requests.clear();
         for action in self.keymap.press(key) {
             match action {
@@ -66,7 +66,7 @@ impl TestOverlay {
 
 impl TestOverlay {
     /// Checks the rules of both windows. Debug builds only.
-    pub(in crate::editor) fn check_invariants(&self) {
+    pub(crate) fn check_invariants(&self) {
         if !cfg!(debug_assertions) {
             return;
         }

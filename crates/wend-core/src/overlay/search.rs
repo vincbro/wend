@@ -11,10 +11,9 @@ use crate::{
         action::{Action, EditorAction, OverlayAction, OverlayKind, SearchAction, SearchKind},
         key::Key,
     },
-    input_box::InputBox,
     layout::{Canvas, Element, Fit, Layout, Pane, Size},
     output::Output,
-    text_box::{Result, TextBox},
+    text_box::{Result, TextBox, input_box::InputBox},
 };
 
 /// What stands before the query.
@@ -36,7 +35,7 @@ const PROMPT: &str = "> ";
 /// to the query when they are, and a pick waits only while the answer to the newest search is
 /// missing. `check_invariants` checks them.
 #[derive(Debug)]
-pub(in crate::editor) struct SearchOverlay {
+pub(crate) struct SearchOverlay {
     /// What the search looks for.
     kind: SearchKind,
     query: InputBox,
@@ -57,7 +56,7 @@ pub(in crate::editor) struct SearchOverlay {
 impl SearchOverlay {
     /// Opens with an empty query, which is asked for too, so the frontend can list what it
     /// likes before anything is typed.
-    pub(in crate::editor) fn new(config: &Config, kind: SearchKind) -> Result<Self> {
+    pub(crate) fn new(config: &Config, kind: SearchKind) -> Result<Self> {
         let target = Target::Overlay(OverlayKind::Search);
         let query = InputBox::new(Layout::FILL, config, target, PROMPT)?;
         let mut results = TextBox::new(Rect::new(0, 0, Area::new(0, 0)), config, target)?;
@@ -91,13 +90,13 @@ impl SearchOverlay {
     }
 
     /// The search to ask the frontend for, if there is one.
-    pub(in crate::editor) fn take_ask(&mut self) -> Option<Output> {
+    pub(crate) fn take_ask(&mut self) -> Option<Output> {
         self.ask.take()
     }
 
     /// Feeds `key` to the box that has the focus and runs what it asked for: picking is dealt
     /// with here, and the editor's requests are left in `requests`, which this clears first.
-    pub(in crate::editor) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) {
+    pub(crate) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) {
         if self.query.has_focus() {
             self.query.key_press(key, requests);
         } else {
@@ -120,7 +119,7 @@ impl SearchOverlay {
 
     /// Takes in the lines the frontend found for search `id`, which are dropped when a newer
     /// search has been asked since. Picks from them when the user already did.
-    pub(in crate::editor) fn found(&mut self, id: u64, text: &str, requests: &mut Vec<Action>) {
+    pub(crate) fn found(&mut self, id: u64, text: &str, requests: &mut Vec<Action>) {
         requests.clear();
         if id != self.latest {
             return;
@@ -135,7 +134,7 @@ impl SearchOverlay {
     }
 
     /// The search `id` failed, so nothing it was asked for is waited for.
-    pub(in crate::editor) fn failed(&mut self, id: u64) {
+    pub(crate) fn failed(&mut self, id: u64) {
         if id == self.latest {
             self.picking = false;
         }
@@ -161,7 +160,7 @@ impl SearchOverlay {
     }
 
     /// Checks the rules of both boxes. Debug builds only.
-    pub(in crate::editor) fn check_invariants(&self) {
+    pub(crate) fn check_invariants(&self) {
         self.query.check_invariants();
         let results = self.results.inner();
         results.check_invariants();

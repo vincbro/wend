@@ -1,4 +1,6 @@
-use super::{ColumnPolicy, Direction, Selection, TextBox, wrap::ScrollOffset};
+use super::{
+    ColumnPolicy, Direction, Selection, TextBox, input_box::InputBox, wrap::ScrollOffset,
+};
 use crate::{
     config::Target,
     frame::Rect,
@@ -6,7 +8,6 @@ use crate::{
         action::{Action, FindAction, OverlayAction, OverlayKind},
         key::Key,
     },
-    input_box::InputBox,
     layout::{Canvas, Layout},
 };
 

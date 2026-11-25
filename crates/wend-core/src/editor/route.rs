@@ -1,12 +1,13 @@
 use std::mem;
 
-use super::{CommandLine, Editor, Error, Overlay, Result, SearchOverlay, TestOverlay};
+use super::{Editor, Error, Result};
 use crate::{
     input::{
         action::{Action, EditorAction, ScratchAction},
         key::Key,
     },
     output::Output,
+    overlay::{CommandLine, Overlay, SearchOverlay, TestOverlay},
 };
 
 /// Where keys and actions go: to the overlay while one is open, to the scratch otherwise. What the
@@ -90,27 +91,17 @@ impl Editor {
     fn perform_scratch(&mut self, action: &ScratchAction) -> Result<()> {
         match action {
             ScratchAction::Save(target) => {
-                let Some(path) = target.as_ref().or(self.shown_path.as_ref()).cloned() else {
-                    return Err(Error::NoPath);
-                };
-                let own = self.shown_path.as_deref() == Some(&*path);
-                let names = self.shown_path.is_none();
-                // The editor keeps each path in one place
-                if !own
-                    && self
-                        .documents
-                        .iter()
-                        .any(|document| document.path() == Some(&*path))
-                {
-                    return Err(Error::PathOpen(path));
-                }
-                let Some(rope) = self.scratch.act(action, !own && !names) else {
+                let plan = self.workspace.save_plan(target.as_deref())?;
+                let Some(rope) = self.scratch.act(action, plan.is_copy) else {
                     return Ok(());
                 };
-                if names {
-                    self.shown_path = Some(path.clone());
+                if plan.names {
+                    self.workspace.name_shown(plan.path.clone());
                 }
-                self.outputs.push(Output::Write { path, rope });
+                self.outputs.push(Output::Write {
+                    path: plan.path,
+                    rope,
+                });
             }
         }
         Ok(())
@@ -120,7 +111,7 @@ impl Editor {
         match action {
             EditorAction::Open(path) => self.outputs.push(Output::Read { path: path.clone() }),
             EditorAction::OpenAt { path, line } => {
-                self.show_at = Some((path.clone(), *line));
+                self.workspace.show_at(path.clone(), *line);
                 self.outputs.push(Output::Read { path: path.clone() });
             }
             EditorAction::OpenCommandLine => {

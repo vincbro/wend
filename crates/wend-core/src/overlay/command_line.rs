@@ -6,9 +6,8 @@ use crate::{
         action::{Action, CommandAction, EditorAction, OverlayAction, OverlayKind, Scope},
         key::Key,
     },
-    input_box::InputBox,
     layout::{Canvas, Element, Fit, Layout, Size},
-    text_box::Result,
+    text_box::{Result, input_box::InputBox},
 };
 
 /// What stands before the text of the command.
@@ -21,12 +20,12 @@ const WIDTH: Size = Size::Percent(50);
 /// An input box with the keys of `[keys.command.<mode>]`, over the middle of the editor. Running
 /// it closes it and runs the action its text names in the scratch's scope.
 #[derive(Debug)]
-pub(in crate::editor) struct CommandLine {
+pub(crate) struct CommandLine {
     input: InputBox,
 }
 
 impl CommandLine {
-    pub(in crate::editor) fn new(config: &Config) -> Result<Self> {
+    pub(crate) fn new(config: &Config) -> Result<Self> {
         Ok(Self {
             input: InputBox::new(
                 Layout::FILL,
@@ -42,11 +41,7 @@ impl CommandLine {
     /// `requests`, which this clears first.
     ///
     /// Fails when the text names no action, after asking for the command line to close.
-    pub(in crate::editor) fn key_press(
-        &mut self,
-        key: Key,
-        requests: &mut Vec<Action>,
-    ) -> input::Result<()> {
+    pub(crate) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) -> input::Result<()> {
         self.input.key_press(key, requests);
         let runs = requests.iter().any(|action| {
             matches!(
@@ -69,7 +64,7 @@ impl CommandLine {
     }
 
     /// Checks the rules of the text box. Debug builds only.
-    pub(in crate::editor) fn check_invariants(&self) {
+    pub(crate) fn check_invariants(&self) {
         self.input.check_invariants();
     }
 }

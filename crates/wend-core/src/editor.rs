@@ -1,28 +1,25 @@
-use std::{collections::HashSet, iter, path::Path, vec::Drain};
+use std::vec::Drain;
 
 use crate::{
-    buffer::Buffer,
     config::Config,
     frame::{Area, Frame, Rect},
     input::{Failure, Input, Mode, action::Action},
     layout::{Canvas, Element},
     output::Output,
+    overlay::Overlay,
     scratch::Scratch,
-    syntax::{LanguageTag, Loader},
+    syntax::Loader,
 };
 
 mod frame_pool;
 use frame_pool::FramePool;
 mod status_bar;
 use status_bar::StatusBar;
-mod overlay;
-use overlay::{CommandLine, Overlay, SearchOverlay, TestOverlay};
-mod document;
-use document::Document;
 mod error;
-mod language;
 mod route;
+mod workspace;
 pub use error::{Error, Result};
+use workspace::Workspace;
 
 /// How many frames pass between the editor and the frontend. The frontend keeps the one on
 /// screen to draw only what differs from it, so one is always away, and the others are the
@@ -30,21 +27,15 @@ pub use error::{Error, Result};
 const FRAME_COUNT: usize = 3;
 
 /// Holds the whole editor: the terminal's area, the scratch and the overlay over it, with the
-/// documents that aren't shown and the loader of the grammars they are written in.
+/// workspace of the documents that aren't shown.
 ///
-/// `documents` holds every open document except the one the scratch shows, whose path is
-/// `shown_path`, so each open file lives in exactly one place.
-///
-/// After every public call the scratch fills what the status bar leaves of the terminal, every
-/// buffer and the scratch keep their own invariants, a language that is being waited for isn't
-/// loaded yet, and the editor is only out of date when every frame is out being drawn.
-/// `check_invariants` checks them.
+/// After every public call the scratch fills what the status bar leaves of the terminal, the
+/// scratch and the workspace keep their own invariants, and the editor is only out of date when
+/// every frame is out being drawn. `check_invariants` checks them.
 #[derive(Debug)]
 pub struct Editor {
     area: Area,
-    documents: Vec<Document>,
-    /// The file the scratch's buffer came from, none for a buffer that never had one.
-    shown_path: Option<Box<Path>>,
+    workspace: Workspace,
     scratch: Scratch,
     status_bar: StatusBar,
     /// The window floating over the editor, which gets the keys while it is open.
@@ -56,12 +47,6 @@ pub struct Editor {
     requests: Vec<Action>,
     frame_pool: FramePool,
     is_stale: bool,
-    loader: Loader,
-    /// The languages whose grammar was asked for and hasn't come yet, so a buffer opened
-    /// meanwhile doesn't ask again.
-    requested_languages: HashSet<LanguageTag>,
-    /// The file `open_at` asked for and the line to put the cursor on once it is shown.
-    show_at: Option<(Box<Path>, usize)>,
 }
 
 impl Editor {
@@ -75,8 +60,7 @@ impl Editor {
         let scratch = Scratch::new(Rect::new(0, 0, area), config)?;
         let mut editor = Self {
             area,
-            documents: vec![],
-            shown_path: None,
+            workspace: Workspace::new(loader),
             scratch,
             status_bar: StatusBar::new(),
             overlay: None,
@@ -85,9 +69,6 @@ impl Editor {
             requests: vec![],
             frame_pool: FramePool::new(FRAME_COUNT, area),
             is_stale: false,
-            loader,
-            requested_languages: HashSet::new(),
-            show_at: None,
         };
         editor.fit_scratch();
         editor.check_invariants();
@@ -112,7 +93,9 @@ impl Editor {
             // Cleared first, so the editor is never out of date with a frame in hand
             self.is_stale = false;
             // Parsed only when a frame is drawn, so a batch of inputs costs one parse
-            self.reparse();
+            if let Err(error) = self.workspace.reparse(&mut self.scratch) {
+                self.fail(&Error::TextBox(error));
+            }
             self.update_frame(&mut frame);
             self.outputs.push(Output::Frame(frame));
         }
@@ -130,12 +113,11 @@ impl Editor {
                 bytes,
                 language,
             } => {
-                let line = self
-                    .show_at
-                    .take_if(|(wanted, _)| *wanted == path)
-                    .map(|(_, line)| line);
-                self.show_file(path, &bytes)?;
-                self.set_language(language);
+                let line = self.workspace.take_line(&path);
+                self.workspace.show_file(&mut self.scratch, path, &bytes)?;
+                if let Some(tag) = self.workspace.set_language(&mut self.scratch, language) {
+                    self.outputs.push(Output::Language(tag));
+                }
                 if let Some(line) = line {
                     self.scratch.go_to_line(line);
                 }
@@ -145,7 +127,14 @@ impl Editor {
                 tag,
                 wasm,
                 highlights,
-            } => self.load_language(tag, &wasm, &highlights),
+            } => {
+                if let Err(error) =
+                    self.workspace
+                        .load_language(&mut self.scratch, tag, &wasm, &highlights)
+                {
+                    self.fail(&Error::Syntax(error));
+                }
+            }
             Input::Config(config) => self.try_set_config(&config)?,
             Input::Failed(failure) => self.fail(&Error::Frontend(failure)),
             Input::SearchResults { id, text } => self.search_results(id, &text),
@@ -158,16 +147,11 @@ impl Editor {
     pub(super) fn fail(&mut self, error: &Error) {
         // The grammar isn't coming, so a buffer opened later may ask for it again
         if let Error::Frontend(Failure::Language { tag, .. }) = &error {
-            self.requested_languages.remove(tag);
+            self.workspace.language_failed(tag);
         }
         // The file isn't coming, so there is no line to go to
-        if let Error::Frontend(Failure::Read { path, .. }) = &error
-            && self
-                .show_at
-                .as_ref()
-                .is_some_and(|(wanted, _)| wanted == path)
-        {
-            self.show_at = None;
+        if let Error::Frontend(Failure::Read { path, .. }) = &error {
+            self.workspace.read_failed(path);
         }
         if let (Error::Frontend(Failure::Search { id, .. }), Some(Overlay::Search(search))) =
             (error, &mut self.overlay)
@@ -220,31 +204,6 @@ impl Editor {
     #[must_use]
     pub fn mode(&self) -> Mode {
         self.scratch.mode()
-    }
-
-    /// Shows the file at `path`, reusing its document if it's among the open documents. The
-    /// document shown before joins them.
-    fn show_file(&mut self, path: Box<Path>, bytes: &[u8]) -> Result<()> {
-        if self.shown_path.as_deref() == Some(&*path) {
-            self.scratch.update(bytes)?;
-            return Ok(());
-        }
-        let buffer = match self
-            .documents
-            .iter()
-            .position(|document| document.path() == Some(&*path))
-        {
-            Some(index) => {
-                let (_, mut buffer) = self.documents.swap_remove(index).into_parts();
-                buffer.update(bytes)?;
-                buffer
-            }
-            None => Buffer::from_bytes(bytes)?,
-        };
-        let hidden = self.scratch.open_buffer(buffer);
-        let hidden_path = self.shown_path.replace(path);
-        self.documents.push(Document::new(hidden_path, hidden));
-        Ok(())
     }
 
     /// Builds a new frame of the terminal's size, with the cursor where the head is now.
@@ -324,32 +283,12 @@ impl Editor {
         if let Some(overlay) = &self.overlay {
             overlay.check_invariants();
         }
-        for document in &self.documents {
-            document.buffer().check_invariants();
-        }
-        let paths: Vec<_> = iter::once(self.shown_path.as_deref())
-            .chain(self.documents.iter().map(Document::path))
-            .flatten()
-            .collect();
-        for (index, path) in paths.iter().enumerate() {
-            assert!(
-                !paths[..index].contains(path),
-                "show_file reuses the buffer of a file that is open, so {} is in one place",
-                path.display()
-            );
-        }
+        self.workspace.check_invariants();
 
         assert_eq!(
             self.scratch.rect(),
             self.scratch_rect(),
             "new and resize fit the scratch to what the status bar leaves"
-        );
-        assert!(
-            self.requested_languages
-                .iter()
-                .all(|tag| self.loader.grammar(tag).is_none()),
-            "a language is only asked for while its grammar isn't loaded, and load_language \
-             stops waiting for it"
         );
         assert!(
             !self.is_stale || self.frame_pool.is_empty(),
@@ -363,6 +302,8 @@ mod fuzz;
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::{
         config::Actions,
@@ -370,7 +311,6 @@ mod tests {
             action::{Action, EditorAction, TextBoxAction},
             key::{Key, KeyCode},
         },
-        syntax,
     };
 
     fn press(editor: &mut Editor, keys: &str) {
@@ -548,7 +488,7 @@ mod tests {
 
         editor.apply(file(b"abc"));
         assert_eq!(text(&editor), "abc");
-        assert_eq!(editor.shown_path.as_deref(), Some(&*path));
+        assert_eq!(editor.workspace.shown_path(), Some(&*path));
 
         editor.apply(file(b"xyz"));
         assert_eq!(
@@ -557,10 +497,7 @@ mod tests {
             "the same path updates the shown buffer"
         );
         assert!(
-            editor
-                .documents
-                .iter()
-                .all(|document| document.path().is_none()),
+            editor.workspace.hidden_paths().iter().all(Option::is_none),
             "only the empty buffer the editor started with, no second copy of the file"
         );
     }
@@ -615,34 +552,6 @@ mod tests {
                 .iter()
                 .any(|(_, cell)| cell.grapheme.as_str() == "d"),
             "the frame has the latest text"
-        );
-    }
-
-    #[test]
-    fn a_loaded_grammar_reaches_the_buffers_that_are_not_shown() {
-        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
-        let text = "fn a() {}";
-        let mut hidden = Buffer::from(text);
-        hidden.set_language(Some(LanguageTag::new("rust")));
-        editor.documents.push(Document::new(None, hidden));
-
-        editor.load_language(
-            LanguageTag::new("rust"),
-            syntax::tests::RUST_WASM,
-            syntax::tests::RUST_HIGHLIGHTS,
-        );
-        editor.documents[0]
-            .buffer_mut()
-            .reparse(&mut editor.loader)
-            .unwrap();
-
-        assert_ne!(
-            editor.documents[0]
-                .buffer_mut()
-                .highlights(0..text.len())
-                .count(),
-            0,
-            "the buffer got the grammar while it was out of sight"
         );
     }
 }

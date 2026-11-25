@@ -10,19 +10,19 @@ use crate::{
 };
 
 mod command_line;
-pub(super) use command_line::CommandLine;
+pub(crate) use command_line::CommandLine;
 mod keymap;
 mod search;
-pub(super) use search::SearchOverlay;
+pub(crate) use search::SearchOverlay;
 mod test_overlay;
-pub(super) use test_overlay::TestOverlay;
+pub(crate) use test_overlay::TestOverlay;
 
 /// A window floating over the editor, which gets the keys while it is open.
 ///
 /// It is drawn after everything else, so what is on top and what gets the keys are the same
 /// thing.
 #[derive(Debug)]
-pub(super) enum Overlay {
+pub(crate) enum Overlay {
     Test(Box<TestOverlay>),
     Command(Box<CommandLine>),
     Search(Box<SearchOverlay>),
@@ -34,7 +34,7 @@ impl Overlay {
     /// overlay doesn't bind is dropped, so it never reaches the editor under it.
     ///
     /// Fails when the overlay ran something that doesn't exist, for the editor to say so.
-    pub(super) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) -> input::Result<()> {
+    pub(crate) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) -> input::Result<()> {
         match self {
             Self::Test(overlay) => {
                 overlay.key_press(key, requests);
@@ -49,7 +49,7 @@ impl Overlay {
     }
 
     /// The search the overlay wants the frontend to run, if it has one.
-    pub(super) fn take_ask(&mut self) -> Option<Output> {
+    pub(crate) fn take_ask(&mut self) -> Option<Output> {
         match self {
             Self::Search(overlay) => overlay.take_ask(),
             Self::Test(_) | Self::Command(_) => None,
@@ -59,7 +59,7 @@ impl Overlay {
 
 impl Overlay {
     /// Does an action of an overlay's own group. One of another overlay's group is dropped.
-    pub(super) fn act(&mut self, action: OverlayAction) {
+    pub(crate) fn act(&mut self, action: OverlayAction) {
         // The others need the key that ran them, so the overlay did them in `key_press`
         if let (Self::Test(_), OverlayAction::Test(action)) = (self, action) {
             match action {}
@@ -69,7 +69,7 @@ impl Overlay {
 
 impl Overlay {
     /// Checks the rules of what the overlay holds. Debug builds only.
-    pub(super) fn check_invariants(&self) {
+    pub(crate) fn check_invariants(&self) {
         match self {
             Self::Test(overlay) => overlay.check_invariants(),
             Self::Command(overlay) => overlay.check_invariants(),

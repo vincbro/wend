@@ -234,6 +234,6 @@ proptest! {
             frontend.run(call);
             frontend.editor.check_invariants();
         }
-        LOADER.set(Some(frontend.editor.loader));
+        LOADER.set(Some(frontend.editor.workspace.into_loader()));
     }
 }

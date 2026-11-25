@@ -22,6 +22,7 @@ pub use error::{Error, Result};
 use find::FindPrompt;
 mod grapheme;
 mod highlight;
+pub(crate) mod input_box;
 use highlight::Highlighter;
 mod wrap;
 use wrap::{Glyph, ScrollOffset, Slot, SlotPosition, Wrap};
