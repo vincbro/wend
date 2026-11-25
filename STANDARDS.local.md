@@ -11,7 +11,7 @@ What is specific to wend. The shared rules are in `code-standards/`. Where this 
 
 ## Hot paths
 
-The code that runs per key press and per frame: `Editor::apply`, `Keymap::press`, `Wrap::rebuild`, `View::render` and the frontend's draw. `View::move_selection` and `View::delete` run per key press too.
+The code that runs per key press and per frame: `Editor::apply`, `Keymap::press`, `Wrap::rebuild`, `Scratch::render`, `TextBox::render` and the frontend's draw. `TextBox::move_selection` and `TextBox::delete` run per key press too.
 
 ## Known performance opportunities
 

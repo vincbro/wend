@@ -8,8 +8,6 @@ pub enum Error {
     InvalidUtf8,
     #[error("file is too large, the limit is 4 GiB")]
     TooLarge,
-    #[error("buffer has no path to save to")]
-    NoPath,
     #[error("failed to parse the text")]
     Syntax(#[from] syntax::Error),
 }

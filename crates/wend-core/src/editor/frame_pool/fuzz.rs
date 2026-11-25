@@ -6,7 +6,7 @@ use proptest::{collection, prelude::*};
 use super::FramePool;
 use crate::{
     frame::{Area, Frame},
-    view::fuzz as view_fuzz,
+    text_box::fuzz as text_box_fuzz,
 };
 
 /// One public call on a pool, with its arguments.
@@ -24,8 +24,8 @@ fn call() -> impl Strategy<Value = Call> {
     prop_oneof![
         4 => Just(Call::Take),
         4 => any::<usize>().prop_map(Call::Place),
-        1 => view_fuzz::area().prop_map(Call::Stranger),
-        2 => view_fuzz::area().prop_map(Call::Resize),
+        1 => text_box_fuzz::area().prop_map(Call::Stranger),
+        2 => text_box_fuzz::area().prop_map(Call::Resize),
     ]
 }
 
@@ -33,7 +33,7 @@ proptest! {
     #[test]
     fn no_sequence_of_calls_breaks_the_invariants(
         count in 0..=5usize,
-        start in view_fuzz::area(),
+        start in text_box_fuzz::area(),
         calls in collection::vec(call(), 0..40),
     ) {
         let mut pool = FramePool::new(count, start);

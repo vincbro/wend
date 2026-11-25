@@ -1,15 +1,15 @@
 use super::{
-    Direction, View,
+    Direction, TextBox,
     wrap::{ScrollOffset, SlotPosition},
 };
 
-impl View {
+impl TextBox {
     pub(super) fn bottom_row(&self) -> usize {
         // The terminal can report 0 rows
         self.rect.area.height().saturating_sub(1)
     }
 
-    /// Returns how many rows to keep between the head and the top or bottom of the view, at
+    /// Returns how many rows to keep between the head and the top or bottom of the text box, at
     /// most half of it so the head can always sit outside both margins.
     fn margin(&self) -> usize {
         self.scroll_margin.min(self.bottom_row() / 2)
@@ -82,7 +82,7 @@ impl View {
     /// Returns the scroll offset `rows` rows up, and how many rows that is.
     fn offset_above(&mut self, rows: usize) -> (ScrollOffset, usize) {
         let ScrollOffset { mut line, mut row } = self.wrap.scroll_offset();
-        let cols = self.text_rect().area.cols;
+        let cols = self.rect.area.cols;
         let mut left = rows;
         // A line at a time, onto the last row of the line above
         while left > row {
@@ -108,16 +108,13 @@ impl View {
         // wrap clamps the row the same way
         let line = scroll_offset.line.min(self.buffer.rope().line_len());
 
-        // The line count may have changed, and with it the gutter
-        self.gutter = Self::gutter_for(&self.buffer, self.rect, self.line_numbers);
-        let text_area = self.text_rect().area;
+        let text_area = self.rect.area;
 
         self.wrap.rebuild(
             &self.buffer,
             text_area,
             ScrollOffset::new(line, scroll_offset.row),
         );
-        // A gutter that grew with the line count took columns from the text
         self.desired_col = self.desired_col.min(text_area.width().saturating_sub(1));
         self.wrap_dirty = false;
     }
@@ -126,19 +123,19 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::{Motion, tests};
+    use crate::text_box::{Motion, tests};
 
     #[test]
     fn scrolls_through_a_wrapped_line_a_row_at_a_time() {
         // Width 4, one line: "aaaa" then rows of "↩ aa". Height 5 gives a margin of 2.
-        let mut view = tests::view(&"a".repeat(40), 4, 5);
+        let mut view = tests::text_box(&"a".repeat(40), 4, 5);
         let mut rows = vec![];
         for _ in 0..12 {
             view.move_selection(Motion::Vertical(Direction::Forward), false);
             let pos = view.wrap.find_byte(view.selection.head()).unwrap();
             rows.push((pos.row, view.wrap.scroll_offset()));
         }
-        // Down to the margin, then the head stays on it and the view follows row by row
+        // Down to the margin, then the head stays on it and the text follows row by row
         let expected: Vec<_> = (1..=12)
             .map(|step: usize| {
                 let row = step.min(2);
@@ -147,7 +144,7 @@ mod tests {
             .collect();
         assert_eq!(rows, expected);
 
-        // And back up, the head stays on the top margin until the view reaches the top
+        // And back up, the head stays on the top margin until the text reaches the top
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         view.move_selection(Motion::Vertical(Direction::Backward), false);
         view.move_selection(Motion::Vertical(Direction::Backward), false);
@@ -162,7 +159,7 @@ mod tests {
     #[test]
     fn scrolls_up_onto_the_last_row_of_the_line_above() {
         // Width 4: line 0 is "aaaa", "↩ a\n", line 1 is "b"
-        let mut view = tests::view("aaaaa\nb\nc\nd", 4, 3);
+        let mut view = tests::text_box("aaaaa\nb\nc\nd", 4, 3);
         view.rebuild_at(ScrollOffset::new(1, 0));
         assert_eq!(view.scroll(Direction::Backward, 1), 1, "line 0 is above");
         assert_eq!(
@@ -186,7 +183,7 @@ mod tests {
     #[test]
     fn scrolls_many_rows_at_once() {
         // Width 4: line 0 is "aaaa", "↩ a\n", then one row per line
-        let mut view = tests::view("aaaaa\nb\nc\nd\ne", 4, 3);
+        let mut view = tests::text_box("aaaaa\nb\nc\nd\ne", 4, 3);
         assert_eq!(
             view.scroll(Direction::Forward, 3),
             2,
@@ -208,7 +205,7 @@ mod tests {
     #[test]
     fn jumps_into_the_middle_of_a_tall_line() {
         // One line far taller than the screen, the end of it can still be reached
-        let mut view = tests::view(&"a".repeat(200), 4, 5);
+        let mut view = tests::text_box(&"a".repeat(200), 4, 5);
         view.move_selection(Motion::File(Direction::Forward), false);
         assert_eq!(view.selection.head(), 199, "the head is not pulled back");
         let pos = view.wrap.find_byte(view.selection.head()).unwrap();

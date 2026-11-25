@@ -8,7 +8,7 @@ use super::{Glyph, ScrollOffset, SlotPosition, Wrap};
 use crate::{
     buffer::Buffer,
     frame::Area,
-    view::{Direction, fuzz},
+    text_box::{Direction, fuzz},
 };
 
 /// One call on a wrap, with its arguments. A line is a fraction of the lines the text has,

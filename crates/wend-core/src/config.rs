@@ -15,7 +15,7 @@ mod settings;
 pub use actions::Actions;
 pub use chord::{Chord, Stroke};
 pub use error::{Error, Result};
-pub use keys::{Bindings, KeyTrees, Keys, Leader};
+pub use keys::{Bindings, KeyTrees, Keys, Leader, Overrides, Target};
 pub use settings::{LineNumbers, Scroll, Text};
 
 /// The default config as a file, with a comment on every setting. A config file only needs to
@@ -77,6 +77,7 @@ fn merge_section(base: &mut Table, key: &str, section: Table) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::key::{Key, KeyCode};
 
     fn chord(text: &str) -> Chord {
         text.parse().unwrap()
@@ -102,7 +103,7 @@ mod tests {
     #[test]
     fn a_binding_goes_over_the_defaults() {
         let config =
-            Config::parse("[keys.normal]\n\"<leader>z\" = \"save\"\n\"z\" = \"quit\"\n").unwrap();
+            Config::parse("[keys.normal]\n\"<leader>z\" = \"revert\"\n\"z\" = \"up\"\n").unwrap();
         let default = Config::default();
 
         assert_eq!(config.keys.normal.len(), default.keys.normal.len() + 2);
@@ -110,6 +111,43 @@ mod tests {
             config.keys.normal[&chord("h")],
             default.keys.normal[&chord("h")],
             "what the file doesn't mention stays"
+        );
+    }
+
+    #[test]
+    fn the_shared_tables_hold_only_text_box_actions() {
+        assert!(
+            matches!(
+                Config::parse("[keys.normal]\nz = \"quit\"\n"),
+                Err(Error::Invalid(_))
+            ),
+            "quitting is the editor's, so it goes in a target's table"
+        );
+        assert!(
+            Config::parse("[keys.scratch.normal]\nz = \"quit\"\n").is_ok(),
+            "and the scratch's table takes it"
+        );
+    }
+
+    #[test]
+    fn a_targets_table_wins_over_the_shared_one_and_can_unbind_it() {
+        let config = Config::parse("[keys.scratch.normal]\nh = \"right\"\nl = []\n").unwrap();
+
+        let trees = config.keys.trees(Target::Scratch).unwrap();
+        let shared = config.keys.trees(Target::TextBox).unwrap();
+        let key = |c| Key::new(KeyCode::Char(c));
+        assert_ne!(
+            format!("{:?}", trees.normal.get(&[key('h')])),
+            format!("{:?}", shared.normal.get(&[key('h')])),
+            "h means something else in the scratch"
+        );
+        assert!(
+            trees.normal.get(&[key('l')]).is_none(),
+            "l is unbound there"
+        );
+        assert!(
+            shared.normal.get(&[key('l')]).is_some(),
+            "and still bound elsewhere"
         );
     }
 
@@ -177,7 +215,7 @@ mod tests {
     fn an_overlay_table_must_keep_a_way_out() {
         assert!(
             matches!(
-                Config::parse("[keys.test]\n\"<esc>\" = []\n"),
+                Config::parse("[keys.test.normal]\n\"<esc>\" = []\n"),
                 Err(Error::Invalid(_))
             ),
             "nothing is left to close it"
@@ -185,13 +223,25 @@ mod tests {
     }
 
     #[test]
+    fn the_command_line_keeps_a_way_out_in_some_mode() {
+        assert!(
+            Config::parse("[keys.command.normal]\n\"<esc>\" = []\n").is_err(),
+            "no mode closes it"
+        );
+    }
+
+    #[test]
     fn an_overlay_table_binds_only_its_own_group_and_the_editors() {
         assert!(
-            Config::parse("[keys.test]\nx = \"left\"\n").is_err(),
-            "a motion is the view's"
+            Config::parse("[keys.test.normal]\nx = \"left\"\n").is_err(),
+            "a motion is the text box's"
         );
         assert!(
-            Config::parse("[keys.test]\nx = [\"save\", \"close_overlay\"]\n").is_ok(),
+            Config::parse("[keys.test.normal]\nx = \"save\"\n").is_err(),
+            "saving is the scratch's"
+        );
+        assert!(
+            Config::parse("[keys.test.normal]\nx = [\"quit\", \"close_overlay\"]\n").is_ok(),
             "the editor's group is allowed, in a list too"
         );
     }

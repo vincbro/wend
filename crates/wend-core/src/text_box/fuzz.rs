@@ -1,19 +1,21 @@
-//! Drives a view with random calls and checks its invariants after each one (S-INVARIANTS).
+//! Drives a text box with random calls and checks its invariants after each one (S-INVARIANTS).
+
+use std::num::NonZeroUsize;
 
 use proptest::{collection, prelude::*};
 
-use super::{Direction, Motion, View};
+use super::{Direction, Motion, TextBox};
 use crate::{
     buffer::Buffer,
-    config::Config,
+    config::{Config, Target},
     frame::{Area, Rect},
-    input::{Mode, action::ViewAction},
+    input::{Mode, action::TextBoxAction},
 };
 
-/// One public call on a view, with its arguments.
+/// One public call on a text box, with its arguments.
 #[derive(Debug, Clone)]
 enum Call {
-    Perform(ViewAction),
+    Perform(TextBoxAction),
     Resize(Rect),
     CursorPosition,
     Update(String),
@@ -21,7 +23,7 @@ enum Call {
 }
 
 impl Call {
-    fn run(self, view: &mut View) {
+    fn run(self, view: &mut TextBox) {
         match self {
             Self::Perform(action) => view.perform(action),
             Self::Resize(rect) => view.resize(rect),
@@ -60,7 +62,7 @@ pub(crate) fn text() -> impl Strategy<Value = String> {
 }
 
 /// From no cells at all to wider than the text ever gets.
-fn rect() -> impl Strategy<Value = Rect> {
+pub(crate) fn rect() -> impl Strategy<Value = Rect> {
     (0..=150u16, 0..=12u16).prop_map(|(cols, rows)| Rect::new(0, 0, Area::new(cols, rows)))
 }
 
@@ -88,24 +90,24 @@ fn mode() -> impl Strategy<Value = Mode> {
     prop_oneof![Just(Mode::Normal), Just(Mode::Select), Just(Mode::Insert)]
 }
 
-/// Any action a view performs, with its arguments.
-pub(crate) fn view_action() -> impl Strategy<Value = ViewAction> {
+/// Any action a text box performs, with its arguments.
+pub(crate) fn text_box_action() -> impl Strategy<Value = TextBoxAction> {
     prop_oneof![
-        motion().prop_map(ViewAction::Motion),
-        mode().prop_map(ViewAction::Mode),
-        any::<char>().prop_map(ViewAction::Insert),
-        Just(ViewAction::Delete),
-        Just(ViewAction::DeleteSelection),
-        Just(ViewAction::OpenLine),
-        Just(ViewAction::CollapseSelection),
-        Just(ViewAction::SelectRow),
-        Just(ViewAction::Revert),
+        motion().prop_map(TextBoxAction::Motion),
+        mode().prop_map(TextBoxAction::Mode),
+        any::<char>().prop_map(TextBoxAction::Insert),
+        Just(TextBoxAction::Delete),
+        Just(TextBoxAction::DeleteSelection),
+        Just(TextBoxAction::OpenLine),
+        Just(TextBoxAction::CollapseSelection),
+        Just(TextBoxAction::SelectRow),
+        Just(TextBoxAction::Revert),
     ]
 }
 
 fn call() -> impl Strategy<Value = Call> {
     prop_oneof![
-        8 => view_action().prop_map(Call::Perform),
+        8 => text_box_action().prop_map(Call::Perform),
         2 => rect().prop_map(Call::Resize),
         1 => Just(Call::CursorPosition),
         1 => text().prop_map(Call::Update),
@@ -118,9 +120,13 @@ proptest! {
     fn no_sequence_of_calls_breaks_the_invariants(
         start in rect(),
         initial in text(),
+        line_limit in prop::option::of(1..4usize),
         calls in collection::vec(call(), 0..40),
     ) {
-        let mut view = View::new(start, &Config::default()).unwrap();
+        let mut view = TextBox::new(start, &Config::default(), Target::TextBox).unwrap();
+        if let Some(limit) = line_limit {
+            view.limit_lines(NonZeroUsize::new(limit).unwrap());
+        }
         view.open_buffer(Buffer::from(initial.as_str()));
         view.check_invariants();
 

@@ -136,7 +136,7 @@ pub struct Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::action::{Action, EditorAction};
+    use crate::input::action::{Action, EditorAction, ScratchAction};
 
     fn key(c: char) -> Key {
         Key::new(KeyCode::Char(c))
@@ -154,7 +154,7 @@ mod tests {
         ));
         assert!(tree.insert(
             &[pattern('g'), pattern('s')],
-            Box::new([Action::Editor(EditorAction::Save)])
+            Box::new([Action::Scratch(ScratchAction::Save)])
         ));
         tree
     }
@@ -164,7 +164,7 @@ mod tests {
         let tree = tree();
         assert!(matches!(
             tree.get(&[key('g'), key('s')]),
-            Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::Editor(EditorAction::Save)])
+            Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::Scratch(ScratchAction::Save)])
         ));
     }
 
@@ -218,19 +218,19 @@ mod tests {
         assert!(
             !tree.insert(
                 &[pattern('q'), pattern('x')],
-                Box::new([Action::Editor(EditorAction::Save)])
+                Box::new([Action::Scratch(ScratchAction::Save)])
             ),
             "q is a leaf, nothing continues it"
         );
         assert!(
             !tree.clone().insert(
                 &[pattern('g')],
-                Box::new([Action::Editor(EditorAction::Save)])
+                Box::new([Action::Scratch(ScratchAction::Save)])
             ),
             "g starts a combo, so it can't be a leaf"
         );
         assert!(
-            !tree.insert(&[], Box::new([Action::Editor(EditorAction::Save)])),
+            !tree.insert(&[], Box::new([Action::Scratch(ScratchAction::Save)])),
             "an empty combo is no combo"
         );
     }
@@ -240,7 +240,7 @@ mod tests {
         let mut tree = tree();
         assert!(tree.insert(
             &[KeyPattern::Character],
-            Box::new([Action::Editor(EditorAction::Save)])
+            Box::new([Action::Scratch(ScratchAction::Save)])
         ));
 
         assert!(
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn two_character_patterns_collide() {
         let mut tree = KeyTree::new();
-        let save = || Box::new([Action::Editor(EditorAction::Save)]);
+        let save = || Box::new([Action::Scratch(ScratchAction::Save)]);
         assert!(tree.insert(&[KeyPattern::Character], save()));
         assert!(!tree.insert(&[KeyPattern::Character], save()));
     }

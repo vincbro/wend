@@ -1,14 +1,12 @@
 //! Drives a buffer with random calls, checks its invariants after each one (S-INVARIANTS)
 //! and compares its text with a plain `String` that gets the same edits.
 
-use std::path::Path;
-
 use proptest::{collection, prelude::*};
 
 use super::{Buffer, Error};
 use crate::{
     syntax::{LanguageTag, tests as syntax_tests},
-    view::fuzz as view_fuzz,
+    text_box::fuzz as text_box_fuzz,
 };
 
 /// One public call on a buffer, with its arguments. Edit ranges are fractions of the text
@@ -28,11 +26,11 @@ fn call() -> impl Strategy<Value = Call> {
     let language = prop_oneof![Just(None), Just(Some("rust")), Just(Some("other"))];
     // Mostly text, sometimes bytes that aren't UTF-8
     let bytes = prop_oneof![
-        4 => view_fuzz::text().prop_map(String::into_bytes),
+        4 => text_box_fuzz::text().prop_map(String::into_bytes),
         1 => collection::vec(any::<u8>(), 0..16),
     ];
     prop_oneof![
-        8 => (any::<usize>(), any::<usize>(), view_fuzz::text())
+        8 => (any::<usize>(), any::<usize>(), text_box_fuzz::text())
             .prop_map(|(at, len, text)| Call::Edit { at, len, text }),
         1 => Just(Call::Revert),
         1 => Just(Call::Save),
@@ -74,7 +72,7 @@ impl Model {
                 self.is_dirty = false;
             }
             Call::Save => {
-                let (_, rope) = buffer.save().unwrap();
+                let rope = buffer.save();
                 assert_eq!(rope.to_string(), self.text, "save writes the text");
                 self.clean.clone_from(&self.text);
                 self.is_dirty = false;
@@ -104,10 +102,10 @@ impl Model {
 proptest! {
     #[test]
     fn no_sequence_of_calls_breaks_the_invariants(
-        initial in view_fuzz::text(),
+        initial in text_box_fuzz::text(),
         calls in collection::vec(call(), 0..40),
     ) {
-        let mut buffer = Buffer::from_bytes(Path::new("a.rs").into(), initial.as_bytes()).unwrap();
+        let mut buffer = Buffer::from_bytes(initial.as_bytes()).unwrap();
         let mut model = Model {
             text: initial.clone(),
             clean: initial,

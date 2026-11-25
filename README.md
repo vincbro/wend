@@ -75,9 +75,10 @@ What works today. Normal and select mode share a keymap, select only makes motio
 | `d`       | delete the selection                    |
 | `x`       | select the screen row                   |
 | `u`       | revert to the last save                 |
-| `s`       | save                                    |
 | `v`       | toggle select mode                      |
-| `q`       | quit                                    |
+| `:`       | type a command, `Enter` runs it         |
+
+Saving and quitting are commands and have no key by default: `:save` or `:w`, `:quit` or `:q`.
 
 ## Config
 
@@ -85,7 +86,11 @@ The config file is `$XDG_CONFIG_HOME/wend/config.toml`, or `~/.config/wend/confi
 
 With no config file wend uses the defaults. `wend --default-config` prints them as a file, so `wend --default-config > ~/.config/wend/config.toml` gives you one to edit. The same file is in the repo as [`config/default.toml`](config/default.toml). A setting the file leaves out keeps its default.
 
-Bindings in the file go over the defaults. Bind a combo to `[]` to remove it, so `q = []` removes the quit key.
+Bindings in the file go over the defaults. Bind a combo to `[]` to remove it, so `h = []` removes the left key. Nothing is bound to save or quit by default, so add `s = "save"` and `q = "quit"` to `[keys.scratch.normal]` if you want them.
+
+Keys come in tables per mode. `[keys.normal]`, `[keys.select]` and `[keys.insert]` hold the motions and edits every text box answers to, the editor and the command line alike. What is about the document and the editor (`:`, and whatever you bind to `save` or `quit`) is in `[keys.scratch.<mode>]`, and the command line has `[keys.command.<mode>]` for what only it does, such as `Enter`. A target's table goes over the shared one.
+
+A command is the name of an action, such as `:save`, `:left` or `:open src/main.rs`.
 
 ## Themes
 

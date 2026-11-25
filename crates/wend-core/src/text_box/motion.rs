@@ -1,4 +1,4 @@
-use super::{ColumnPolicy, Glyph, Selection, View, wrap::SlotPosition};
+use super::{ColumnPolicy, Glyph, Selection, TextBox, wrap::SlotPosition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -25,7 +25,7 @@ pub enum Motion {
 mod word;
 pub(super) use word::WordClass;
 
-impl View {
+impl TextBox {
     /// Moves the selection. With `extend` the anchor stays and only the head moves.
     pub fn move_selection(&mut self, motion: Motion, extend: bool) {
         // Motions read the wrap around the head, make sure both are current
@@ -60,7 +60,7 @@ impl View {
             Motion::File(direction) => Selection::point(self.file_edge(direction)),
             Motion::Word(Direction::Forward) => self.word_forward()?,
             Motion::Word(Direction::Backward) => self.word_backward()?,
-            // Scrolls the view, so it can't be worked out without moving
+            // Scrolls the text box, so it can't be worked out without moving
             Motion::Page(_) => return None,
         })
     }
@@ -88,7 +88,7 @@ impl View {
         }
 
         // The buffer ends first, its last row is the last one on screen. Undo the scroll so
-        // the view only moves as far as the margin pulls it.
+        // the text box only moves as far as the margin pulls it.
         self.scroll(Direction::Backward, (bottom - last).min(scrolled));
         self.wrap.last_row()
     }
@@ -172,7 +172,7 @@ fn neighbor_row(row: usize, direction: Direction) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::tests;
+    use crate::text_box::tests;
 
     #[test]
     fn page_lands_on_the_edge_row_of_the_screen() {
@@ -185,7 +185,7 @@ mod tests {
     fn assert_pages_onto_edge_row(direction: Direction) {
         // Wrapped, short and empty lines, a page crosses all of them
         let text = "a line that wraps twice\nb\n\n\tc\n".repeat(5);
-        let mut view = tests::view(&text, 8, 7);
+        let mut view = tests::text_box(&text, 8, 7);
         if direction == Direction::Backward {
             view.move_selection(Motion::File(Direction::Forward), false);
         }
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn page_that_cannot_move_keeps_the_selection() {
-        let mut view = tests::view("foo bar\nbaz", 20, 5);
+        let mut view = tests::text_box("foo bar\nbaz", 20, 5);
         view.move_selection(Motion::Word(Direction::Forward), false);
         let word = view.selection;
         view.move_selection(Motion::Page(Direction::Backward), false);

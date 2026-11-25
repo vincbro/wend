@@ -143,21 +143,16 @@ impl Session {
     /// Hands `input` to the editor and does what the frontend does with everything it sends
     /// back: draw the frames and return them, load the grammar it asks for.
     fn deliver(&mut self, input: Input) {
-        self.editor
-            .apply(input)
-            .expect("the bench's inputs are valid");
+        self.editor.apply(input);
         self.outputs.extend(self.editor.drain_outputs());
         while let Some(output) = self.outputs.pop() {
             match output {
                 Output::Frame(frame) => self.show(frame),
-                Output::Language(tag) => self
-                    .editor
-                    .apply(Input::Language {
-                        tag,
-                        wasm: Box::from(RUST_WASM),
-                        highlights: Box::from(RUST_HIGHLIGHTS),
-                    })
-                    .expect("the bundled grammar loads"),
+                Output::Language(tag) => self.editor.apply(Input::Language {
+                    tag,
+                    wasm: Box::from(RUST_WASM),
+                    highlights: Box::from(RUST_HIGHLIGHTS),
+                }),
                 Output::Write { .. } | Output::Read { .. } | Output::Quit => {}
             }
             self.outputs.extend(self.editor.drain_outputs());
@@ -179,9 +174,7 @@ impl Session {
             Some(frame)
         };
         if let Some(returned) = returned {
-            self.editor
-                .apply(Input::Drawn(returned))
-                .expect("a frame always fits back in the pool");
+            self.editor.apply(Input::Drawn(returned));
         }
     }
 

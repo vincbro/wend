@@ -31,8 +31,6 @@ j = "down" # one row down
 k = "up" # one row up
 l = "right" # one grapheme right
 o = ["open_line", "insert_mode"] # open a line below, then insert mode
-q = "quit" # quit
-s = "save" # save
 u = "revert" # revert to the last save
 v = "select_mode" # select mode
 w = "next_word" # select the next word
@@ -41,7 +39,6 @@ x = "select_row" # select the screen row the cursor is on
   "collapse_selection",
   "normal_mode",
 ] # drop the selection down to the cursor, then normal mode
-"<leader>e" = "open_test_overlay" # two windows side by side
 
 # Keys in select mode, where motions extend the selection.
 [keys.select]
@@ -59,8 +56,6 @@ j = "down" # one row down
 k = "up" # one row up
 l = "right" # one grapheme right
 o = ["open_line", "insert_mode"] # open a line below, then insert mode
-q = "quit" # quit
-s = "save" # save
 u = "revert" # revert to the last save
 v = "normal_mode" # normal mode
 w = "next_word" # select the next word
@@ -73,15 +68,35 @@ x = "select_row" # select the screen row the cursor is on
 # Keys in insert mode. `<char>` is any key that types a character, and a key bound
 # by itself goes before it.
 [keys.insert]
-"<char>" = "insert_char"    # the character of the key
+"<char>" = "insert_char"     # the character of the key
 "<enter>" = "insert_newline" # a line break
 "<esc>" = "normal_mode"      # normal mode
 "<backspace>" = "delete"     # delete the grapheme before the cursor
 "<tab>" = "insert_tab"       # a tab
 
-# Keys in the test overlay. It must keep a binding that closes it.
-[keys.test]
+# What the scratch binds besides the shared keys above, which every text box answers to. The
+# scratch is the editing surface: its keys are about the document and the editor.
+[keys.scratch.normal]
+":" = "open_command_line"         # type a command
+"<leader>e" = "open_test_overlay" # two windows side by side
+
+[keys.scratch.select]
+":" = "open_command_line" # type a command
+
+# What the test overlay binds over the shared keys. It must keep a binding that closes it.
+[keys.test.normal]
 "<esc>" = "close_overlay" # close the overlay
+
+# What the command line binds over the shared keys. It must keep a binding that closes it.
+[keys.command.normal]
+"<esc>" = "close_overlay" # close the command line
+"<enter>" = "run_command" # run the command typed
+
+[keys.command.select]
+"<enter>" = "run_command" # run the command typed
+
+[keys.command.insert]
+"<enter>" = "run_command" # run the command typed
 
 
 [scroll]

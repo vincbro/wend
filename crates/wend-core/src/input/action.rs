@@ -7,12 +7,12 @@ use serde::{
 };
 
 mod overlay;
-pub use overlay::{OverlayAction, OverlayKind, TestOverlayAction};
+pub use overlay::{CommandAction, OverlayAction, OverlayKind, TestOverlayAction};
 
 use crate::{
     config::{self, Error},
     input::Mode,
-    view::{Direction, Motion},
+    text_box::{Direction, Motion},
 };
 
 /// What a key can do, as a group for each target that takes keys.
@@ -21,26 +21,36 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Editor(EditorAction),
-    View(ViewAction),
+    Scratch(ScratchAction),
+    TextBox(TextBoxAction),
     Overlay(OverlayAction),
 }
 
-/// What any target can do, wherever the keys came from.
+/// What any target can do, wherever the keys came from. It needs nothing of a document or of
+/// text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorAction {
-    Save,
     /// Asks the frontend for the file at the path, which the editor then shows.
     Open(Box<Path>),
     /// Opens the overlay that tries out arranging two windows.
     OpenTestOverlay,
+    /// Opens the command line, which runs the action its text names.
+    OpenCommandLine,
     /// Closes the overlay that has the keys.
     CloseOverlay,
     Quit,
 }
 
-/// What a view does with its text, its selection and its mode.
+/// What the scratch does about the document it shows, which a text box has no notion of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewAction {
+pub enum ScratchAction {
+    /// Writes the document to its file.
+    Save,
+}
+
+/// What a text box does with its text, its selection and its mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextBoxAction {
     Motion(Motion),
     Mode(Mode),
     Insert(char),
@@ -63,8 +73,10 @@ pub enum ViewAction {
 pub enum Scope {
     /// Only what any target can do.
     Editor,
-    /// What any target can do and what a view does.
-    View,
+    /// What any target can do and what a text box does.
+    TextBox,
+    /// What any target can do, what a text box does and what the scratch does.
+    Scratch,
     /// What any target can do and what the given overlay does.
     Overlay(OverlayKind),
 }
@@ -75,7 +87,8 @@ impl Action {
     pub const fn name(&self) -> Option<&'static str> {
         match self {
             Self::Editor(action) => Some(action.name()),
-            Self::View(action) => action.name(),
+            Self::Scratch(action) => Some(action.name()),
+            Self::TextBox(action) => action.name(),
             Self::Overlay(action) => Some(action.name()),
         }
     }
@@ -85,7 +98,8 @@ impl Action {
     pub const fn description(&self) -> &'static str {
         match self {
             Self::Editor(action) => action.description(),
-            Self::View(action) => action.description(),
+            Self::Scratch(action) => action.description(),
+            Self::TextBox(action) => action.description(),
             Self::Overlay(action) => action.description(),
         }
     }
@@ -103,7 +117,10 @@ impl Action {
             .map(Self::Editor)
             .or_else(|| match scope {
                 Scope::Editor => None,
-                Scope::View => ViewAction::from_name(name).map(Self::View),
+                Scope::TextBox => TextBoxAction::from_name(name).map(Self::TextBox),
+                Scope::Scratch => ScratchAction::from_name(name)
+                    .map(Self::Scratch)
+                    .or_else(|| TextBoxAction::from_name(name).map(Self::TextBox)),
                 Scope::Overlay(kind) => OverlayAction::from_name(kind, name).map(Self::Overlay),
             })
             .ok_or_else(|| Error::UnknownAction(name.into()))?;
@@ -118,8 +135,8 @@ impl EditorAction {
     /// The action with arguments that `name` means, none when `name` takes none.
     fn with_arguments(name: &str, arguments: &str) -> Option<config::Result<Self>> {
         match name {
-            "open" if arguments.is_empty() => Some(Err(Error::MissingArguments(name.into()))),
-            "open" => Some(Ok(Self::Open(Path::new(arguments).into()))),
+            "open" | "o" if arguments.is_empty() => Some(Err(Error::MissingArguments(name.into()))),
+            "open" | "o" => Some(Ok(Self::Open(Path::new(arguments).into()))),
             _ => None,
         }
     }
@@ -127,9 +144,9 @@ impl EditorAction {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
-            Self::Save => "save",
             Self::Open(_) => "open",
             Self::OpenTestOverlay => "open_test_overlay",
+            Self::OpenCommandLine => "open_command_line",
             Self::CloseOverlay => "close_overlay",
             Self::Quit => "quit",
         }
@@ -138,9 +155,9 @@ impl EditorAction {
     #[must_use]
     pub const fn description(&self) -> &'static str {
         match self {
-            Self::Save => "save",
             Self::Open(_) => "open a file",
             Self::OpenTestOverlay => "two windows side by side",
+            Self::OpenCommandLine => "type a command",
             Self::CloseOverlay => "close the overlay",
             Self::Quit => "quit",
         }
@@ -150,16 +167,40 @@ impl EditorAction {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
-            "save" => Self::Save,
             "open_test_overlay" => Self::OpenTestOverlay,
+            "open_command_line" => Self::OpenCommandLine,
             "close_overlay" => Self::CloseOverlay,
-            "quit" => Self::Quit,
+            "quit" | "q" => Self::Quit,
             _ => return None,
         })
     }
 }
 
-impl ViewAction {
+impl ScratchAction {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+        }
+    }
+
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "save" | "s" | "w" => Self::Save,
+            _ => return None,
+        })
+    }
+}
+
+impl TextBoxAction {
     /// The name a config gives this action, none for a character that is typed. The match
     /// has no catch-all, so an action added without a name doesn't compile.
     #[must_use]
@@ -280,7 +321,7 @@ impl<'de> Deserialize<'de> for Action {
             }
 
             fn visit_str<E: de::Error>(self, name: &str) -> Result<Action, E> {
-                Action::parse(Scope::View, name).map_err(E::custom)
+                Action::parse(Scope::Scratch, name).map_err(E::custom)
             }
         }
 
@@ -303,27 +344,30 @@ mod tests {
             Motion::Page,
         ];
         let mut actions = vec![
-            Action::View(ViewAction::Insert('\n')),
-            Action::View(ViewAction::Insert('\t')),
-            Action::View(ViewAction::InsertTyped),
-            Action::View(ViewAction::Delete),
-            Action::View(ViewAction::DeleteSelection),
-            Action::View(ViewAction::OpenLine),
-            Action::View(ViewAction::CollapseSelection),
-            Action::View(ViewAction::SelectRow),
-            Action::View(ViewAction::Revert),
-            Action::Editor(EditorAction::Save),
+            Action::TextBox(TextBoxAction::Insert('\n')),
+            Action::TextBox(TextBoxAction::Insert('\t')),
+            Action::TextBox(TextBoxAction::InsertTyped),
+            Action::TextBox(TextBoxAction::Delete),
+            Action::TextBox(TextBoxAction::DeleteSelection),
+            Action::TextBox(TextBoxAction::OpenLine),
+            Action::TextBox(TextBoxAction::CollapseSelection),
+            Action::TextBox(TextBoxAction::SelectRow),
+            Action::TextBox(TextBoxAction::Revert),
+            Action::Scratch(ScratchAction::Save),
             Action::Editor(EditorAction::OpenTestOverlay),
+            Action::Editor(EditorAction::OpenCommandLine),
             Action::Editor(EditorAction::CloseOverlay),
             Action::Editor(EditorAction::Quit),
         ];
         for mode in [Mode::Normal, Mode::Select, Mode::Insert] {
-            actions.push(Action::View(ViewAction::Mode(mode)));
+            actions.push(Action::TextBox(TextBoxAction::Mode(mode)));
         }
         for direction in directions {
-            actions.push(Action::View(ViewAction::Motion(Motion::File(direction))));
+            actions.push(Action::TextBox(TextBoxAction::Motion(Motion::File(
+                direction,
+            ))));
             for motion in motions {
-                actions.push(Action::View(ViewAction::Motion(motion(direction))));
+                actions.push(Action::TextBox(TextBoxAction::Motion(motion(direction))));
             }
         }
         actions
@@ -333,7 +377,11 @@ mod tests {
     fn every_name_reads_back_as_its_action() {
         for action in all() {
             let name = action.name().expect("every bindable action has a name");
-            assert_eq!(Action::parse(Scope::View, name).unwrap(), action, "{name}");
+            assert_eq!(
+                Action::parse(Scope::Scratch, name).unwrap(),
+                action,
+                "{name}"
+            );
         }
     }
 
@@ -348,12 +396,12 @@ mod tests {
                 Action::parse(Scope::Editor, "left"),
                 Err(Error::UnknownAction(_))
             ),
-            "a motion is the view's"
+            "a motion is the text box's"
         );
     }
 
     #[test]
-    fn the_overlay_scope_names_the_editor_group_and_not_the_views() {
+    fn the_overlay_scope_names_the_editor_group_and_not_the_scratch_or_text_box() {
         let scope = Scope::Overlay(OverlayKind::Test);
         assert_eq!(
             Action::parse(scope, "quit").unwrap(),
@@ -361,7 +409,32 @@ mod tests {
         );
         assert!(
             matches!(Action::parse(scope, "left"), Err(Error::UnknownAction(_))),
-            "a motion is the view's"
+            "a motion is the text box's"
+        );
+    }
+
+    #[test]
+    fn saving_is_in_the_scratch_scope_and_no_narrower_one() {
+        assert_eq!(
+            Action::parse(Scope::Scratch, "save").unwrap(),
+            Action::Scratch(ScratchAction::Save)
+        );
+        for scope in [
+            Scope::Editor,
+            Scope::TextBox,
+            Scope::Overlay(OverlayKind::Test),
+        ] {
+            assert!(
+                matches!(Action::parse(scope, "save"), Err(Error::UnknownAction(_))),
+                "{scope:?} has no document to save"
+            );
+        }
+        assert_eq!(
+            Action::parse(Scope::TextBox, "left").unwrap(),
+            Action::TextBox(TextBoxAction::Motion(Motion::Horizontal(
+                Direction::Backward
+            ))),
+            "the text box scope names the text box's group"
         );
     }
 
@@ -378,7 +451,7 @@ mod tests {
     fn open_without_a_path_is_refused() {
         assert!(
             matches!(
-                Action::parse(Scope::View, "open"),
+                Action::parse(Scope::Scratch, "open"),
                 Err(Error::MissingArguments(name)) if &*name == "open"
             ),
             "there is nothing to open"
@@ -388,8 +461,8 @@ mod tests {
     #[test]
     fn surrounding_space_is_ignored() {
         assert_eq!(
-            Action::parse(Scope::View, "  save  ").unwrap(),
-            Action::Editor(EditorAction::Save)
+            Action::parse(Scope::Scratch, "  save  ").unwrap(),
+            Action::Scratch(ScratchAction::Save)
         );
     }
 
@@ -397,7 +470,7 @@ mod tests {
     fn arguments_to_an_action_that_takes_none_are_refused() {
         assert!(
             matches!(
-                Action::parse(Scope::View, "save now"),
+                Action::parse(Scope::Scratch, "save now"),
                 Err(Error::UnexpectedArguments(name)) if &*name == "save"
             ),
             "save has no arguments"
@@ -406,6 +479,6 @@ mod tests {
 
     #[test]
     fn a_typed_character_has_no_name() {
-        assert_eq!(Action::View(ViewAction::Insert('x')).name(), None);
+        assert_eq!(Action::TextBox(TextBoxAction::Insert('x')).name(), None);
     }
 }

@@ -2,12 +2,12 @@ use std::iter::Peekable;
 
 use crop::Rope;
 
-use crate::view::{Selection, View};
+use crate::text_box::{Selection, TextBox};
 
 /// Says what words are made of. Only letters and numbers make a word, `_` separates them just
 /// like whitespace, so each part of a `snake_case_name` is its own word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::view) enum WordClass {
+pub(in crate::text_box) enum WordClass {
     Word,
     Separator,
     Punctuation,
@@ -24,7 +24,7 @@ fn word_class(grapheme: &str) -> WordClass {
     }
 }
 
-impl View {
+impl TextBox {
     /// Selects from the head through the word and the separators after it.
     pub(super) fn word_forward(&self) -> Option<Selection> {
         let head = self.selection.head();
@@ -215,12 +215,12 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::view::{ColumnPolicy, Direction, Motion, tests};
+    use crate::text_box::{ColumnPolicy, Direction, Motion, tests};
 
     #[test]
     fn word_stops_at_line_breaks() {
         // f0 o1 o2 ' '3 ' '4 '\n'5 b6 a7 r8
-        let mut view = tests::view("foo  \nbar", 40, 5);
+        let mut view = tests::text_box("foo  \nbar", 40, 5);
         view.move_selection(Motion::Word(Direction::Forward), false);
         assert_eq!(
             view.selection,
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn word_treats_underscore_as_a_separator() {
-        let mut view = tests::view("long_string_with_underscores", 40, 5);
+        let mut view = tests::text_box("long_string_with_underscores", 40, 5);
         let mut anchors = vec![];
         for _ in 0..4 {
             view.move_selection(Motion::Word(Direction::Forward), false);
@@ -274,7 +274,7 @@ mod tests {
         // Only letters make a word, so the family is punctuation, one grapheme of it
         let family = "👨\u{200d}👩\u{200d}👧";
         let text = format!("ab {family}{family} cd");
-        let mut view = tests::view(&text, 40, 5);
+        let mut view = tests::text_box(&text, 40, 5);
         view.set_selection(Selection::point(text.len() - 1), ColumnPolicy::Sync);
         view.move_selection(Motion::Word(Direction::Backward), false);
         assert_eq!(
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn word_backward_crosses_lines_and_empty_lines() {
-        let mut view = tests::view("one\n\n\ntwo\n", 40, 3);
+        let mut view = tests::text_box("one\n\n\ntwo\n", 40, 3);
         view.set_selection(
             Selection::point(view.buffer.rope().byte_len()),
             ColumnPolicy::Sync,

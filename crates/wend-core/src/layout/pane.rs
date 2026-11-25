@@ -15,6 +15,10 @@ pub struct Pane<Inner> {
 }
 
 impl<Inner: Element> Pane<Inner> {
+    /// How many cells the border takes on each side, so a pane around `n` rows is `n` plus twice
+    /// this tall.
+    pub const BORDER: u16 = 1;
+
     #[must_use]
     pub fn new(layout: Layout, inner: Inner) -> Self {
         Self { layout, inner }
@@ -23,6 +27,11 @@ impl<Inner: Element> Pane<Inner> {
     #[must_use]
     pub fn inner(&self) -> &Inner {
         &self.inner
+    }
+
+    #[must_use]
+    pub fn inner_mut(&mut self) -> &mut Inner {
+        &mut self.inner
     }
 }
 
@@ -38,7 +47,7 @@ impl<Inner: Element> Element for Pane<Inner> {
                 canvas.write(pos, cell(border_glyph(col, row, rect.area)));
             }
         }
-        canvas.child(&mut self.inner, rect.inset(1));
+        canvas.child(&mut self.inner, rect.inset(Self::BORDER));
     }
 }
 

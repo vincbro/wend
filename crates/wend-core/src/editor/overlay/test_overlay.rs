@@ -1,14 +1,14 @@
 use super::keymap::Keymap;
 use crate::{
     buffer::Buffer,
-    config::Config,
+    config::{Config, Target},
     frame::{Area, Rect},
     input::{
-        action::{Action, EditorAction, OverlayAction, OverlayKind},
+        action::{Action, OverlayAction, OverlayKind},
         key::Key,
     },
     layout::{Canvas, Edge, Element, Fit, Layout, Pane, Size},
-    view::{Result, View},
+    text_box::{Result, TextBox},
 };
 
 /// What the view in the left window shows.
@@ -20,14 +20,15 @@ const RIGHT: &str = "the right window\nnext to the left one";
 /// Two windows side by side in a float, to try arranging windows in an overlay until the
 /// file picker needs it.
 ///
-/// It owns its keys, built from `[keys.test]` when it opens.
+/// It owns its keys, built when it opens from the shared tables with `[keys.test.<mode>]` laid
+/// over them. It has no modes, so it reads the normal one.
 ///
 /// Both windows are views, so what holds for a view holds for them. `check_invariants` checks
 /// it.
 #[derive(Debug)]
 pub(in crate::editor) struct TestOverlay {
-    left: Pane<View>,
-    right: Pane<View>,
+    left: Pane<TextBox>,
+    right: Pane<TextBox>,
     keymap: Keymap,
 }
 
@@ -46,14 +47,16 @@ impl TestOverlay {
 
     /// Runs what `key` is bound to: the actions of the overlay's own group, and the editor's
     /// added to `requests`, which this clears first.
-    pub(in crate::editor) fn key_press(&mut self, key: Key, requests: &mut Vec<EditorAction>) {
+    pub(in crate::editor) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) {
         requests.clear();
         for action in self.keymap.press(key) {
             match action {
-                Action::Editor(action) => requests.push(action.clone()),
+                Action::Editor(_) => requests.push(action.clone()),
                 Action::Overlay(OverlayAction::Test(action)) => match *action {},
-                // The overlay's table can't bind the groups of the view or of other overlays
-                Action::View(_) => {}
+                // The overlay's table can't bind the groups of the scratch, of a text box or of other overlays
+                Action::Overlay(OverlayAction::Command(_))
+                | Action::Scratch(_)
+                | Action::TextBox(_) => {}
             }
         }
     }
@@ -84,8 +87,8 @@ impl Element for TestOverlay {
 }
 
 /// A view that shows `text`, as big as the rect it is drawn in.
-fn view(text: &str, config: &Config) -> Result<View> {
-    let mut view = View::new(Rect::new(0, 0, Area::new(0, 0)), config)?;
+fn view(text: &str, config: &Config) -> Result<TextBox> {
+    let mut view = TextBox::new(Rect::new(0, 0, Area::new(0, 0)), config, Target::TextBox)?;
     // The view starts empty, so there is no buffer to keep
     drop(view.open_buffer(Buffer::from(text)));
     Ok(view)

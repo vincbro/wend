@@ -4,11 +4,11 @@ use crate::{
     buffer::Buffer,
     config::Config,
     frame::{Area, Frame, Rect},
-    input::{Input, Mode, action::EditorAction},
+    input::{Failure, Input, Mode, action::Action},
     layout::{Canvas, Element},
     output::Output,
+    scratch::Scratch,
     syntax::{LanguageTag, Loader},
-    view::View,
 };
 
 mod frame_pool;
@@ -16,7 +16,9 @@ use frame_pool::FramePool;
 mod status_bar;
 use status_bar::StatusBar;
 mod overlay;
-use overlay::{Overlay, TestOverlay};
+use overlay::{CommandLine, Overlay, TestOverlay};
+mod document;
+use document::Document;
 mod error;
 mod language;
 mod route;
@@ -27,29 +29,31 @@ pub use error::{Error, Result};
 /// editor's to draw into.
 const FRAME_COUNT: usize = 3;
 
-/// Holds the whole editor: the terminal's area, the view and the overlay over it, with the
-/// buffers that aren't shown and the loader of the grammars they are written in.
+/// Holds the whole editor: the terminal's area, the scratch and the overlay over it, with the
+/// documents that aren't shown and the loader of the grammars they are written in.
 ///
-/// `buffers` holds every open buffer except the one the view shows, so each open file
-/// lives in exactly one place.
+/// `documents` holds every open document except the one the scratch shows, whose path is
+/// `shown_path`, so each open file lives in exactly one place.
 ///
-/// After every public call the view fills what the status bar leaves of the terminal, every
-/// buffer and the view keep their own invariants, a language that is being waited for isn't
+/// After every public call the scratch fills what the status bar leaves of the terminal, every
+/// buffer and the scratch keep their own invariants, a language that is being waited for isn't
 /// loaded yet, and the editor is only out of date when every frame is out being drawn.
 /// `check_invariants` checks them.
 #[derive(Debug)]
 pub struct Editor {
     area: Area,
-    buffers: Vec<Buffer>,
-    view: View,
+    documents: Vec<Document>,
+    /// The file the scratch's buffer came from, none for a buffer that never had one.
+    shown_path: Option<Box<Path>>,
+    scratch: Scratch,
     status_bar: StatusBar,
     /// The window floating over the editor, which gets the keys while it is open.
     overlay: Option<Overlay>,
-    /// What the editor follows, kept for the views of the windows it opens.
+    /// What the editor follows, kept for the text boxes of the windows it opens.
     config: Config,
     outputs: Vec<Output>,
-    /// What the view asked of the editor, kept so that its memory is reused.
-    requests: Vec<EditorAction>,
+    /// What the scratch asked of the editor, kept so that its memory is reused.
+    requests: Vec<Action>,
     frame_pool: FramePool,
     is_stale: bool,
     loader: Loader,
@@ -66,12 +70,13 @@ impl Editor {
 
     /// Starts an editor that follows `config` and loads grammars with `loader`.
     fn with_loader(area: Area, config: &Config, loader: Loader) -> Result<Self> {
-        let view = View::new(Rect::new(0, 0, area), config)?;
+        let scratch = Scratch::new(Rect::new(0, 0, area), config)?;
         let mut editor = Self {
             area,
-            buffers: vec![],
-            view,
-            status_bar: StatusBar,
+            documents: vec![],
+            shown_path: None,
+            scratch,
+            status_bar: StatusBar::new(),
             overlay: None,
             config: config.clone(),
             outputs: vec![],
@@ -81,25 +86,41 @@ impl Editor {
             loader,
             requested_languages: HashSet::new(),
         };
-        editor.fit_view();
+        editor.fit_scratch();
         editor.check_invariants();
         Ok(editor)
     }
 
     /// Applies `input`, then draws a frame if the screen is out of date and a spare frame is
     /// in the pool. Inputs that arrive while every frame is out share the next frame.
-    pub fn apply(&mut self, input: Input) -> Result<()> {
+    ///
+    /// An input that fails is not an error of this call: the editor says so in the status bar
+    /// and goes on, so a frontend can't end the editor with one.
+    pub fn apply(&mut self, input: Input) {
+        let changed = !matches!(input, Input::Drawn(_));
+        if let Err(error) = self.try_apply(input) {
+            self.fail(&error);
+        }
+
+        self.is_stale |= changed;
+        if self.is_stale
+            && let Some(mut frame) = self.frame_pool.take()
+        {
+            // Cleared first, so the editor is never out of date with a frame in hand
+            self.is_stale = false;
+            // Parsed only when a frame is drawn, so a batch of inputs costs one parse
+            self.reparse();
+            self.update_frame(&mut frame);
+            self.outputs.push(Output::Frame(frame));
+        }
         // Checked whether or not the input worked, a failure leaves the editor consistent too
-        let result = self.apply_input(input);
         self.check_invariants();
-        result
     }
 
-    fn apply_input(&mut self, input: Input) -> Result<()> {
-        let changed = !matches!(input, Input::Drawn(_));
+    fn try_apply(&mut self, input: Input) -> Result<()> {
         match input {
-            Input::Action(action) => self.perform(&action)?,
-            Input::Key(key) => self.key_press(key)?,
+            Input::Action(action) => self.try_perform(&action)?,
+            Input::Key(key) => self.key_press(key),
             Input::Resize(area) => self.resize(area),
             Input::File {
                 path,
@@ -115,28 +136,40 @@ impl Editor {
                 wasm,
                 highlights,
             } => self.load_language(tag, &wasm, &highlights),
-            Input::Config(config) => self.set_config(&config)?,
-        }
-
-        self.is_stale |= changed;
-        if self.is_stale
-            && let Some(mut frame) = self.frame_pool.take()
-        {
-            // Cleared first, so the editor is never out of date with a frame in hand
-            self.is_stale = false;
-            // Parsed only when a frame is drawn, so a batch of inputs costs one parse
-            self.reparse();
-            self.update_frame(&mut frame);
-            self.outputs.push(Output::Frame(frame));
+            Input::Config(config) => self.try_set_config(&config)?,
+            Input::Failed(failure) => self.fail(&Error::Frontend(failure)),
         }
         Ok(())
     }
 
-    /// Follows `config` from now on. A config that fails leaves the editor as it was.
-    pub fn set_config(&mut self, config: &Config) -> Result<()> {
-        self.view.set_config(config)?;
-        self.config.clone_from(config);
+    /// Says `error` in the status bar and undoes what it leaves half done. It is the only place
+    /// an error becomes what the user sees, so every failure that isn't a bug ends up here.
+    pub(super) fn fail(&mut self, error: &Error) {
+        // The grammar isn't coming, so a buffer opened later may ask for it again
+        if let Error::Frontend(Failure::Language { tag, .. }) = &error {
+            self.requested_languages.remove(tag);
+        }
+        self.status_bar.show(&error.describe());
+    }
+
+    /// What the status bar says about a failure, if it says anything.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        self.status_bar.message()
+    }
+
+    /// Follows `config` from now on. A config that fails leaves the editor as it was, and says
+    /// so in the status bar.
+    pub fn set_config(&mut self, config: &Config) {
+        if let Err(error) = self.try_set_config(config) {
+            self.fail(&error);
+        }
         self.check_invariants();
+    }
+
+    fn try_set_config(&mut self, config: &Config) -> Result<()> {
+        self.scratch.set_config(config)?;
+        self.config.clone_from(config);
         Ok(())
     }
 
@@ -145,32 +178,37 @@ impl Editor {
     }
 
     #[must_use]
-    pub fn view(&self) -> &View {
-        &self.view
+    pub fn scratch(&self) -> &Scratch {
+        &self.scratch
     }
 
     #[must_use]
     pub fn mode(&self) -> Mode {
-        self.view.mode()
+        self.scratch.mode()
     }
 
-    /// Shows the file at `path`, reusing its buffer if it's among the open buffers. The buffer
-    /// shown before joins them.
+    /// Shows the file at `path`, reusing its document if it's among the open documents. The
+    /// document shown before joins them.
     fn show_file(&mut self, path: Box<Path>, bytes: &[u8]) -> Result<()> {
-        if self.view.buffer().path() == Some(&*path) {
-            self.view.update(bytes)?;
-        } else if let Some(index) = self
-            .buffers
-            .iter()
-            .position(|buffer| buffer.path() == Some(&*path))
-        {
-            let mut buffer = self.buffers.swap_remove(index);
-            buffer.update(bytes)?;
-            self.buffers.push(self.view.open_buffer(buffer));
-        } else {
-            self.buffers
-                .push(self.view.open_buffer(Buffer::from_bytes(path, bytes)?));
+        if self.shown_path.as_deref() == Some(&*path) {
+            self.scratch.update(bytes)?;
+            return Ok(());
         }
+        let buffer = match self
+            .documents
+            .iter()
+            .position(|document| document.path() == Some(&*path))
+        {
+            Some(index) => {
+                let (_, mut buffer) = self.documents.swap_remove(index).into_parts();
+                buffer.update(bytes)?;
+                buffer
+            }
+            None => Buffer::from_bytes(bytes)?,
+        };
+        let hidden = self.scratch.open_buffer(buffer);
+        let hidden_path = self.shown_path.replace(path);
+        self.documents.push(Document::new(hidden_path, hidden));
         Ok(())
     }
 
@@ -186,9 +224,15 @@ impl Editor {
     pub fn update_frame(&mut self, frame: &mut Frame) {
         let bounds = Rect::new(0, 0, self.area);
         let mut canvas = Canvas::root(frame);
-        // The status bar docks first, so the view gets the rows that are left
+        // The status bar docks first, so the scratch gets the rows that are left
+        let mode = match self.scratch.mode() {
+            Mode::Normal => "nor",
+            Mode::Select => "sel",
+            Mode::Insert => "ins",
+        };
+        self.status_bar.update(mode);
         let free = canvas.child(&mut self.status_bar, bounds);
-        canvas.child(&mut self.view, free);
+        canvas.child(&mut self.scratch, free);
         if let Some(overlay) = &mut self.overlay {
             // A float is placed in the whole frame, so it doesn't matter what is free
             canvas.child(overlay, bounds);
@@ -199,37 +243,37 @@ impl Editor {
     /// Fits the editor to a new terminal size.
     pub fn resize(&mut self, area: Area) {
         self.area = area;
-        self.fit_view();
+        self.fit_scratch();
         self.frame_pool.resize(area);
         self.check_invariants();
     }
 
-    /// Gives the view the rect its layout works out to, the same way a draw does, so the keys
+    /// Gives the scratch the rect its layout works out to, the same way a draw does, so the keys
     /// that come before the next draw already act on it.
-    fn fit_view(&mut self) {
-        self.view.resize(self.view_rect());
+    fn fit_scratch(&mut self) {
+        self.scratch.resize(self.scratch_rect());
     }
 
-    /// Returns the rect the view fills, what the status bar leaves of the terminal.
-    fn view_rect(&self) -> Rect {
+    /// Returns the rect the scratch fills, what the status bar leaves of the terminal.
+    fn scratch_rect(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.area);
         let (_, free) = self.status_bar.layout().place(bounds, bounds);
-        let (rect, _) = self.view.layout().place(free, bounds);
+        let (rect, _) = self.scratch.layout().place(free, bounds);
         rect
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
-        self.view.set_mode(mode);
+        self.scratch.set_mode(mode);
     }
 
     #[must_use]
     pub fn is_select(&self) -> bool {
-        matches!(self.view.mode(), Mode::Select)
+        matches!(self.scratch.mode(), Mode::Select)
     }
 
     #[must_use]
     pub fn is_insert(&self) -> bool {
-        matches!(self.view.mode(), Mode::Insert)
+        matches!(self.scratch.mode(), Mode::Insert)
     }
 }
 
@@ -241,16 +285,16 @@ impl Editor {
             return;
         }
 
-        self.view.check_invariants();
+        self.scratch.check_invariants();
         if let Some(overlay) = &self.overlay {
             overlay.check_invariants();
         }
-        for buffer in &self.buffers {
-            buffer.check_invariants();
+        for document in &self.documents {
+            document.buffer().check_invariants();
         }
-        let paths: Vec<_> = iter::once(self.view.buffer())
-            .chain(&self.buffers)
-            .filter_map(Buffer::path)
+        let paths: Vec<_> = iter::once(self.shown_path.as_deref())
+            .chain(self.documents.iter().map(Document::path))
+            .flatten()
             .collect();
         for (index, path) in paths.iter().enumerate() {
             assert!(
@@ -261,9 +305,9 @@ impl Editor {
         }
 
         assert_eq!(
-            self.view.rect(),
-            self.view_rect(),
-            "new and resize fit the view to what the status bar leaves"
+            self.scratch.rect(),
+            self.scratch_rect(),
+            "new and resize fit the scratch to what the status bar leaves"
         );
         assert!(
             self.requested_languages
@@ -288,7 +332,7 @@ mod tests {
     use crate::{
         config::Actions,
         input::{
-            action::{Action, ViewAction},
+            action::{Action, EditorAction, TextBoxAction},
             key::{Key, KeyCode},
         },
         syntax,
@@ -302,12 +346,12 @@ mod tests {
                 '\u{8}' => KeyCode::Backspace,
                 c => KeyCode::Char(c),
             };
-            editor.apply(Input::Key(Key::new(code))).unwrap();
+            editor.apply(Input::Key(Key::new(code)));
         }
     }
 
     fn text(editor: &Editor) -> String {
-        editor.view().buffer().rope().to_string()
+        editor.scratch().buffer().rope().to_string()
     }
 
     #[test]
@@ -332,9 +376,11 @@ mod tests {
         let mut config = Config::default();
         config.keys.normal.insert(
             "<leader>v".parse().unwrap(),
-            Actions(Box::new([Action::View(ViewAction::Mode(Mode::Select))])),
+            Actions(Box::new([Action::TextBox(TextBoxAction::Mode(
+                Mode::Select,
+            ))])),
         );
-        editor.apply(Input::Config(Box::new(config))).unwrap();
+        editor.apply(Input::Config(Box::new(config)));
         press(&mut editor, " v");
         assert_eq!(editor.mode(), Mode::Select, "space is the leader");
     }
@@ -347,7 +393,12 @@ mod tests {
             "g".parse().unwrap(),
             Actions(Box::new([Action::Editor(EditorAction::Quit)])),
         );
-        assert!(editor.set_config(&config).is_err(), "g also starts gs");
+        editor.set_config(&config);
+        let message = editor.message().expect("g also starts gs, and it is said");
+        assert!(
+            message.ends_with("is bound as a key and also as the start of a longer combo"),
+            "the message has the cause and not only what was being done: {message}"
+        );
         press(&mut editor, "gs");
         assert!(
             !editor
@@ -425,15 +476,29 @@ mod tests {
         assert_eq!(text(&editor), "");
     }
 
+    fn quit_was_asked(editor: &mut Editor) -> bool {
+        editor
+            .drain_outputs()
+            .any(|output| matches!(output, Output::Quit))
+    }
+
     #[test]
-    fn q_asks_to_quit() {
+    fn the_command_line_quits() {
         let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        press(&mut editor, ":q\n");
+        assert!(quit_was_asked(&mut editor));
+    }
+
+    #[test]
+    fn q_and_s_are_unbound_by_default_and_a_config_can_bind_them() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        press(&mut editor, "qs");
+        assert!(!quit_was_asked(&mut editor), "q quits nothing by default");
+
+        let config = Config::parse("[keys.scratch.normal]\nq = \"quit\"\n").unwrap();
+        let mut editor = Editor::new(Area::new(80, 24), &config).unwrap();
         press(&mut editor, "q");
-        assert!(
-            editor
-                .drain_outputs()
-                .any(|output| matches!(output, Output::Quit))
-        );
+        assert!(quit_was_asked(&mut editor), "a config binds it");
     }
 
     #[test]
@@ -446,18 +511,21 @@ mod tests {
             language: None,
         };
 
-        editor.apply(file(b"abc")).unwrap();
+        editor.apply(file(b"abc"));
         assert_eq!(text(&editor), "abc");
-        assert_eq!(editor.view().buffer().path(), Some(&*path));
+        assert_eq!(editor.shown_path.as_deref(), Some(&*path));
 
-        editor.apply(file(b"xyz")).unwrap();
+        editor.apply(file(b"xyz"));
         assert_eq!(
             text(&editor),
             "xyz",
             "the same path updates the shown buffer"
         );
         assert!(
-            editor.buffers.iter().all(|buffer| buffer.path().is_none()),
+            editor
+                .documents
+                .iter()
+                .all(|document| document.path().is_none()),
             "only the empty buffer the editor started with, no second copy of the file"
         );
     }
@@ -480,7 +548,7 @@ mod tests {
         let mut sent = frames(&mut editor);
         assert_eq!(sent.len(), 1);
 
-        editor.apply(Input::Drawn(sent.remove(0))).unwrap();
+        editor.apply(Input::Drawn(sent.remove(0)));
         assert!(
             frames(&mut editor).is_empty(),
             "nothing changed, so no redraw loop"
@@ -503,7 +571,7 @@ mod tests {
         );
 
         for frame in drawing {
-            editor.apply(Input::Drawn(frame)).unwrap();
+            editor.apply(Input::Drawn(frame));
         }
         let sent = frames(&mut editor);
         assert_eq!(sent.len(), 1, "the three keys show up in one frame");
@@ -521,17 +589,23 @@ mod tests {
         let text = "fn a() {}";
         let mut hidden = Buffer::from(text);
         hidden.set_language(Some(LanguageTag::new("rust")));
-        editor.buffers.push(hidden);
+        editor.documents.push(Document::new(None, hidden));
 
         editor.load_language(
             LanguageTag::new("rust"),
             syntax::tests::RUST_WASM,
             syntax::tests::RUST_HIGHLIGHTS,
         );
-        editor.buffers[0].reparse(&mut editor.loader).unwrap();
+        editor.documents[0]
+            .buffer_mut()
+            .reparse(&mut editor.loader)
+            .unwrap();
 
         assert_ne!(
-            editor.buffers[0].highlights(0..text.len()).count(),
+            editor.documents[0]
+                .buffer_mut()
+                .highlights(0..text.len())
+                .count(),
             0,
             "the buffer got the grammar while it was out of sight"
         );

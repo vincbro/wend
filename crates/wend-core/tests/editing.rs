@@ -5,7 +5,7 @@ use wend_core::{
     editor::Editor,
     frame::{Area, CellPosition, Content, Frame},
     input::{
-        Input, Mode,
+        Failure, Input, Mode,
         key::{Key, KeyCode},
     },
     output::Output,
@@ -15,13 +15,11 @@ use wend_core::{
 /// Applies `input` and hands the frames back the way a frontend does once they are drawn.
 /// Returns everything the editor sent.
 fn exchange(editor: &mut Editor, input: Input) -> Vec<Output> {
-    editor.apply(input).expect("the editor accepts the input");
+    editor.apply(input);
     let outputs: Vec<Output> = editor.drain_outputs().collect();
     for output in &outputs {
         if let Output::Frame(frame) = output {
-            editor
-                .apply(Input::Drawn(frame.clone()))
-                .expect("a drawn frame goes back into the pool");
+            editor.apply(Input::Drawn(frame.clone()));
         }
     }
     outputs
@@ -186,8 +184,12 @@ mod tests {
             .iter()
             .map(|cell| cell.grapheme.as_str_sanitize())
             .collect();
-        assert_eq!(last.trim_end(), "wend", "its text under the view");
-        assert_eq!(row_text(&frame, 2), "", "and the view's own rows above it");
+        assert_eq!(last.trim_end(), "nor", "the mode, under the scratch");
+        assert_eq!(
+            row_text(&frame, 2),
+            "",
+            "and the scratch's own rows above it"
+        );
     }
 
     #[test]
@@ -243,7 +245,7 @@ mod tests {
 
     /// Applies `input` and returns the frames it sent, the way a frontend sees them.
     fn send(editor: &mut Editor, input: Input) -> Vec<Frame> {
-        editor.apply(input).unwrap();
+        editor.apply(input);
         editor
             .drain_outputs()
             .filter_map(|output| match output {
@@ -333,11 +335,9 @@ mod tests {
     fn the_grammar_is_asked_for_once() {
         let mut editor =
             Editor::new(Area::new(20, 3), &Config::default()).expect("the wasm engine starts");
-        editor.apply(rust_file()).unwrap();
+        editor.apply(rust_file());
         for c in ['i', 'x', 'y'] {
-            editor
-                .apply(Input::Key(Key::new(KeyCode::Char(c))))
-                .unwrap();
+            editor.apply(Input::Key(Key::new(KeyCode::Char(c))));
         }
 
         let requests = editor
@@ -379,6 +379,12 @@ mod tests {
             frames[0].get(CellPosition::new(GUTTER, 0)).style.content,
             Content::Plain,
             "without a grammar it is plain text"
+        );
+        assert!(
+            editor
+                .message()
+                .is_some_and(|message| message.starts_with("syntax failed")),
+            "and the user is told why"
         );
         send(
             &mut editor,
@@ -463,5 +469,212 @@ mod tests {
         );
         let frame = press(&mut editor, "l");
         assert!(frame.cursor().is_some(), "the editor takes keys again");
+    }
+
+    /// Everything on the last row of `frame`, the status bar's, without the trailing blanks.
+    fn bottom_row(frame: &Frame) -> String {
+        let last = frame.area().rows - 1;
+        let text: String = frame
+            .row(last)
+            .iter()
+            .map(|cell| cell.grapheme.as_str_sanitize())
+            .collect();
+        text.trim_end().to_owned()
+    }
+
+    /// What is typed in the command line of `frame`, none when it isn't there.
+    fn typed_command(frame: &Frame) -> Option<String> {
+        (0..frame.area().rows).find_map(|row| {
+            let text: String = frame
+                .row(row)
+                .iter()
+                .map(|cell| cell.grapheme.as_str_sanitize())
+                .collect();
+            let (_, after) = text.split_once("│: ")?;
+            Some(after.split('│').next()?.trim_end().to_owned())
+        })
+    }
+
+    #[test]
+    fn a_command_runs_the_action_it_names_after_closing_the_command_line() {
+        let mut editor = editor("abc", 100, 20);
+        press(&mut editor, "l");
+
+        let frame = press(&mut editor, ":");
+        assert_eq!(
+            typed_command(&frame).as_deref(),
+            Some(""),
+            "the command line floats over the editor, empty"
+        );
+        assert_eq!(bottom_row(&frame), "nor", "and leaves the status bar alone");
+
+        let frame = press(&mut editor, "left\n");
+        assert_eq!(typed_command(&frame), None, "the command line is gone");
+        assert_eq!(
+            frame.cursor(),
+            Some(CellPosition::new(frame.cursor().unwrap().col, 0)),
+            "and the cursor is back in the text"
+        );
+    }
+
+    #[test]
+    fn a_command_moves_the_text_and_not_the_command_line() {
+        let mut editor = editor("abc", 100, 20);
+        let start = press(&mut editor, "l").cursor().unwrap();
+
+        let frame = press(&mut editor, ":left\n");
+
+        assert_eq!(
+            frame.cursor().unwrap().col + 1,
+            start.col,
+            "the cursor of the text went one left"
+        );
+    }
+
+    #[test]
+    fn a_command_that_names_nothing_says_so_in_the_status_bar() {
+        let mut editor = editor("abc", 100, 20);
+
+        let frame = press(&mut editor, ":xyz\n");
+
+        assert_eq!(bottom_row(&frame), "unknown action `xyz`");
+        let frame = press(&mut editor, "l");
+        assert_eq!(bottom_row(&frame), "nor", "the next key clears it");
+    }
+
+    #[test]
+    fn the_command_line_opens_in_insert_mode_and_escape_closes_it_from_normal_mode() {
+        let mut editor = editor("abc", 100, 20);
+
+        let frame = press(&mut editor, ":a");
+        assert_eq!(
+            typed_command(&frame).as_deref(),
+            Some("a"),
+            "it types at once"
+        );
+
+        let frame = press(&mut editor, "\u{1b}o");
+        assert_eq!(
+            typed_command(&frame).as_deref(),
+            Some("a"),
+            "o opens no second line"
+        );
+
+        let frame = press(&mut editor, "\u{1b}");
+        assert_eq!(
+            typed_command(&frame).as_deref(),
+            Some("a"),
+            "esc in insert mode only leaves it"
+        );
+        let frame = press(&mut editor, "\u{1b}");
+        assert_eq!(typed_command(&frame), None, "esc in normal mode closes it");
+    }
+
+    #[test]
+    fn the_command_line_keeps_its_box_in_a_small_terminal() {
+        let mut editor = editor("abc", 12, 3);
+
+        let frame = press(&mut editor, ":ab");
+
+        assert!(
+            frame.cursor().is_some(),
+            "the cursor is in the box, whatever room there is"
+        );
+    }
+
+    #[test]
+    fn a_save_that_has_nowhere_to_go_is_said_in_the_status_bar_and_the_editor_goes_on() {
+        let mut editor = Editor::new(Area::new(40, 4), &Config::default()).unwrap();
+
+        press(&mut editor, ":save\n");
+        let frame = last_frame(exchange(
+            &mut editor,
+            Input::Key(Key::new(KeyCode::Char('l'))),
+        ));
+        assert_eq!(bottom_row(&frame), "nor", "the next key clears it");
+
+        let frame = press(&mut editor, ":w\n");
+        assert_eq!(
+            bottom_row(&frame),
+            "the file shown has no path to save to",
+            "it is in the status bar"
+        );
+        let last = frame.area().rows - 1;
+        assert_eq!(
+            frame.get(CellPosition::new(0, last)).style.content,
+            Content::Error,
+            "in the style of an error"
+        );
+        let frame = press(&mut editor, "ia");
+        assert_eq!(row_text(&frame, 0), "a", "and the editor takes keys");
+    }
+
+    #[test]
+    fn what_the_frontend_failed_at_is_said_with_its_reason() {
+        let mut editor = Editor::new(Area::new(80, 4), &Config::default()).unwrap();
+        let failures = [
+            (
+                Failure::Read {
+                    path: Path::new("a.txt").into(),
+                    reason: "no such file".into(),
+                },
+                "failed to read a.txt: no such file",
+            ),
+            (
+                Failure::Write {
+                    path: Path::new("b.txt").into(),
+                    reason: "disk full".into(),
+                },
+                "failed to write b.txt: disk full",
+            ),
+        ];
+
+        for (failure, said) in failures {
+            let frame = last_frame(exchange(&mut editor, Input::Failed(failure)));
+
+            assert_eq!(bottom_row(&frame), said);
+            assert_eq!(editor.message(), Some(said));
+        }
+    }
+
+    #[test]
+    fn a_grammar_that_never_comes_may_be_asked_for_again() {
+        let mut editor = Editor::new(Area::new(40, 4), &Config::default()).unwrap();
+        let asks = |outputs: Vec<Output>| {
+            outputs
+                .iter()
+                .filter(|output| matches!(output, Output::Language(_)))
+                .count()
+        };
+        assert_eq!(asks(exchange(&mut editor, rust_file())), 1, "asked once");
+        assert_eq!(
+            asks(exchange(&mut editor, rust_file_named("b.rs"))),
+            0,
+            "and not again while it is awaited"
+        );
+
+        let outputs = exchange(
+            &mut editor,
+            Input::Failed(Failure::Language {
+                tag: LanguageTag::new("rust"),
+                reason: "not found".into(),
+            }),
+        );
+        assert_eq!(asks(outputs), 0);
+        assert_eq!(editor.message(), Some("no grammar for rust: not found"));
+
+        assert_eq!(
+            asks(exchange(&mut editor, rust_file_named("c.rs"))),
+            1,
+            "it isn't awaited any more, so a new file asks"
+        );
+    }
+
+    fn rust_file_named(name: &str) -> Input {
+        Input::File {
+            path: Path::new(name).into(),
+            bytes: b"fn main() {}".as_slice().into(),
+            language: Some(LanguageTag::new("rust")),
+        }
     }
 }

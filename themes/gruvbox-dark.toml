@@ -52,6 +52,11 @@ foreground = "#fabd2f"
 [border]
 foreground = "#7c6f64"
 
+# A message that says something went wrong, in the status bar.
+# Example: foreground = "#ea83a5", modifiers = ["bold"].
+[error]
+foreground = "#fb4934"
+
 # The selected text. Leave the foreground out and the text keeps its colors.
 # Example: background = "#3e3e43".
 [selection]

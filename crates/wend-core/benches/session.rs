@@ -17,10 +17,10 @@ use wend_core::{
     frame::{Area, Frame},
     input::{
         Input,
-        action::{Action, ViewAction},
+        action::{Action, TextBoxAction},
     },
     output::Output,
-    view::{Direction, Motion},
+    text_box::{Direction, Motion},
 };
 
 /// File sizes in bytes.
@@ -83,7 +83,7 @@ fn opened(text: &str) -> (Editor, Frame) {
         bytes: text.as_bytes().into(),
         language: None,
     };
-    editor.apply(file).expect("the text is valid");
+    editor.apply(file);
     let frame = editor
         .drain_outputs()
         .find_map(|output| match output {
@@ -96,10 +96,8 @@ fn opened(text: &str) -> (Editor, Frame) {
 }
 
 /// Does a view action without drawing, the draw is timed on its own.
-fn act(editor: &mut Editor, action: ViewAction) {
-    editor
-        .perform(&Action::View(action))
-        .expect("view actions don't fail");
+fn act(editor: &mut Editor, action: TextBoxAction) {
+    editor.perform(&Action::TextBox(action));
 }
 
 /// Updates the existing frame, reusing it between draws.
@@ -110,14 +108,14 @@ fn draw(editor: &mut Editor, frame: &mut Frame) {
 
 fn press(editor: &mut Editor, frame: &mut Frame, motion: Motion, times: usize) {
     for _ in 0..times {
-        act(editor, ViewAction::Motion(motion));
+        act(editor, TextBoxAction::Motion(motion));
         draw(editor, frame);
     }
 }
 
 fn type_text(editor: &mut Editor, frame: &mut Frame) {
     for c in TYPED.chars() {
-        act(editor, ViewAction::Insert(c));
+        act(editor, TextBoxAction::Insert(c));
         draw(editor, frame);
     }
 }
@@ -260,12 +258,12 @@ fn type_and_delete(criterion: &mut Criterion) {
     let run = TYPED.len() as u64;
 
     phase(criterion, "type", run, nothing, |editor, frame| {
-        act(editor, ViewAction::Insert('x'));
+        act(editor, TextBoxAction::Insert('x'));
         draw(editor, frame);
     });
 
     phase(criterion, "delete", run, type_text, |editor, frame| {
-        act(editor, ViewAction::Delete);
+        act(editor, TextBoxAction::Delete);
         draw(editor, frame);
     });
 }
@@ -276,9 +274,9 @@ fn revert(criterion: &mut Criterion) {
         criterion,
         "revert",
         1,
-        |editor, _frame| act(editor, ViewAction::Insert('x')),
+        |editor, _frame| act(editor, TextBoxAction::Insert('x')),
         |editor, frame| {
-            act(editor, ViewAction::Revert);
+            act(editor, TextBoxAction::Revert);
             draw(editor, frame);
         },
     );

@@ -1,8 +1,8 @@
 use std::ops;
 
-use super::{Glyph, View};
+use super::{Glyph, TextBox};
 
-impl View {
+impl TextBox {
     /// Returns the glyph holding `byte`, none if it is off screen or the wrap is out of date.
     fn glyph_on_screen(&self, byte: usize) -> Option<Glyph> {
         if self.wrap_dirty {

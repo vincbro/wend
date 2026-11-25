@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7494416db03d5b6740049e4fba4e7140cf3e77f3331cb186d10520c72b4decaa # shrinks to start = Rect { col: 0, row: 0, area: Area { cols: 0, rows: 0 } }, initial = "", line_limit = Some(1), calls = [OpenBuffer("é")]

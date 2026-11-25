@@ -25,6 +25,8 @@ pub enum Content {
     Marker,
     /// The lines around a floating pane.
     Border,
+    /// A message that says something went wrong.
+    Error,
 }
 
 #[cfg(test)]

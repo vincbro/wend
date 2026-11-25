@@ -15,7 +15,7 @@ use crossterm::{event, terminal};
 use wend_core::{
     editor::Editor,
     frame::{Area, Frame},
-    input::Input,
+    input::{Failure, Input},
     output,
     syntax::LanguageTag,
 };
@@ -72,7 +72,8 @@ fn main() -> Result<()> {
 
     let editor_thread = thread::spawn(move || -> Result<()> {
         for input in input_rx {
-            editor.apply(input).context("the editor failed")?;
+            // A failed input is the editor's to say in its status bar, it never ends it
+            editor.apply(input);
             for output in editor.drain_outputs() {
                 output_tx.send(output).context("the screen stopped")?;
             }
@@ -120,19 +121,13 @@ fn main() -> Result<()> {
                 }
             }
             output::Output::Quit => break,
-            output::Output::Write { path, rope } => write_file(&path, rope.chunks())
-                .with_context(|| format!("failed to save {}", path.display()))?,
+            output::Output::Write { path, rope } => {
+                if let Some(failed) = write(path, rope.chunks()) {
+                    input_tx.send(failed).context("the editor stopped")?;
+                }
+            }
             output::Output::Read { path } => {
-                let bytes = fs::read(&path)
-                    .with_context(|| format!("failed to read {}", path.display()))?
-                    .into_boxed_slice();
-                input_tx
-                    .send(Input::File {
-                        path,
-                        bytes,
-                        language: Some(LanguageTag::new("rust")),
-                    })
-                    .context("the editor stopped")?;
+                input_tx.send(read(path)).context("the editor stopped")?;
             }
             output::Output::Language(tag) => input_tx
                 .send(Input::Language {
@@ -161,6 +156,32 @@ fn print(text: &str) -> Result<()> {
         .lock()
         .write_all(text.as_bytes())
         .context("failed to write to stdout")
+}
+
+/// Reads the file the editor asked for, as the input that answers it. A file that can't be read
+/// is the user's to hear about, so it answers with the failure and the editor goes on.
+fn read(path: Box<Path>) -> Input {
+    match fs::read(&path) {
+        Ok(bytes) => Input::File {
+            path,
+            bytes: bytes.into_boxed_slice(),
+            language: Some(LanguageTag::new("rust")),
+        },
+        Err(error) => Input::Failed(Failure::Read {
+            path,
+            reason: error.to_string().into(),
+        }),
+    }
+}
+
+/// Writes the text the editor asked for, and returns the failure when it can't, to tell the
+/// editor.
+fn write<'a>(path: Box<Path>, chunks: impl Iterator<Item = &'a str>) -> Option<Input> {
+    let error = write_file(&path, chunks).err()?;
+    Some(Input::Failed(Failure::Write {
+        path,
+        reason: error.to_string().into(),
+    }))
 }
 
 /// Writes the text chunk by chunk, so it is never copied into one string first.

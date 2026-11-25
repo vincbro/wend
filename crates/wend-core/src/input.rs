@@ -8,6 +8,8 @@ use crate::{
 };
 
 pub mod action;
+mod failure;
+pub use failure::Failure;
 pub mod key;
 mod mode;
 pub use mode::Mode;
@@ -37,4 +39,7 @@ pub enum Input {
     /// A new config, read by the frontend from wherever it is kept, to replace the one the
     /// editor has.
     Config(Box<Config>),
+    /// Something the frontend was asked to do and could not. The editor says so in the status bar
+    /// and goes on, and a frontend reports every failure this way, not by exiting.
+    Failed(Failure),
 }

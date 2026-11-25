@@ -59,12 +59,12 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate::{
-        config::Config,
+        config::{Config, Target},
         input::{
-            action::{EditorAction, ViewAction},
+            action::TextBoxAction,
             key::{KeyCode, Modifiers},
         },
-        view::{Direction, Motion},
+        text_box::{Direction, Motion},
     };
 
     fn key(character: char) -> Key {
@@ -72,7 +72,7 @@ mod tests {
     }
 
     fn default_keymap() -> Keymap {
-        Keymap::new(Config::default().keys.trees().unwrap())
+        Keymap::new(Config::default().keys.trees(Target::TextBox).unwrap())
     }
 
     fn actions<'a>(keymap: &'a Keymap, mode: Mode, keys: &[Key]) -> &'a [Action] {
@@ -87,11 +87,11 @@ mod tests {
         let keymap = default_keymap();
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('v')]),
-            [Action::View(ViewAction::Mode(Mode::Select))]
+            [Action::TextBox(TextBoxAction::Mode(Mode::Select))]
         ));
         assert!(matches!(
             actions(&keymap, Mode::Select, &[key('v')]),
-            [Action::View(ViewAction::Mode(Mode::Normal))]
+            [Action::TextBox(TextBoxAction::Mode(Mode::Normal))]
         ));
     }
 
@@ -104,7 +104,7 @@ mod tests {
         ));
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('g'), key('e')]),
-            [Action::View(ViewAction::Motion(Motion::File(
+            [Action::TextBox(TextBoxAction::Motion(Motion::File(
                 Direction::Forward
             )))]
         ));
@@ -116,8 +116,8 @@ mod tests {
         assert!(matches!(
             actions(&keymap, Mode::Normal, &[key('o')]),
             [
-                Action::View(ViewAction::OpenLine),
-                Action::View(ViewAction::Mode(Mode::Insert))
+                Action::TextBox(TextBoxAction::OpenLine),
+                Action::TextBox(TextBoxAction::Mode(Mode::Insert))
             ]
         ));
     }
@@ -128,16 +128,18 @@ mod tests {
         assert!(keymap.press(Mode::Normal, key('g')).is_empty(), "g waits");
         assert!(matches!(
             keymap.press(Mode::Normal, key('s'))[..],
-            [Action::View(ViewAction::Motion(Motion::File(
+            [Action::TextBox(TextBoxAction::Motion(Motion::File(
                 Direction::Backward
             )))]
         ));
         assert!(
             matches!(
-                keymap.press(Mode::Normal, key('q'))[..],
-                [Action::Editor(EditorAction::Quit)]
+                keymap.press(Mode::Normal, key('h'))[..],
+                [Action::TextBox(TextBoxAction::Motion(Motion::Horizontal(
+                    Direction::Backward
+                )))]
             ),
-            "the finished combo is gone, q starts fresh"
+            "the finished combo is gone, h starts fresh"
         );
     }
 
@@ -151,10 +153,12 @@ mod tests {
         );
         assert!(
             matches!(
-                keymap.press(Mode::Normal, key('q'))[..],
-                [Action::Editor(EditorAction::Quit)]
+                keymap.press(Mode::Normal, key('h'))[..],
+                [Action::TextBox(TextBoxAction::Motion(Motion::Horizontal(
+                    Direction::Backward
+                )))]
             ),
-            "q isn't read as g q"
+            "h isn't read as g h"
         );
     }
 
@@ -165,7 +169,7 @@ mod tests {
         assert!(
             matches!(
                 keymap.press(Mode::Insert, key('s'))[..],
-                [Action::View(ViewAction::InsertTyped)]
+                [Action::TextBox(TextBoxAction::InsertTyped)]
             ),
             "s types instead of finishing g s"
         );
@@ -176,7 +180,7 @@ mod tests {
         let mut keymap = default_keymap();
         assert!(matches!(
             keymap.press(Mode::Insert, key('h'))[..],
-            [Action::View(ViewAction::InsertTyped)]
+            [Action::TextBox(TextBoxAction::InsertTyped)]
         ));
         let control_h = Key {
             code: KeyCode::Char('h'),
@@ -206,7 +210,7 @@ mod tests {
         assert!(
             matches!(
                 keymap.trees.get(Mode::Insert).get(&[key('h')]),
-                Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::View(ViewAction::InsertTyped)])
+                Some(KeyTree::Leaf(actions)) if matches!(actions[..], [Action::TextBox(TextBoxAction::InsertTyped)])
             ),
             "the config types it"
         );

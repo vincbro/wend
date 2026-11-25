@@ -10,5 +10,6 @@ pub mod input;
 pub mod layout;
 mod number;
 pub mod output;
+pub mod scratch;
 pub mod syntax;
-pub mod view;
+pub mod text_box;

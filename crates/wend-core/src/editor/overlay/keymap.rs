@@ -70,6 +70,6 @@ mod tests {
 
     #[test]
     fn a_key_nothing_binds_does_nothing() {
-        assert_eq!(keymap().press(Key::new(KeyCode::Char('i'))), []);
+        assert_eq!(keymap().press(Key::new(KeyCode::Char('z'))), []);
     }
 }

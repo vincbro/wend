@@ -9,7 +9,7 @@ use crate::{frame::Grapheme, number};
 /// `buffer` refuses text too long for a `u32` byte offset, and a glyph is never wider than
 /// a `u8` of columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub(in crate::view) struct Glyph {
+pub(in crate::text_box) struct Glyph {
     from_byte: u32,
     to_byte: u32,
     tails: u8,
@@ -18,7 +18,7 @@ pub(in crate::view) struct Glyph {
 
 impl Glyph {
     #[must_use]
-    pub(in crate::view) fn new(
+    pub(in crate::text_box) fn new(
         from_byte: usize,
         to_byte: usize,
         tails: usize,
@@ -34,48 +34,48 @@ impl Glyph {
     }
 
     #[must_use]
-    pub(in crate::view) fn start(self) -> usize {
+    pub(in crate::text_box) fn start(self) -> usize {
         number::exact(self.from_byte)
     }
 
     #[must_use]
-    pub(in crate::view) fn end(self) -> usize {
+    pub(in crate::text_box) fn end(self) -> usize {
         number::exact(self.to_byte)
     }
 
     #[must_use]
-    pub(in crate::view) fn tails(self) -> usize {
+    pub(in crate::text_box) fn tails(self) -> usize {
         usize::from(self.tails)
     }
 
     #[must_use]
-    pub(in crate::view) fn grapheme(self) -> Grapheme {
+    pub(in crate::text_box) fn grapheme(self) -> Grapheme {
         self.grapheme
     }
 
     #[must_use]
-    pub(in crate::view) fn to_range(self) -> ops::Range<usize> {
+    pub(in crate::text_box) fn to_range(self) -> ops::Range<usize> {
         self.start()..self.end()
     }
 }
 
 /// Locates a slot in a view's wrap, relative to the view, not the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::view) struct SlotPosition {
+pub(in crate::text_box) struct SlotPosition {
     pub col: usize,
     pub row: usize,
 }
 
 impl SlotPosition {
     #[must_use]
-    pub(in crate::view) fn new(col: usize, row: usize) -> Self {
+    pub(in crate::text_box) fn new(col: usize, row: usize) -> Self {
         Self { col, row }
     }
 }
 
 /// Says what one cell of the wrap holds.
 #[derive(Debug, Clone, Copy)]
-pub(in crate::view) enum Slot {
+pub(in crate::text_box) enum Slot {
     Glyph(Glyph),
     /// Fills the rest of a glyph wider than one slot. Holds the index of the glyph's own slot.
     Tail(usize),
@@ -87,21 +87,21 @@ pub(in crate::view) enum Slot {
 /// Marks the top of a view: the first line on screen and how many of its wrapped rows are
 /// scrolled past, so the view can start partway through a line that wraps.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(in crate::view) struct ScrollOffset {
+pub(in crate::text_box) struct ScrollOffset {
     pub line: usize,
     pub row: usize,
 }
 
 impl ScrollOffset {
     #[must_use]
-    pub(in crate::view) fn new(line: usize, row: usize) -> Self {
+    pub(in crate::text_box) fn new(line: usize, row: usize) -> Self {
         Self { line, row }
     }
 }
 
 /// Pairs a row of slots with its metadata.
 #[derive(Debug, Clone, Copy)]
-pub(in crate::view) struct Row<'a> {
+pub(in crate::text_box) struct Row<'a> {
     pub metadata: RowMetadata,
     pub slots: &'a [Slot],
 }
@@ -109,7 +109,7 @@ pub(in crate::view) struct Row<'a> {
 /// Describes what a row shows. The byte range and `len` stop at its last used slot, so the
 /// gap left by a wide glyph that wrapped isn't part of the row.
 #[derive(Debug, Clone, Copy)]
-pub(in crate::view) struct RowMetadata {
+pub(in crate::text_box) struct RowMetadata {
     pub line: usize,
     pub from_byte: usize,
     pub to_byte: usize,

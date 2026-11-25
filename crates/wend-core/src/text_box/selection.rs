@@ -3,7 +3,7 @@ use crate::buffer::Change;
 /// Selects between two graphemes, both ends included. A cursor is a selection whose
 /// anchor and head are the same grapheme.
 ///
-/// Both ends are byte offsets where a grapheme starts. `View::set_selection` is what keeps
+/// Both ends are byte offsets where a grapheme starts. `TextBox::set_selection` is what keeps
 /// them on grapheme starts, a `Selection` on its own doesn't know about the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {

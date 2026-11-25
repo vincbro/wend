@@ -1,12 +1,12 @@
 use std::num::NonZeroUsize;
 
-use crate::{buffer::Buffer, frame::Area, view::Direction};
+use crate::{buffer::Buffer, frame::Area, text_box::Direction};
 
 mod build;
 mod slot;
 pub(super) use slot::{Glyph, Row, RowMetadata, ScrollOffset, Slot, SlotPosition};
 
-/// Holds the grid of slots a view's text is laid out on, rebuilt whenever the buffer, the
+/// Holds the grid of slots a text box's text is laid out on, rebuilt whenever the buffer, the
 /// area or the scroll changes.
 ///
 /// `slots` always holds `area.len()` slots row by row, and `row_metadata` one entry per row,

@@ -1,15 +1,14 @@
-use std::{mem, sync::Arc};
+use std::{mem, num::NonZeroUsize, sync::Arc};
 
 use crate::{
     buffer::Buffer,
-    config::{Config, LineNumbers},
+    config::{Config, Target},
     frame::{Area, CellPosition, Rect},
     input::{
         Mode,
-        action::{Action, EditorAction, ViewAction},
+        action::{Action, TextBoxAction},
         key::Key,
     },
-    layout::{Fit, Layout, Size},
     number,
     syntax::{Grammar, Highlight, LanguageTag, Loader},
 };
@@ -29,15 +28,19 @@ mod render;
 mod scroll;
 mod selection;
 pub use selection::Selection;
-mod gutter;
-use gutter::Gutter;
 mod keymap;
 use keymap::Keymap;
 #[cfg(test)]
 pub(crate) mod fuzz;
 
-/// The columns of text the wrap is wide at most, until each language has its own.
-const MAX_TEXT_WIDTH: u16 = 100;
+/// Returns how many lines `rope` shows, which is one more than its line breaks.
+fn visible_lines(rope: &crop::Rope) -> usize {
+    let ends_in_break = rope
+        .byte_len()
+        .checked_sub(1)
+        .is_some_and(|last| rope.byte(last) == b'\n');
+    rope.line_len().max(1) + usize::from(ends_in_break)
+}
 
 /// Decides what a selection change does to the column up and down aim for.
 #[derive(Debug, Clone, Copy)]
@@ -48,15 +51,14 @@ enum ColumnPolicy {
     Sync,
 }
 
-/// Shows a buffer in a rectangle of the frame, with a selection.
+/// Shows a buffer in a rectangle of the frame, with a selection, and fills all of it with text.
 ///
 /// After every public call both ends of the selection sit on grapheme starts, the head
 /// is on screen and `desired_col` is inside the width. `check_invariants` checks them.
 #[derive(Debug, Clone)]
-pub struct View {
+pub struct TextBox {
     buffer: Buffer,
     rect: Rect,
-    gutter: Gutter,
     wrap: Wrap,
     wrap_dirty: bool,
     /// Scratch space for `Wrap::last_row_of_line`, kept so that its memory is reused.
@@ -68,23 +70,25 @@ pub struct View {
     word_scratch: Vec<(usize, WordClass)>,
 
     scroll_margin: usize,
-    line_numbers: LineNumbers,
     desired_col: usize,
 
+    /// The most lines the text has, none for a text box that holds a whole buffer.
+    line_limit: Option<NonZeroUsize>,
+
     mode: Mode,
-    /// The key trees and the combo being typed, so each view answers to its own keys.
+    /// Who the keys are for, kept to build them again when the config changes.
+    target: Target,
+    /// The key trees and the combo being typed, so each text box answers to its own keys.
     keymap: Keymap,
     /// Scratch space for `key_press`, kept so that its memory is reused.
     pressed: Vec<Action>,
 }
 
-impl View {
-    /// Fails when the keys of `config` can't make key trees.
-    pub fn new(rect: Rect, config: &Config) -> Result<Self> {
+impl TextBox {
+    /// Fails when the keys of `config` for `target` can't make key trees.
+    pub fn new(rect: Rect, config: &Config, target: Target) -> Result<Self> {
         let buffer = Buffer::new();
-        let line_numbers = config.line_numbers;
-        Ok(Self {
-            gutter: Self::gutter_for(&buffer, rect, line_numbers),
+        let mut text_box = Self {
             buffer,
             rect,
             wrap: Wrap::new(rect.area, ScrollOffset::default(), config.text.tab_width),
@@ -99,13 +103,18 @@ impl View {
             word_scratch: vec![],
 
             scroll_margin: config.scroll.margin,
-            line_numbers,
             desired_col: 0,
 
+            line_limit: None,
+
             mode: Mode::Normal,
-            keymap: Keymap::new(config.keys.trees()?),
+            target,
+            keymap: Keymap::new(config.keys.trees(target)?),
             pressed: vec![],
-        })
+        };
+        // `resize` does nothing for the rect the text box already has
+        text_box.refresh_wrap();
+        Ok(text_box)
     }
 
     #[must_use]
@@ -117,23 +126,23 @@ impl View {
         self.mode = mode;
     }
 
-    /// Feeds `key` to the view's keys and runs the actions of the view's own group. The
-    /// editor's are added to `requests` for it to run, which this clears first.
-    pub fn key_press(&mut self, key: Key, requests: &mut Vec<EditorAction>) {
+    /// Feeds `key` to the text box's keys and runs the actions of the text box's own group. The
+    /// others are added to `requests` for their owners to run, which this clears first.
+    pub fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) {
         requests.clear();
         // The keymap stays borrowed while it is read, so the actions are copied out first, and
-        // taken out of the view so it can run them
+        // taken out of the text box so it can run them
         self.pressed.clear();
         self.pressed
             .extend_from_slice(self.keymap.press(self.mode, key));
         let pressed = mem::take(&mut self.pressed);
         for action in &pressed {
             match action {
-                Action::View(ViewAction::InsertTyped) => self.insert_typed(key),
-                Action::View(action) => self.perform(*action),
-                Action::Editor(action) => requests.push(action.clone()),
-                // `Scope::View` doesn't name them, so a view's keys can't bind one
-                Action::Overlay(_) => {}
+                Action::TextBox(TextBoxAction::InsertTyped) => self.insert_typed(key),
+                Action::TextBox(action) => self.perform(*action),
+                Action::Editor(_) | Action::Scratch(_) | Action::Overlay(_) => {
+                    requests.push(action.clone());
+                }
             }
         }
         self.pressed = pressed;
@@ -147,21 +156,21 @@ impl View {
     }
 
     /// Does what `action` says to the text, the selection or the mode.
-    pub fn perform(&mut self, action: ViewAction) {
+    pub fn perform(&mut self, action: TextBoxAction) {
         match action {
-            ViewAction::Motion(motion) => {
+            TextBoxAction::Motion(motion) => {
                 self.move_selection(motion, matches!(self.mode, Mode::Select));
             }
-            ViewAction::Mode(mode) => self.mode = mode,
-            ViewAction::CollapseSelection => self.collapse_selection(),
-            ViewAction::Insert(c) => self.insert(c),
+            TextBoxAction::Mode(mode) => self.mode = mode,
+            TextBoxAction::CollapseSelection => self.collapse_selection(),
+            TextBoxAction::Insert(c) => self.insert(c),
             // Needs the key that ran it, which only `key_press` has
-            ViewAction::InsertTyped => {}
-            ViewAction::Delete => self.delete(),
-            ViewAction::DeleteSelection => self.delete_selection(),
-            ViewAction::SelectRow => self.select_row(),
-            ViewAction::OpenLine => self.new_line(),
-            ViewAction::Revert => self.revert(),
+            TextBoxAction::InsertTyped => {}
+            TextBoxAction::Delete => self.delete(),
+            TextBoxAction::DeleteSelection => self.delete_selection(),
+            TextBoxAction::SelectRow => self.select_row(),
+            TextBoxAction::OpenLine => self.new_line(),
+            TextBoxAction::Revert => self.revert(),
         }
     }
 
@@ -190,10 +199,20 @@ impl View {
         result
     }
 
+    /// Limits the text to `limit` lines, from now on. What is there past it is cut off.
+    pub fn limit_lines(&mut self, limit: NonZeroUsize) {
+        self.line_limit = Some(limit);
+        self.clip_to_line_limit();
+        self.wrap_dirty = true;
+        self.set_selection(self.selection, ColumnPolicy::Sync);
+        self.check_invariants();
+    }
+
     /// Takes in the file's new contents. The selection keeps its bytes as far as the new
     /// text reaches, the same way a revert does.
     pub fn update(&mut self, bytes: &[u8]) -> Result<()> {
         self.buffer.update(bytes)?;
+        self.clip_to_line_limit();
         self.wrap_dirty = true;
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
@@ -229,7 +248,7 @@ impl View {
     pub fn cursor_position(&mut self) -> Option<CellPosition> {
         self.ensure_cursor_visible();
         let pos = self.head_position()?;
-        Some(Self::cell_position(self.text_rect(), pos))
+        Some(Self::cell_position(self.rect, pos))
     }
 
     /// Returns the slot the head is in, none if it is off screen.
@@ -266,11 +285,10 @@ impl View {
     }
 
     /// Follows the scroll, text and line number settings and the keys of `config` from the
-    /// next frame on. A config that fails leaves the view as it was.
+    /// next frame on. A config that fails leaves the text box as it was.
     pub fn set_config(&mut self, config: &Config) -> Result<()> {
-        self.keymap = Keymap::new(config.keys.trees()?);
+        self.keymap = Keymap::new(config.keys.trees(self.target)?);
         self.scroll_margin = config.scroll.margin;
-        self.line_numbers = config.line_numbers;
         self.wrap.set_tab_width(config.text.tab_width);
         self.line_probe.set_tab_width(config.text.tab_width);
         self.wrap_dirty = true;
@@ -279,61 +297,44 @@ impl View {
         Ok(())
     }
 
-    /// Moves the view to `rect`, which changes nothing when it is already there.
+    /// Moves the text box to `rect`, which changes nothing when it is already there.
     pub fn resize(&mut self, rect: Rect) {
         if self.rect == rect {
             return;
         }
         self.rect = rect;
-        self.gutter = Self::gutter_for(&self.buffer, rect, self.line_numbers);
         self.desired_col = self
             .desired_col
-            .min(self.text_rect().area.width().saturating_sub(1));
+            .min(self.rect.area.width().saturating_sub(1));
         self.wrap_dirty = true;
         self.set_selection(self.selection, ColumnPolicy::Keep);
         self.check_invariants();
     }
 
-    /// Returns the gutter `buffer` needs in a view at `rect`.
-    fn gutter_for(buffer: &Buffer, rect: Rect, line_numbers: LineNumbers) -> Gutter {
-        Gutter::new(
-            Self::largest_number(buffer, rect.area.height()),
-            rect.area.cols,
-            line_numbers,
-        )
+    /// Returns how many rows from the top hold text, the rest are below the end of the buffer.
+    #[must_use]
+    pub(crate) fn rows_with_text(&self) -> usize {
+        self.wrap.last_row().map_or(0, |row| row + 1)
     }
 
-    /// Returns the largest number a gutter next to `buffer` shows in a view `rows` tall.
-    fn largest_number(buffer: &Buffer, rows: usize) -> usize {
-        // The cursor can sit on the empty line after a final line break, which the rope does
-        // not count, so the last line number is one more
-        let line_count = buffer.rope().line_len() + 1;
-        line_count.max(rows)
+    /// Returns the screen row the head is on and the line it is in, none if it is off screen.
+    #[must_use]
+    pub(crate) fn head_row_and_line(&self) -> Option<(usize, usize)> {
+        let slot = self.head_position()?;
+        let metadata = self.wrap.row_metadata(slot.row)?;
+        Some((slot.row, metadata.line))
     }
 
-    /// Returns the rectangle of the frame the view is in.
+    /// Returns the rectangle of the frame the text box is in.
     #[must_use]
     pub(crate) fn rect(&self) -> Rect {
         self.rect
     }
 
-    /// Returns the part of the view the gutter and the text take: the gutter and a full width
-    /// of text, centered in the view, or all of the view when that is narrower.
-    fn block(&self) -> Rect {
-        let width = self.gutter.width() + MAX_TEXT_WIDTH;
-        Layout::Fit(Fit::centered(Size::Fixed(width), Size::Fill))
-            .place(self.rect, self.rect)
-            .0
-    }
-
-    /// Returns the part of the view the text is laid out in, to the right of the gutter.
-    fn text_rect(&self) -> Rect {
-        self.gutter.split(self.block()).1
-    }
-
     /// Shows `new_buffer` from its start and returns the buffer shown until now.
     pub fn open_buffer(&mut self, mut new_buffer: Buffer) -> Buffer {
         mem::swap(&mut new_buffer, &mut self.buffer);
+        self.clip_to_line_limit();
         // The old selection and scroll are byte and line offsets into the old buffer
         self.desired_col = 0;
         self.rebuild_at(ScrollOffset::default());
@@ -341,7 +342,7 @@ impl View {
         new_buffer
     }
 
-    /// Checks the rules every public function has to leave the view in, and the ones of the
+    /// Checks the rules every public function has to leave the text box in, and the ones of the
     /// buffer and the wraps it holds. Debug builds only.
     pub(crate) fn check_invariants(&self) {
         if !cfg!(debug_assertions) {
@@ -349,6 +350,11 @@ impl View {
         }
 
         self.buffer.check_invariants();
+        assert!(
+            self.line_limit
+                .is_none_or(|limit| visible_lines(self.buffer.rope()) <= limit.get()),
+            "edits, new buffers and reverts are cut to the line limit"
+        );
         self.wrap.check_invariants();
         self.line_probe.check_invariants();
 
@@ -360,7 +366,7 @@ impl View {
             );
         }
 
-        if self.text_rect().area.is_empty() {
+        if self.rect.area.is_empty() {
             return;
         }
         assert!(
@@ -368,7 +374,7 @@ impl View {
             "ensure_cursor_visible rebuilds the wrap and scrolls the head on screen"
         );
         assert!(
-            self.desired_col < self.text_rect().area.width(),
+            self.desired_col < self.rect.area.width(),
             "resize and rebuild_at clamp desired_col to the text width, got {}",
             self.desired_col
         );
@@ -384,51 +390,35 @@ pub(crate) mod tests {
         syntax::{self, LanguageTag},
     };
 
-    /// A view whose text is `cols` columns wide, with the gutter on top of that.
-    pub(crate) fn view(text: &str, cols: u16, rows: u16) -> View {
-        // Wide enough that the gutter takes what it wants, whatever `cols` is
-        let mut view = View::new(
-            Rect::new(0, 0, Area::new(cols + 100, rows)),
+    /// A text box `cols` columns wide and `rows` tall that shows `text`.
+    pub(crate) fn text_box(text: &str, cols: u16, rows: u16) -> TextBox {
+        let mut text_box = TextBox::new(
+            Rect::new(0, 0, Area::new(cols, rows)),
             &Config::default(),
+            Target::TextBox,
         )
         .unwrap();
-        view.open_buffer(Buffer::from(text));
-        let gutter = gutter_width(&view);
-        view.resize(Rect::new(0, 0, Area::new(cols + gutter, rows)));
-        view.refresh_wrap();
-        view
+        text_box.open_buffer(Buffer::from(text));
+        text_box.refresh_wrap();
+        text_box
     }
 
-    /// Renders the view into a frame that is exactly as big as the view.
-    fn rendered(view: &mut View) -> Frame {
-        let mut frame = Frame::new(view.rect.area, None);
-        let rect = view.rect;
-        view.render(rect, &mut Canvas::root(&mut frame));
+    /// Renders the text box into a frame that is exactly as big as it is.
+    fn rendered(text_box: &mut TextBox) -> Frame {
+        let mut frame = Frame::new(text_box.rect.area, None);
+        let rect = text_box.rect;
+        text_box.render(rect, &mut Canvas::root(&mut frame));
         frame
-    }
-
-    /// How many columns the view's gutter takes.
-    fn gutter_width(view: &View) -> u16 {
-        view.gutter.split(view.rect).0.area.cols
-    }
-
-    /// What the gutter shows on `row` of `frame`.
-    fn gutter_text(view: &View, frame: &Frame, row: u16) -> String {
-        frame.row(row)[..usize::from(gutter_width(view))]
-            .iter()
-            .map(|cell| cell.grapheme.as_str_sanitize())
-            .collect()
     }
 
     #[test]
     fn the_selection_and_the_cursor_are_layers_over_the_text() {
-        let mut view = view("abcdef", 20, 2);
-        view.set_selection(Selection::new(0, 2), ColumnPolicy::Sync);
+        let mut text_box = text_box("abcdef", 20, 2);
+        text_box.set_selection(Selection::new(0, 2), ColumnPolicy::Sync);
 
-        let frame = rendered(&mut view);
+        let frame = rendered(&mut text_box);
 
-        let gutter = gutter_width(&view);
-        let style = |col: u16| frame.get(CellPosition::new(gutter + col, 0)).style;
+        let style = |col: u16| frame.get(CellPosition::new(col, 0)).style;
         assert!(style(0).selected && !style(0).cursor, "the a is selected");
         assert!(style(2).selected && style(2).cursor, "the head is both");
         assert!(!style(3).selected && !style(3).cursor, "the d is neither");
@@ -436,9 +426,9 @@ pub(crate) mod tests {
 
     #[test]
     fn a_wrapped_row_ends_in_a_marker() {
-        let mut view = view("aaaaaaaa", 4, 3);
+        let mut text_box = text_box("aaaaaaaa", 4, 3);
 
-        let frame = rendered(&mut view);
+        let frame = rendered(&mut text_box);
 
         let markers: Vec<_> = frame
             .iter()
@@ -449,69 +439,62 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_config_sets_the_tab_width_and_the_gutter() {
-        let mut view = view("\tx", 20, 5);
-        view.set_selection(Selection::point(1), ColumnPolicy::Sync);
-        view.ensure_cursor_visible();
-        assert_eq!(view.head_position().unwrap().col, 4, "a tab is 4 wide");
-        let gutter = view.gutter.split(view.rect).0.area.cols;
+    fn a_config_sets_the_tab_width() {
+        let mut text_box = text_box("\tx", 20, 5);
+        text_box.set_selection(Selection::point(1), ColumnPolicy::Sync);
+        text_box.ensure_cursor_visible();
+        assert_eq!(text_box.head_position().unwrap().col, 4, "a tab is 4 wide");
 
         let mut config = Config::default();
         config.text.tab_width = 2.try_into().unwrap();
-        config.line_numbers.min_digits = 5;
-        view.set_config(&config).unwrap();
-        view.ensure_cursor_visible();
-        assert_eq!(view.head_position().unwrap().col, 2, "a tab is 2 wide");
-        assert_eq!(
-            view.gutter.split(view.rect).0.area.cols,
-            gutter + 2,
-            "the numbers make room for two more digits"
-        );
+        text_box.set_config(&config).unwrap();
+        text_box.ensure_cursor_visible();
+        assert_eq!(text_box.head_position().unwrap().col, 2, "a tab is 2 wide");
     }
 
     #[test]
     fn collapse_selection_keeps_the_head() {
-        let mut view = view("hello world", 20, 5);
-        view.set_selection(Selection::new(0, 4), ColumnPolicy::Sync);
-        view.collapse_selection();
-        assert_eq!(view.selection, Selection::point(4), "the head stays");
+        let mut text_box = text_box("hello world", 20, 5);
+        text_box.set_selection(Selection::new(0, 4), ColumnPolicy::Sync);
+        text_box.collapse_selection();
+        assert_eq!(text_box.selection, Selection::point(4), "the head stays");
     }
 
     #[test]
     fn set_selection_snaps_and_clamps() {
         // é is bytes 1..3
-        let mut view = view("aé b", 20, 5);
-        view.set_selection(Selection::point(2), ColumnPolicy::Sync);
+        let mut text_box = text_box("aé b", 20, 5);
+        text_box.set_selection(Selection::point(2), ColumnPolicy::Sync);
         assert_eq!(
-            view.selection,
+            text_box.selection,
             Selection::point(1),
             "snaps into the grapheme start"
         );
 
-        view.set_selection(Selection::new(2, 100), ColumnPolicy::Sync);
+        text_box.set_selection(Selection::new(2, 100), ColumnPolicy::Sync);
         assert_eq!(
-            view.selection,
+            text_box.selection,
             Selection::new(1, 5),
             "clamps to the end of the buffer"
         );
-        view.check_invariants();
+        text_box.check_invariants();
     }
 
     #[test]
     fn grapheme_bounds_from_the_wrap_match_the_rope() {
         // Combining marks, wide glyphs, tabs, CRLF and wrapped rows, most of it off screen
         let text = "e\u{301}a漢\t🦀\r\nb a line long enough to wrap\n\n".repeat(4);
-        let view = view(&text, 8, 6);
+        let text_box = text_box(&text, 8, 6);
         for byte in 0..=text.len() + 1 {
-            let start = view.grapheme_start(byte);
+            let start = text_box.grapheme_start(byte);
             assert_eq!(
                 start,
-                view.rope_grapheme_start(byte),
+                text_box.rope_grapheme_start(byte),
                 "start of byte {byte}"
             );
             assert_eq!(
-                view.grapheme_end(start),
-                view.rope_grapheme_end(start),
+                text_box.grapheme_end(start),
+                text_box.rope_grapheme_end(start),
                 "end of the grapheme starting at {start}"
             );
         }
@@ -519,13 +502,13 @@ pub(crate) mod tests {
 
     #[test]
     fn update_to_shorter_text_keeps_the_selection_inside() {
-        let mut view = view("hello world", 20, 5);
-        view.set_selection(Selection::new(6, 10), ColumnPolicy::Sync);
-        view.update(b"hi").unwrap();
+        let mut text_box = text_box("hello world", 20, 5);
+        text_box.set_selection(Selection::new(6, 10), ColumnPolicy::Sync);
+        text_box.update(b"hi").unwrap();
 
-        assert_eq!(view.buffer.rope().to_string(), "hi");
+        assert_eq!(text_box.buffer.rope().to_string(), "hi");
         assert_eq!(
-            (view.selection.anchor(), view.selection.head()),
+            (text_box.selection.anchor(), text_box.selection.head()),
             (2, 2),
             "both ends move back to the end of the new text"
         );
@@ -533,19 +516,18 @@ pub(crate) mod tests {
 
     #[test]
     fn grapheme_start_ignores_an_out_of_date_wrap() {
-        let mut view = view("ab", 20, 5);
+        let mut text_box = text_box("ab", 20, 5);
         // The mark joins a, the wrap still has b on byte 1
-        view.buffer.edit(1..1, "\u{301}");
-        view.wrap_dirty = true;
-        assert_eq!(view.grapheme_start(1), 0, "reads the edited text");
+        text_box.buffer.edit(1..1, "\u{301}");
+        text_box.wrap_dirty = true;
+        assert_eq!(text_box.grapheme_start(1), 0, "reads the edited text");
     }
 
     #[test]
     fn render_covers_wide_tails_only() {
-        let mut view = view("a😀b\tc", 20, 2);
-        let frame = rendered(&mut view);
-        let gutter = gutter_width(&view);
-        let cell = |col: u16| frame.get(CellPosition::new(gutter + col, 0));
+        let mut text_box = text_box("a😀b\tc", 20, 2);
+        let frame = rendered(&mut text_box);
+        let cell = |col: u16| frame.get(CellPosition::new(col, 0));
 
         assert_eq!(cell(1).grapheme.as_str(), "😀");
         assert!(!cell(1).covered, "the head prints");
@@ -563,15 +545,14 @@ pub(crate) mod tests {
     #[test]
     fn render_colors_the_highlighted_text() {
         let (mut loader, grammar) = syntax::tests::rust();
-        let mut view = view("fn main() {}", 20, 2);
-        view.set_language(Some(LanguageTag::new("rust")));
-        view.attach(&grammar);
-        view.reparse(&mut loader).unwrap();
+        let mut text_box = text_box("fn main() {}", 20, 2);
+        text_box.set_language(Some(LanguageTag::new("rust")));
+        text_box.attach(&grammar);
+        text_box.reparse(&mut loader).unwrap();
 
-        let frame = rendered(&mut view);
+        let frame = rendered(&mut text_box);
 
-        let gutter = gutter_width(&view);
-        let content = |col: u16| frame.get(CellPosition::new(gutter + col, 0)).style.content;
+        let content = |col: u16| frame.get(CellPosition::new(col, 0)).style.content;
         let keyword = Content::Text(Highlight::Keyword);
         assert_eq!(content(0), keyword, "the f of fn");
         assert_eq!(content(1), keyword, "the n of fn");
@@ -584,113 +565,97 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn rows_are_numbered_by_their_distance_from_the_cursor() {
-        let mut view = view(&"x\n".repeat(20), 20, 12);
-        for _ in 0..5 {
-            view.move_selection(Motion::Vertical(Direction::Forward), false);
-        }
+    fn the_terminal_cursor_sits_on_the_head() {
+        let mut text_box = text_box("abc", 20, 3);
 
-        let frame = rendered(&mut view);
-
-        let shown: Vec<_> = (0..12).map(|row| gutter_text(&view, &frame, row)).collect();
+        assert_eq!(text_box.cursor_position(), Some(CellPosition::new(0, 0)));
+        text_box.move_selection(Motion::Horizontal(Direction::Forward), false);
         assert_eq!(
-            shown,
-            [
-                "  5 ", "  4 ", "  3 ", "  2 ", "  1 ", "  6 ", "  1 ", "  2 ", "  3 ", "  4 ",
-                "  5 ", "  6 "
-            ],
-            "the cursor is on row 5 of line 6, and the rest count rows away from it"
-        );
-    }
-
-    #[test]
-    fn wrapped_rows_count_like_any_other_row() {
-        let mut view = view("aaaaaaaa\nb", 4, 8);
-
-        let frame = rendered(&mut view);
-
-        let rows_with_text = view.wrap.last_row().unwrap() + 1;
-        assert!(rows_with_text > 2, "the first line wraps");
-        for row in 1..rows_with_text {
-            assert_eq!(
-                gutter_text(&view, &frame, number::exact(row)),
-                format!("{row:>3} "),
-                "row {row} is {row} motions below the cursor, wrapped or not"
-            );
-        }
-    }
-
-    #[test]
-    fn the_rows_below_the_end_of_the_file_have_no_number() {
-        let mut view = view("a\nb", 20, 6);
-
-        let frame = rendered(&mut view);
-
-        assert_eq!(gutter_text(&view, &frame, 0), "  1 ", "the cursor's line");
-        assert_eq!(gutter_text(&view, &frame, 1), "  1 ", "one row down");
-        for row in 2..6 {
-            assert_eq!(
-                gutter_text(&view, &frame, row),
-                "    ",
-                "you can't move onto row {row}, so it has no number"
-            );
-        }
-    }
-
-    #[test]
-    fn the_terminal_cursor_sits_in_the_text_and_not_the_gutter() {
-        let mut view = view("abc", 20, 3);
-        let gutter = gutter_width(&view);
-
-        assert_eq!(
-            view.cursor_position(),
-            Some(CellPosition::new(gutter, 0)),
-            "right of the gutter"
-        );
-        view.move_selection(Motion::Horizontal(Direction::Forward), false);
-        assert_eq!(
-            view.cursor_position(),
-            Some(CellPosition::new(gutter + 1, 0)),
+            text_box.cursor_position(),
+            Some(CellPosition::new(1, 0)),
             "one grapheme in"
         );
     }
 
     #[test]
-    fn the_gutter_widens_past_999_lines_and_the_text_gives_up_a_column() {
-        let mut view = view(&"a\n".repeat(998), 20, 5);
-        assert_eq!(gutter_width(&view), 4, "999 lines fit three digits");
-        assert_eq!(view.text_rect().area.cols, 20);
+    fn the_head_row_and_line_follow_the_wrap() {
+        let mut text_box = text_box("aaaaaaaa\nb", 4, 8);
+        assert_eq!(text_box.head_row_and_line(), Some((0, 0)));
+        assert!(text_box.rows_with_text() > 2, "the first line wraps");
 
-        view.new_line();
+        text_box.perform(TextBoxAction::Motion(Motion::File(Direction::Forward)));
 
-        assert_eq!(gutter_width(&view), 5, "1000 lines need a fourth digit");
-        assert_eq!(view.text_rect().area.cols, 19, "the text gave up a column");
+        let (row, line) = text_box.head_row_and_line().unwrap();
+        assert_eq!(line, 1, "on the b");
+        assert!(row > 1, "below the rows of the first line");
+    }
+
+    fn one_line(text: &str) -> TextBox {
+        let mut text_box = text_box("", 20, 3);
+        text_box.limit_lines(NonZeroUsize::MIN);
+        text_box.open_buffer(Buffer::from(text));
+        text_box
     }
 
     #[test]
-    fn a_view_too_narrow_for_its_gutter_still_keeps_half_for_the_text() {
-        let mut view = View::new(Rect::new(0, 0, Area::new(6, 3)), &Config::default()).unwrap();
-        view.open_buffer(Buffer::from("abc"));
+    fn an_insert_is_cut_at_the_first_line_break_that_goes_over_the_limit() {
+        let mut text_box = one_line("");
 
-        assert_eq!(gutter_width(&view), 3, "half of 6, not the 4 it wants");
-        assert_eq!(view.text_rect().area.cols, 3);
-        assert!(view.cursor_position().is_some());
+        text_box.perform(TextBoxAction::Insert('a'));
+        text_box.perform(TextBoxAction::Insert('\n'));
+        text_box.perform(TextBoxAction::Insert('b'));
+
+        assert_eq!(text_box.buffer.rope().to_string(), "ab", "no second line");
     }
 
     #[test]
-    fn the_text_is_at_most_the_max_text_width_and_centered_in_a_wider_view() {
-        let view = view("abc", 200, 3);
+    fn open_line_does_nothing_at_the_limit_and_leaves_the_cursor() {
+        let mut text_box = one_line("abc");
+        text_box.perform(TextBoxAction::Motion(Motion::File(Direction::Backward)));
+
+        text_box.perform(TextBoxAction::OpenLine);
+
+        assert_eq!(text_box.buffer.rope().to_string(), "abc");
+        assert_eq!(text_box.selection, Selection::point(0), "the cursor stayed");
+    }
+
+    #[test]
+    fn a_buffer_past_the_limit_is_cut_when_it_is_shown() {
+        let text_box = one_line("first\r\nsecond\nthird");
+
+        assert_eq!(text_box.buffer.rope().to_string(), "first");
+    }
+
+    #[test]
+    fn a_revert_is_cut_to_the_limit_too() {
+        let mut text_box = one_line("");
+        text_box.limit_lines(NonZeroUsize::new(2).unwrap());
+        text_box.open_buffer(Buffer::from("a\nb"));
+        text_box.limit_lines(NonZeroUsize::MIN);
+        text_box.perform(TextBoxAction::Insert('x'));
+
+        text_box.perform(TextBoxAction::Revert);
 
         assert_eq!(
-            view.text_rect().area.cols,
-            MAX_TEXT_WIDTH,
-            "the wrap stops at the max text width"
+            text_box.buffer.rope().to_string(),
+            "a",
+            "not the clean two lines"
         );
-        let block_col = view.block().col;
+    }
+
+    #[test]
+    fn a_limit_of_several_lines_allows_breaks_up_to_it() {
+        let mut text_box = text_box("", 20, 3);
+        text_box.limit_lines(NonZeroUsize::new(2).unwrap());
+
+        for key in ['a', '\n', 'b', '\n', 'c'] {
+            text_box.perform(TextBoxAction::Insert(key));
+        }
+
         assert_eq!(
-            block_col,
-            (view.rect.area.cols - gutter_width(&view) - MAX_TEXT_WIDTH) / 2,
-            "the gutter and the text share the space around them evenly"
+            text_box.buffer.rope().to_string(),
+            "a\nbc",
+            "the second break is refused"
         );
     }
 }

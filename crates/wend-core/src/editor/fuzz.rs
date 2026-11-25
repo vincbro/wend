@@ -10,13 +10,13 @@ use crate::{
     config::Config,
     frame::{Area, Frame},
     input::{
-        Input,
-        action::{Action, EditorAction},
+        Failure, Input,
+        action::{Action, EditorAction, ScratchAction},
         key::{Key, KeyCode},
     },
     output::Output,
     syntax::{LanguageTag, Loader, tests as syntax_tests},
-    view::fuzz as view_fuzz,
+    text_box::fuzz as text_box_fuzz,
 };
 
 /// One thing a frontend can do to the editor, with its arguments.
@@ -35,6 +35,12 @@ enum Call {
     /// Sends bytes that aren't a grammar. Loading the real one takes about 450 ms, so the
     /// tests of the buffer and of `load_language` cover that.
     BadLanguage,
+    /// Reports that the frontend failed at something it was asked, whether it was asked or not.
+    Failed {
+        kind: usize,
+        path: usize,
+        reason: String,
+    },
     Config {
         tab_width: usize,
         margin: usize,
@@ -63,13 +69,14 @@ fn call() -> impl Strategy<Value = Call> {
         key
     });
     let action = prop_oneof![
-        4 => view_fuzz::view_action().prop_map(Action::View),
+        4 => text_box_fuzz::text_box_action().prop_map(Action::TextBox),
         1 => Just(Action::Editor(EditorAction::OpenTestOverlay)),
-        1 => Just(Action::Editor(EditorAction::Save)),
+        1 => Just(Action::Editor(EditorAction::OpenCommandLine)),
+        1 => Just(Action::Scratch(ScratchAction::Save)),
     ];
-    let area = view_fuzz::area();
+    let area = text_box_fuzz::area();
     let bytes = prop_oneof![
-        4 => view_fuzz::text().prop_map(String::into_bytes),
+        4 => text_box_fuzz::text().prop_map(String::into_bytes),
         1 => collection::vec(any::<u8>(), 0..16),
     ];
     let language = prop_oneof![Just(None), Just(Some("rust")), Just(Some("other"))];
@@ -81,6 +88,8 @@ fn call() -> impl Strategy<Value = Call> {
             .prop_map(|(path, bytes, language)| Call::File { path, bytes, language }),
         4 => (0..FRAME_COUNT).prop_map(Call::Drawn),
         1 => Just(Call::BadLanguage),
+        2 => (0..3usize, 0..PATHS.len(), text_box_fuzz::text())
+            .prop_map(|(kind, path, reason)| Call::Failed { kind, path, reason }),
         1 => (1..=8usize, 0..=5usize, 0..=6usize, 0..=3u16).prop_map(
             |(tab_width, margin, min_digits, padding)| Call::Config { tab_width, margin, min_digits, padding }
         ),
@@ -123,6 +132,18 @@ impl Frontend {
                 wasm: Box::from(&b"not a grammar"[..]),
                 highlights: syntax_tests::RUST_HIGHLIGHTS.into(),
             },
+            Call::Failed { kind, path, reason } => {
+                let path: Box<Path> = Path::new(PATHS[path]).into();
+                let reason = reason.into();
+                Input::Failed(match kind {
+                    0 => Failure::Read { path, reason },
+                    1 => Failure::Write { path, reason },
+                    _ => Failure::Language {
+                        tag: LanguageTag::new(PATHS[0]),
+                        reason,
+                    },
+                })
+            }
             Call::Config {
                 tab_width,
                 margin,
@@ -137,8 +158,12 @@ impl Frontend {
                 Input::Config(Box::new(config))
             }
         };
-        // What fails is the file or the grammar being bad, which the invariants outlive
-        drop(self.editor.apply(input));
+        let failed = matches!(input, Input::Failed(_));
+        self.editor.apply(input);
+        assert!(
+            !failed || self.editor.message().is_some(),
+            "a failure the frontend reports is said in the status bar"
+        );
         self.collect_frames();
     }
 
@@ -183,7 +208,7 @@ proptest! {
 
     #[test]
     fn no_sequence_of_inputs_breaks_the_invariants(
-        area in view_fuzz::area(),
+        area in text_box_fuzz::area(),
         calls in collection::vec(call(), 0..40),
     ) {
         let loader = LOADER.take().unwrap_or_else(|| Loader::new().unwrap());

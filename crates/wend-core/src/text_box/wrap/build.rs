@@ -20,7 +20,7 @@ impl Wrap {
 
     /// Lays `buffer` out from `scroll_offset`. The row is clamped to the rows the first line
     /// has, `scroll_offset()` returns where the wrap really starts.
-    pub(in crate::view) fn rebuild(
+    pub(in crate::text_box) fn rebuild(
         &mut self,
         buffer: &Buffer,
         area: Area,
@@ -160,7 +160,7 @@ impl<'a> Builder<'a> {
         }
 
         // A glyph never spills onto the next row: a row that starts there, such as the top
-        // of a scrolled view, would hold tails without their glyph
+        // of a scrolled text box, would hold tails without their glyph
         let start_col = if self.col_cursor >= width {
             self.wrap_col()
         } else {
