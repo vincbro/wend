@@ -13,8 +13,7 @@ pub use overlay::{
 };
 
 use crate::{
-    config::{self, Error},
-    input::Mode,
+    input::{self, Mode},
     text_box::{Direction, Motion},
 };
 
@@ -121,7 +120,7 @@ impl Action {
 
     /// Reads the action `text` writes: the name of one in `scope`, then its arguments,
     /// which are the rest of the text. An action that takes none refuses any.
-    pub fn parse(scope: Scope, text: &str) -> config::Result<Self> {
+    pub fn parse(scope: Scope, text: &str) -> input::Result<Self> {
         let text = text.trim();
         let (name, arguments) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
         let arguments = arguments.trim();
@@ -143,9 +142,9 @@ impl Action {
                     .or_else(|| TextBoxAction::from_name(name).map(Self::TextBox)),
                 Scope::Overlay(kind) => OverlayAction::from_name(kind, name).map(Self::Overlay),
             })
-            .ok_or_else(|| Error::UnknownAction(name.into()))?;
+            .ok_or_else(|| input::Error::UnknownAction(name.into()))?;
         if !arguments.is_empty() {
-            return Err(Error::UnexpectedArguments(name.into()));
+            return Err(input::Error::UnexpectedArguments(name.into()));
         }
         Ok(action)
     }
@@ -153,15 +152,17 @@ impl Action {
 
 impl EditorAction {
     /// The action with arguments that `name` means, none when `name` takes none.
-    fn with_arguments(name: &str, arguments: &str) -> Option<config::Result<Self>> {
+    fn with_arguments(name: &str, arguments: &str) -> Option<input::Result<Self>> {
         match name {
-            "open" | "o" if arguments.is_empty() => Some(Err(Error::MissingArguments(name.into()))),
+            "open" | "o" if arguments.is_empty() => {
+                Some(Err(input::Error::MissingArguments(name.into())))
+            }
             "open" | "o" => Some(Ok(Self::Open(Path::new(arguments).into()))),
             "open_at" => Some(Self::open_at(arguments)),
             "open_search" if !arguments.is_empty() => Some(
                 SearchKind::from_name(arguments)
                     .map(Self::OpenSearch)
-                    .ok_or(Error::InvalidArguments {
+                    .ok_or(input::Error::InvalidArguments {
                         name: "open_search",
                         expected: "`files` or `text`",
                     }),
@@ -171,8 +172,8 @@ impl EditorAction {
     }
 
     /// Reads the arguments of `open_at`: a path, a colon and a line, counted from 1.
-    fn open_at(arguments: &str) -> config::Result<Self> {
-        let invalid = || Error::InvalidArguments {
+    fn open_at(arguments: &str) -> input::Result<Self> {
+        let invalid = || input::Error::InvalidArguments {
             name: "open_at",
             expected: "a path and a line, as `path:line`",
         };
@@ -474,7 +475,7 @@ mod tests {
         assert!(
             matches!(
                 Action::parse(Scope::Editor, "left"),
-                Err(Error::UnknownAction(_))
+                Err(input::Error::UnknownAction(_))
             ),
             "a motion is the text box's"
         );
@@ -488,7 +489,10 @@ mod tests {
             Action::Editor(EditorAction::Quit)
         );
         assert!(
-            matches!(Action::parse(scope, "left"), Err(Error::UnknownAction(_))),
+            matches!(
+                Action::parse(scope, "left"),
+                Err(input::Error::UnknownAction(_))
+            ),
             "a motion is the text box's"
         );
     }
@@ -505,7 +509,10 @@ mod tests {
             Scope::Overlay(OverlayKind::Test),
         ] {
             assert!(
-                matches!(Action::parse(scope, "save"), Err(Error::UnknownAction(_))),
+                matches!(
+                    Action::parse(scope, "save"),
+                    Err(input::Error::UnknownAction(_))
+                ),
                 "{scope:?} has no document to save"
             );
         }
@@ -554,7 +561,7 @@ mod tests {
         assert!(
             matches!(
                 Action::parse(Scope::Scratch, "open_search nothing"),
-                Err(Error::InvalidArguments { .. })
+                Err(input::Error::InvalidArguments { .. })
             ),
             "only the kinds there are"
         );
@@ -582,7 +589,7 @@ mod tests {
         assert!(
             matches!(
                 Action::parse(Scope::Scratch, "open"),
-                Err(Error::MissingArguments(name)) if &*name == "open"
+                Err(input::Error::MissingArguments(name)) if &*name == "open"
             ),
             "there is nothing to open"
         );
@@ -601,7 +608,7 @@ mod tests {
         assert!(
             matches!(
                 Action::parse(Scope::Scratch, "quit now"),
-                Err(Error::UnexpectedArguments(name)) if &*name == "quit"
+                Err(input::Error::UnexpectedArguments(name)) if &*name == "quit"
             ),
             "quit has no arguments"
         );

@@ -8,6 +8,8 @@ use crate::{
 };
 
 pub mod action;
+mod error;
+pub use error::{Error, Result};
 mod failure;
 pub use failure::Failure;
 pub mod key;

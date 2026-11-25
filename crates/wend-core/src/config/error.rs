@@ -2,6 +2,8 @@ use std::result;
 
 use toml_edit::{TomlError, de};
 
+use crate::input;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("the config isn't valid TOML")]
@@ -16,17 +18,8 @@ pub enum Error {
     UnknownKey(Box<str>),
     #[error("`{0}` shifts a character, write the shifted character instead")]
     ShiftedCharacter(Box<str>),
-    #[error("unknown action `{0}`")]
-    UnknownAction(Box<str>),
-    #[error("`{0}` takes no arguments")]
-    UnexpectedArguments(Box<str>),
-    #[error("`{0}` needs arguments")]
-    MissingArguments(Box<str>),
-    #[error("`{name}` takes {expected}")]
-    InvalidArguments {
-        name: &'static str,
-        expected: &'static str,
-    },
+    #[error(transparent)]
+    Action(#[from] input::Error),
     #[error(
         "`[keys.{overlay}.<mode>]` binds nothing that closes it in any mode, so there is no way out of it"
     )]

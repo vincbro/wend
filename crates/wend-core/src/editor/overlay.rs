@@ -1,7 +1,7 @@
 use crate::{
-    config,
     frame::Rect,
     input::{
+        self,
         action::{Action, OverlayAction},
         key::Key,
     },
@@ -34,7 +34,7 @@ impl Overlay {
     /// overlay doesn't bind is dropped, so it never reaches the editor under it.
     ///
     /// Fails when the overlay ran something that doesn't exist, for the editor to say so.
-    pub(super) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) -> config::Result<()> {
+    pub(super) fn key_press(&mut self, key: Key, requests: &mut Vec<Action>) -> input::Result<()> {
         match self {
             Self::Test(overlay) => {
                 overlay.key_press(key, requests);

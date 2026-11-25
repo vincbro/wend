@@ -221,7 +221,7 @@ impl Names {
         };
         names
             .iter()
-            .map(|name| Action::parse(scope, name))
+            .map(|name| Ok(Action::parse(scope, name)?))
             .collect::<Result<_>>()
             .map(Actions)
     }

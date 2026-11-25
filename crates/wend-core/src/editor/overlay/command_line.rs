@@ -1,7 +1,8 @@
 use crate::{
-    config::{self, Config, Target},
+    config::{Config, Target},
     frame::Rect,
     input::{
+        self,
         action::{Action, CommandAction, EditorAction, OverlayAction, OverlayKind, Scope},
         key::Key,
     },
@@ -45,7 +46,7 @@ impl CommandLine {
         &mut self,
         key: Key,
         requests: &mut Vec<Action>,
-    ) -> config::Result<()> {
+    ) -> input::Result<()> {
         self.input.key_press(key, requests);
         let runs = requests.iter().any(|action| {
             matches!(

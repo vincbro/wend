@@ -1,6 +1,10 @@
 use std::{error::Error as StdError, path::Path, result};
 
-use crate::{buffer, config, input::Failure, syntax, text_box};
+use crate::{
+    buffer, config,
+    input::{self, Failure},
+    syntax, text_box,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -12,7 +16,7 @@ pub enum Error {
     Config(#[from] config::Error),
     /// What a command typed in the command line got wrong, which is all there is to say.
     #[error(transparent)]
-    Command(config::Error),
+    Command(input::Error),
     #[error("the file shown has no path to save to")]
     NoPath,
     #[error("{} is already open as another document", .0.display())]
