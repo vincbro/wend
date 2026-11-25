@@ -67,12 +67,12 @@ impl Wrap {
         Some(ScrollOffset::new(line, skipped + row - first))
     }
 
-    /// Returns the last row that shows text, none when nothing fits.
     /// Sets the columns between tab stops, from the next rebuild on.
     pub(super) fn set_tab_width(&mut self, tab_width: NonZeroUsize) {
         self.tab_width = tab_width.get();
     }
 
+    /// Returns the last row that shows text, none when nothing fits.
     #[must_use]
     pub(super) fn last_row(&self) -> Option<usize> {
         self.row_metadata.iter().rposition(Option::is_some)
