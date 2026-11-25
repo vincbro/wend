@@ -166,6 +166,7 @@ pub(crate) struct Theme {
     pub(crate) marker: Rule,
     pub(crate) border: Rule,
     pub(crate) error: Rule,
+    pub(crate) current_line: Rule,
     pub(crate) selection: Rule,
     pub(crate) cursor: Rule,
 
@@ -196,10 +197,13 @@ impl FromStr for Theme {
 
 impl Theme {
     /// Turns a cell's layers into what the terminal draws: the content over the plain
-    /// text, then the selection, then the cursor.
+    /// text, then the current line, then the selection, then the cursor.
     #[must_use]
     pub(crate) fn resolve(&self, style: CellStyle) -> Style {
         let mut rule = self.plain.over(self.content(style.content));
+        if style.line {
+            rule = rule.over(self.current_line);
+        }
         if style.selected {
             rule = rule.over(self.selection);
         }
@@ -366,6 +370,31 @@ mod tests {
     }
 
     #[test]
+    fn the_current_line_goes_over_the_content_and_under_the_selection() {
+        let theme = Theme {
+            current_line: Rule::background(RED),
+            ..theme()
+        };
+        let on_line = CellStyle {
+            line: true,
+            ..keyword()
+        };
+
+        let style = theme.resolve(on_line);
+        assert_eq!(style.background, RED, "the line's background");
+        assert_eq!(style.foreground, RED, "and the keyword keeps its color");
+
+        let selected = theme.resolve(CellStyle {
+            selected: true,
+            ..on_line
+        });
+        assert_eq!(
+            selected.background, BLUE,
+            "the selection goes over the line"
+        );
+    }
+
+    #[test]
     fn a_selected_keyword_keeps_its_color_and_gets_the_selection_background() {
         let style = theme().resolve(CellStyle {
             selected: true,
@@ -435,7 +464,7 @@ mod tests {
             let rules: Vec<_> = (0..lines.len())
                 .filter(|&row| lines[row].starts_with('['))
                 .collect();
-            assert_eq!(rules.len(), 22, "{name} has a section for every rule");
+            assert_eq!(rules.len(), 23, "{name} has a section for every rule");
             for row in rules {
                 assert!(
                     lines[row - 1].starts_with("# "),

@@ -6,6 +6,7 @@ use wend_core::{
     frame::{Area, CellPosition, Content, Frame},
     input::{
         Failure, Input, Mode,
+        action::{Action, EditorAction, SearchKind},
         key::{Key, KeyCode},
     },
     output::Output,
@@ -676,5 +677,462 @@ mod tests {
             bytes: b"fn main() {}".as_slice().into(),
             language: Some(LanguageTag::new("rust")),
         }
+    }
+}
+
+/// The search overlay, with a fake frontend that answers from a list of files.
+#[cfg(test)]
+mod search {
+    use super::*;
+
+    const FILES: [&str; 3] = ["src/main.rs", "src/lib.rs", "README.md"];
+
+    /// Presses `keys` and returns everything the editor sent, frames included.
+    fn keys(editor: &mut Editor, keys: &str) -> Vec<Output> {
+        let mut all = vec![];
+        for c in keys.chars() {
+            let code = match c {
+                '\u{1b}' => KeyCode::Esc,
+                '\n' => KeyCode::Enter,
+                _ => KeyCode::Char(c),
+            };
+            all.extend(exchange(editor, Input::Key(Key::new(code))));
+        }
+        all
+    }
+
+    /// The searches in `outputs`, as their id and query.
+    fn asked(outputs: &[Output]) -> Vec<(u64, String)> {
+        outputs
+            .iter()
+            .filter_map(|output| match output {
+                Output::Search { id, query, .. } => Some((*id, query.to_string())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The files `outputs` asked to read.
+    fn read(outputs: &[Output]) -> Vec<String> {
+        outputs
+            .iter()
+            .filter_map(|output| match output {
+                Output::Read { path } => Some(path.display().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// What the frontend answers to a search: the files that hold the query.
+    fn answer(editor: &mut Editor, id: u64, query: &str) -> Vec<Output> {
+        let text: Vec<&str> = FILES
+            .iter()
+            .copied()
+            .filter(|file| file.contains(query))
+            .collect();
+        exchange(
+            editor,
+            Input::SearchResults {
+                id,
+                text: text.join("\n").into(),
+            },
+        )
+    }
+
+    fn text(frame: &Frame) -> String {
+        (0..frame.area().rows)
+            .map(|row| {
+                frame
+                    .row(row)
+                    .iter()
+                    .map(|cell| cell.grapheme.as_str_sanitize())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn opened() -> Editor {
+        let mut editor = editor("abc", 100, 20);
+        let outputs = keys(&mut editor, " f");
+        assert_eq!(
+            asked(&outputs),
+            [(1, String::new())],
+            "an empty query first"
+        );
+        answer(&mut editor, 1, "");
+        editor
+    }
+
+    #[test]
+    fn the_results_are_shown_under_the_query() {
+        let mut editor = opened();
+
+        let frame = last_frame(answer(&mut editor, 1, ""));
+
+        let shown = text(&frame);
+        assert!(shown.contains("src/main.rs"), "the first result");
+        assert!(shown.contains("README.md"), "and the last");
+    }
+
+    #[test]
+    fn typing_asks_for_a_new_search_with_the_next_id() {
+        let mut editor = opened();
+
+        let outputs = keys(&mut editor, "rs");
+
+        assert_eq!(
+            asked(&outputs),
+            [(2, "r".to_owned()), (3, "rs".to_owned())],
+            "one search per change of the text"
+        );
+    }
+
+    #[test]
+    fn enter_opens_the_first_result_of_the_newest_search() {
+        let mut editor = opened();
+        let outputs = keys(&mut editor, "lib");
+        let (id, query) = asked(&outputs).pop().unwrap();
+        answer(&mut editor, id, &query);
+
+        let outputs = keys(&mut editor, "\n");
+
+        assert_eq!(read(&outputs), ["src/lib.rs"]);
+        assert!(
+            !text(&last_frame(outputs)).contains("README.md"),
+            "the search is closed"
+        );
+    }
+
+    #[test]
+    fn an_answer_to_an_older_search_is_dropped() {
+        let mut editor = opened();
+        keys(&mut editor, "r");
+
+        answer(&mut editor, 1, "");
+        let outputs = keys(&mut editor, "\n");
+
+        assert!(
+            read(&outputs).is_empty(),
+            "the results of search 1 are not the ones for `r`, so enter waits"
+        );
+    }
+
+    #[test]
+    fn enter_before_the_answer_waits_for_it_and_picks_the_first_result() {
+        let mut editor = opened();
+        keys(&mut editor, "md");
+        let outputs = keys(&mut editor, "\n");
+        assert!(read(&outputs).is_empty(), "nothing to pick from yet");
+
+        let outputs = answer(&mut editor, 3, "md");
+
+        assert_eq!(read(&outputs), ["README.md"]);
+    }
+
+    #[test]
+    fn leaving_the_query_moves_to_the_results_and_enter_picks_the_row_the_cursor_is_on() {
+        let mut editor = opened();
+
+        let outputs = keys(&mut editor, "\u{1b}jj\n");
+
+        assert_eq!(read(&outputs), ["README.md"], "two rows down");
+    }
+
+    #[test]
+    fn the_results_refuse_edits_and_i_goes_back_to_the_query() {
+        let mut editor = opened();
+        keys(&mut editor, "\u{1b}");
+
+        let outputs = keys(&mut editor, "dxu");
+        assert!(asked(&outputs).is_empty(), "nothing typed, nothing asked");
+        let outputs = keys(&mut editor, "i");
+        assert_eq!(asked(&outputs).len(), 0, "i asks for nothing");
+        let outputs = keys(&mut editor, "z");
+
+        assert_eq!(
+            asked(&outputs),
+            [(2, "z".to_owned())],
+            "typing is in the query again"
+        );
+        assert_eq!(
+            editor.mode(),
+            Mode::Normal,
+            "the scratch under it never had the keys"
+        );
+    }
+
+    #[test]
+    fn the_text_search_asks_for_text_and_picking_opens_the_file_at_the_line() {
+        let mut editor = editor("abc", 40, 10);
+
+        let outputs = keys(&mut editor, " /");
+        assert!(
+            outputs.iter().any(|output| matches!(
+                output,
+                Output::Search {
+                    id: 1,
+                    kind: SearchKind::Text,
+                    ..
+                }
+            )),
+            "the text search is asked for"
+        );
+        exchange(
+            &mut editor,
+            Input::SearchResults {
+                id: 1,
+                text: "a.txt:3:three\nb.txt:1:x".into(),
+            },
+        );
+        let outputs = keys(&mut editor, "\n");
+        assert_eq!(read(&outputs), ["a.txt"], "the file of the result");
+
+        let lines = "one\ntwo\nthree\nfour";
+        let frame = last_frame(exchange(
+            &mut editor,
+            Input::File {
+                path: Path::new("a.txt").into(),
+                bytes: lines.as_bytes().into(),
+                language: None,
+            },
+        ));
+
+        assert_eq!(
+            frame.cursor().expect("a cursor").row,
+            2,
+            "on the third line"
+        );
+    }
+
+    #[test]
+    fn escape_twice_closes_the_search() {
+        let mut editor = opened();
+
+        let frame = last_frame(keys(&mut editor, "\u{1b}\u{1b}"));
+
+        assert!(!text(&frame).contains("src/main.rs"), "closed");
+    }
+
+    #[test]
+    fn a_failed_search_is_said_in_the_status_bar_and_leaves_the_results() {
+        let mut editor = opened();
+        keys(&mut editor, "x");
+
+        let frame = last_frame(exchange(
+            &mut editor,
+            Input::Failed(Failure::Search {
+                id: 2,
+                reason: "fzf: not found".into(),
+            }),
+        ));
+
+        assert!(text(&frame).contains("fzf: not found"), "the reason");
+        assert!(text(&frame).contains("src/main.rs"), "the results stay");
+    }
+}
+
+/// Finding in the text with `/`, `n` and `p`.
+#[cfg(test)]
+mod find {
+    use super::*;
+
+    fn text(frame: &Frame) -> String {
+        (0..frame.area().rows)
+            .map(|row| {
+                frame
+                    .row(row)
+                    .iter()
+                    .map(|cell| cell.grapheme.as_str_sanitize())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The text the cursor's selection covers, read off the frame.
+    fn selected(frame: &Frame) -> String {
+        frame
+            .iter()
+            .filter(|(_, cell)| cell.style.selected)
+            .map(|(_, cell)| cell.grapheme.as_str_sanitize())
+            .collect()
+    }
+
+    #[test]
+    fn typing_selects_the_first_match_and_enter_keeps_it() {
+        let mut editor = editor("one two\nthree two", 40, 10);
+
+        let frame = press(&mut editor, "/tw");
+        assert_eq!(selected(&frame), "tw", "the match as it is typed");
+        let frame = press(&mut editor, "o\n");
+
+        assert_eq!(selected(&frame), "two");
+        assert!(!text(&frame).contains("/ two"), "the prompt is closed");
+    }
+
+    #[test]
+    fn escape_puts_the_selection_back() {
+        let mut editor = editor("one two", 40, 10);
+        press(&mut editor, "l");
+
+        let frame = press(&mut editor, "/two\u{1b}");
+
+        assert_eq!(selected(&frame), "n", "the cursor is where it was");
+    }
+
+    /// The column the cursor is on, past the gutter.
+    fn column(frame: &Frame) -> u16 {
+        frame.cursor().expect("a cursor").col - GUTTER
+    }
+
+    #[test]
+    fn n_and_p_move_between_matches_and_wrap() {
+        let mut editor = editor("x1 x2 x3", 40, 10);
+        assert_eq!(column(&press(&mut editor, "/x\n")), 0, "the first match");
+
+        assert_eq!(column(&press(&mut editor, "n")), 3);
+        assert_eq!(column(&press(&mut editor, "n")), 6);
+        assert_eq!(column(&press(&mut editor, "n")), 0, "wraps to the first");
+        assert_eq!(column(&press(&mut editor, "p")), 6, "and back to the last");
+    }
+
+    #[test]
+    fn d_deletes_the_match() {
+        let mut editor = editor("one two three", 40, 10);
+
+        let frame = press(&mut editor, "/two\nd");
+
+        assert!(text(&frame).contains("one  three"), "{}", text(&frame));
+    }
+
+    #[test]
+    fn a_missing_match_leaves_the_cursor_where_it_was() {
+        let mut editor = editor("one two", 40, 10);
+
+        let frame = press(&mut editor, "/zzz");
+
+        assert_eq!(selected(&frame), "o");
+    }
+
+    fn numbered(count: usize) -> String {
+        (0..count)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_match_off_screen_is_scrolled_to_the_middle() {
+        let mut editor = editor(&numbered(100), 40, 20);
+
+        let frame = press(&mut editor, "/line 50\n");
+
+        assert_eq!(frame.cursor().expect("a cursor").row, 10, "the middle row");
+        assert!(text(&frame).contains("line 50"));
+    }
+
+    #[test]
+    fn a_match_already_in_view_stays_where_it_is() {
+        let mut editor = editor(&numbered(100), 40, 20);
+
+        let frame = press(&mut editor, "/line 3\n");
+
+        assert_eq!(
+            frame.cursor().expect("a cursor").row,
+            3,
+            "the text didn't move"
+        );
+    }
+
+    #[test]
+    fn a_match_under_the_prompt_is_moved_clear_of_it() {
+        let mut editor = editor(&numbered(100), 40, 20);
+
+        let frame = press(&mut editor, "/line 18");
+
+        assert_eq!(
+            text(&frame).matches("line 18").count(),
+            2,
+            "in the prompt, and in the text where the prompt doesn't cover it"
+        );
+    }
+
+    #[test]
+    fn escape_puts_the_scroll_back_with_the_selection() {
+        let mut editor = editor(&numbered(100), 40, 20);
+
+        let frame = press(&mut editor, "/line 50");
+        assert!(text(&frame).contains("line 50"), "scrolled to the match");
+        let frame = press(&mut editor, "\u{1b}");
+
+        assert!(text(&frame).contains("line 0"), "back at the top");
+        assert!(
+            !text(&frame).contains("line 50"),
+            "and not where the match was"
+        );
+    }
+
+    #[test]
+    fn open_at_puts_the_cursor_on_the_line_of_a_file_that_is_already_shown() {
+        let mut editor = editor(&numbered(10), 40, 10);
+
+        let outputs = exchange(
+            &mut editor,
+            Input::Action(Action::Editor(EditorAction::OpenAt {
+                path: Path::new("a.txt").into(),
+                line: 5,
+            })),
+        );
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, Output::Read { .. })),
+            "the file is read again"
+        );
+        let frame = last_frame(exchange(
+            &mut editor,
+            Input::File {
+                path: Path::new("a.txt").into(),
+                bytes: numbered(10).as_bytes().into(),
+                language: None,
+            },
+        ));
+
+        assert_eq!(frame.cursor().expect("a cursor").row, 4, "the fifth line");
+    }
+
+    #[test]
+    fn a_file_that_fails_to_read_leaves_no_line_to_go_to() {
+        let mut editor = editor("abc", 40, 10);
+        exchange(
+            &mut editor,
+            Input::Action(Action::Editor(EditorAction::OpenAt {
+                path: Path::new("b.txt").into(),
+                line: 5,
+            })),
+        );
+        exchange(
+            &mut editor,
+            Input::Failed(Failure::Read {
+                path: Path::new("b.txt").into(),
+                reason: "gone".into(),
+            }),
+        );
+
+        let frame = last_frame(exchange(
+            &mut editor,
+            Input::File {
+                path: Path::new("b.txt").into(),
+                bytes: numbered(10).as_bytes().into(),
+                language: None,
+            },
+        ));
+
+        assert_eq!(
+            frame.cursor().expect("a cursor").row,
+            0,
+            "the line was forgotten with the failed read"
+        );
     }
 }

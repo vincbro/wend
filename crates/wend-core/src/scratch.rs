@@ -40,7 +40,8 @@ pub struct Scratch {
 impl Scratch {
     /// Fails when the keys of `config` can't make key trees.
     pub fn new(rect: Rect, config: &Config) -> text_box::Result<Self> {
-        let text_box = TextBox::new(rect, config, Target::Scratch)?;
+        let mut text_box = TextBox::new(rect, config, Target::Scratch)?;
+        text_box.set_searchable(true);
         let mut scratch = Self {
             gutter: Self::gutter_for(&text_box, rect, config.line_numbers),
             text_box,
@@ -83,12 +84,20 @@ impl Scratch {
         self.check_invariants();
     }
 
-    /// Does what `action` says about the document. Returns the text to write to its file when
-    /// there is some, which is then the text a revert goes back to.
-    pub fn act(&mut self, action: ScratchAction) -> Option<Rope> {
+    /// Does what `action` says about the document. Returns the text to write when there is
+    /// some. A save to the document's own file makes it the text a revert goes back to. A save
+    /// to another file (`copy`) leaves the document as it was.
+    pub fn act(&mut self, action: &ScratchAction, copy: bool) -> Option<Rope> {
         match action {
-            ScratchAction::Save => Some(self.text_box.save()),
+            ScratchAction::Save(_) if copy => Some(self.text_box.text()),
+            ScratchAction::Save(_) => Some(self.text_box.save()),
         }
+    }
+
+    /// Puts the cursor on `line`, counted from 1, see `TextBox::go_to_line`.
+    pub fn go_to_line(&mut self, line: usize) {
+        self.text_box.go_to_line(line);
+        self.check_invariants();
     }
 
     /// Sets the language of the shown buffer, see `Buffer::set_language`.

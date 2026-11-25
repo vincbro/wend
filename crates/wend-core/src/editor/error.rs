@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, result};
+use std::{error::Error as StdError, path::Path, result};
 
 use crate::{buffer, config, input::Failure, syntax, text_box};
 
@@ -15,6 +15,8 @@ pub enum Error {
     Command(config::Error),
     #[error("the file shown has no path to save to")]
     NoPath,
+    #[error("{} is already open as another document", .0.display())]
+    PathOpen(Box<Path>),
     #[error(transparent)]
     Frontend(#[from] Failure),
     #[error("syntax failed")]

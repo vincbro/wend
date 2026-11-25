@@ -16,4 +16,7 @@ pub enum Failure {
     /// The grammar the editor asked for, with `Output::Language`, could not be found.
     #[error("no grammar for {}: {reason}", tag.as_str())]
     Language { tag: LanguageTag, reason: Box<str> },
+    /// The search `id`, asked for with `Output::Search`, could not be run.
+    #[error("search failed: {reason}")]
+    Search { id: u64, reason: Box<str> },
 }

@@ -2,15 +2,18 @@ use crate::{
     config,
     frame::Rect,
     input::{
-        action::{Action, CommandAction, OverlayAction},
+        action::{Action, OverlayAction},
         key::Key,
     },
     layout::{Canvas, Element, Layout},
+    output::Output,
 };
 
 mod command_line;
 pub(super) use command_line::CommandLine;
 mod keymap;
+mod search;
+pub(super) use search::SearchOverlay;
 mod test_overlay;
 pub(super) use test_overlay::TestOverlay;
 
@@ -22,6 +25,7 @@ pub(super) use test_overlay::TestOverlay;
 pub(super) enum Overlay {
     Test(Box<TestOverlay>),
     Command(Box<CommandLine>),
+    Search(Box<SearchOverlay>),
 }
 
 impl Overlay {
@@ -37,6 +41,18 @@ impl Overlay {
                 Ok(())
             }
             Self::Command(overlay) => overlay.key_press(key, requests),
+            Self::Search(overlay) => {
+                overlay.key_press(key, requests);
+                Ok(())
+            }
+        }
+    }
+
+    /// The search the overlay wants the frontend to run, if it has one.
+    pub(super) fn take_ask(&mut self) -> Option<Output> {
+        match self {
+            Self::Search(overlay) => overlay.take_ask(),
+            Self::Test(_) | Self::Command(_) => None,
         }
     }
 }
@@ -44,14 +60,9 @@ impl Overlay {
 impl Overlay {
     /// Does an action of an overlay's own group. One of another overlay's group is dropped.
     pub(super) fn act(&mut self, action: OverlayAction) {
-        match (self, action) {
-            (Self::Test(_), OverlayAction::Test(action)) => match action {},
-            // Running it needs the key that did, so the command line did it in `key_press`
-            (
-                Self::Command(_),
-                OverlayAction::Command(CommandAction::Run) | OverlayAction::Test(_),
-            )
-            | (Self::Test(_), OverlayAction::Command(_)) => {}
+        // The others need the key that ran them, so the overlay did them in `key_press`
+        if let (Self::Test(_), OverlayAction::Test(action)) = (self, action) {
+            match action {}
         }
     }
 }
@@ -62,6 +73,7 @@ impl Overlay {
         match self {
             Self::Test(overlay) => overlay.check_invariants(),
             Self::Command(overlay) => overlay.check_invariants(),
+            Self::Search(overlay) => overlay.check_invariants(),
         }
     }
 }
@@ -71,6 +83,7 @@ impl Element for Overlay {
         match self {
             Self::Test(overlay) => overlay.layout(),
             Self::Command(overlay) => overlay.layout(),
+            Self::Search(overlay) => overlay.layout(),
         }
     }
 
@@ -78,6 +91,7 @@ impl Element for Overlay {
         match self {
             Self::Test(overlay) => overlay.render(rect, canvas),
             Self::Command(overlay) => overlay.render(rect, canvas),
+            Self::Search(overlay) => overlay.render(rect, canvas),
         }
     }
 }

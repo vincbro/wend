@@ -163,11 +163,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cell_stays_37_bytes() {
+    fn a_cell_stays_38_bytes() {
         assert_eq!(
             size_of::<Cell>(),
-            37,
-            "32 for the grapheme, 3 for the style, one each for the layer and covered, and the \
+            38,
+            "32 for the grapheme, 4 for the style, one each for the layer and covered, and the \
              frame holds one per terminal cell"
         );
     }

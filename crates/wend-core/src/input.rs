@@ -42,4 +42,9 @@ pub enum Input {
     /// Something the frontend was asked to do and could not. The editor says so in the status bar
     /// and goes on, and a frontend reports every failure this way, not by exiting.
     Failed(Failure),
+    /// The lines the frontend found for search `id`, from `Output::Search`, one per line.
+    SearchResults {
+        id: u64,
+        text: Box<str>,
+    },
 }

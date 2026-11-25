@@ -54,7 +54,9 @@ impl TestOverlay {
                 Action::Editor(_) => requests.push(action.clone()),
                 Action::Overlay(OverlayAction::Test(action)) => match *action {},
                 // The overlay's table can't bind the groups of the scratch, of a text box or of other overlays
-                Action::Overlay(OverlayAction::Command(_))
+                Action::Overlay(
+                    OverlayAction::Command(_) | OverlayAction::Search(_) | OverlayAction::Find(_),
+                )
                 | Action::Scratch(_)
                 | Action::TextBox(_) => {}
             }

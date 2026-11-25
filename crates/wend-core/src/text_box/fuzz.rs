@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 
 use proptest::{collection, prelude::*};
 
-use super::{Direction, Motion, TextBox};
+use super::{Direction, Motion, Selection, TextBox};
 use crate::{
     buffer::Buffer,
     config::{Config, Target},
@@ -20,9 +20,19 @@ enum Call {
     CursorPosition,
     Update(String),
     OpenBuffer(String),
+    /// What `Motion::Match` looks for, and what a prompt searches from.
+    Query(String, usize),
 }
 
 impl Call {
+    /// Whether the call is the owner's, which a read-only box doesn't refuse.
+    fn is_owners(&self) -> bool {
+        matches!(
+            self,
+            Self::Update(_) | Self::OpenBuffer(_) | Self::Query(..)
+        )
+    }
+
     fn run(self, view: &mut TextBox) {
         match self {
             Self::Perform(action) => view.perform(action),
@@ -31,6 +41,13 @@ impl Call {
                 view.cursor_position();
             }
             Self::Update(text) => view.update(text.as_bytes()).unwrap(),
+            Self::Query(query, from) => {
+                view.set_query(&query);
+                let origin = Selection::point(from.min(view.buffer().rope().byte_len()));
+                view.find_from(&query, view.selection());
+                // The origin may be inside a grapheme, which the selection snaps
+                view.restore_selection(origin);
+            }
             Self::OpenBuffer(text) => {
                 view.open_buffer(Buffer::from(text.as_str()));
             }
@@ -83,6 +100,7 @@ fn motion() -> impl Strategy<Value = Motion> {
         direction().prop_map(Motion::Line),
         direction().prop_map(Motion::Page),
         direction().prop_map(Motion::File),
+        direction().prop_map(Motion::Match),
     ]
 }
 
@@ -102,6 +120,7 @@ pub(crate) fn text_box_action() -> impl Strategy<Value = TextBoxAction> {
         Just(TextBoxAction::CollapseSelection),
         Just(TextBoxAction::SelectRow),
         Just(TextBoxAction::Revert),
+        Just(TextBoxAction::Find),
     ]
 }
 
@@ -112,6 +131,8 @@ fn call() -> impl Strategy<Value = Call> {
         1 => Just(Call::CursorPosition),
         1 => text().prop_map(Call::Update),
         1 => text().prop_map(Call::OpenBuffer),
+        2 => (prop::sample::select(vec!["a", "b", "é", "ab", "漢", "A", " ", "word", ""]), 0..80usize)
+            .prop_map(|(query, from)| Call::Query(query.to_owned(), from)),
     ]
 }
 
@@ -121,6 +142,7 @@ proptest! {
         start in rect(),
         initial in text(),
         line_limit in prop::option::of(1..4usize),
+        read_only in any::<bool>(),
         calls in collection::vec(call(), 0..40),
     ) {
         let mut view = TextBox::new(start, &Config::default(), Target::TextBox).unwrap();
@@ -128,11 +150,20 @@ proptest! {
             view.limit_lines(NonZeroUsize::new(limit).unwrap());
         }
         view.open_buffer(Buffer::from(initial.as_str()));
+        view.set_read_only(read_only);
         view.check_invariants();
 
+        // What only the owner changes, when the box is read-only
+        let mut owned = view.buffer().rope().to_string();
         for call in calls {
+            let by_owner = call.is_owners();
             call.run(&mut view);
             view.check_invariants();
+            if read_only && !by_owner {
+                prop_assert_eq!(&view.buffer().rope().to_string(), &owned);
+            } else {
+                owned = view.buffer().rope().to_string();
+            }
         }
     }
 }

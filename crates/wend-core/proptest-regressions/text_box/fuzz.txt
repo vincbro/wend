@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 7494416db03d5b6740049e4fba4e7140cf3e77f3331cb186d10520c72b4decaa # shrinks to start = Rect { col: 0, row: 0, area: Area { cols: 0, rows: 0 } }, initial = "", line_limit = Some(1), calls = [OpenBuffer("é")]
+cc 905d343a1cc2051f41cd39fb72df8a7a03b410eb8dac6c51261acb33b39c03e2 # shrinks to start = Rect { col: 0, row: 0, area: Area { cols: 0, rows: 0 } }, initial = "👨\u{200d}👩\u{200d}👧", line_limit = None, read_only = false, calls = [Query("a", 0), Perform(Motion(Match(Forward)))]

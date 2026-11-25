@@ -56,6 +56,11 @@ foreground = "#65656b"
 [error]
 foreground = "#d9677a"
 
+# The line the cursor is on, the whole of it. Under the selection and the cursor. A background
+# the same as `plain` turns it off. Example: background = "#2a2a2f".
+[current_line]
+background = "#242425"
+
 # The selected text. Leave the foreground out and the text keeps its colors.
 # Example: background = "#3e3e43".
 [selection]

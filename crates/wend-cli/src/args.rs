@@ -5,8 +5,8 @@ const HELP: &str =
 
 /// What the command line asks wend to do.
 pub(crate) enum Command {
-    /// Edit the file at this path.
-    Edit(String),
+    /// Edit the file at this path, or an unnamed buffer when there is none.
+    Edit(Option<String>),
     /// Print the default config.
     DefaultConfig,
     /// Print the built-in theme with this name.
@@ -46,7 +46,7 @@ pub(crate) fn parse_args() -> Result<Command> {
 
     match (file, command) {
         (None, Some(command)) => Ok(command),
-        (Some(file), None) => Ok(Command::Edit(file)),
-        _ => bail!(HELP),
+        (file, None) => Ok(Command::Edit(file)),
+        (Some(_), Some(_)) => bail!(HELP),
     }
 }

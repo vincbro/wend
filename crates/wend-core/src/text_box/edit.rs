@@ -3,16 +3,18 @@ use std::ops;
 use crop::Rope;
 
 use super::{ColumnPolicy, Selection, TextBox, visible_lines};
-use crate::buffer::Change;
 
 impl TextBox {
-    /// The only way the text changes. The selection follows the edit.
-    fn edit(&mut self, range: ops::Range<usize>, text: &str) -> Change {
+    /// The only way the user changes the text, which a read-only box refuses. The selection
+    /// follows the edit.
+    fn edit(&mut self, range: ops::Range<usize>, text: &str) {
+        if self.is_read_only() {
+            return;
+        }
         let text = self.within_line_limit(&range, text);
         let change = self.buffer.edit(range, text);
         self.wrap_dirty = true;
         self.set_selection(self.selection.map(change), ColumnPolicy::Sync);
-        change
     }
 
     /// Inserts in front of the selection.
@@ -97,12 +99,21 @@ impl TextBox {
 
     /// Throws away every edit since the file was last loaded or saved.
     pub fn revert(&mut self) {
+        if self.is_read_only() {
+            return;
+        }
         self.buffer.revert();
         self.clip_to_line_limit();
         self.wrap_dirty = true;
         // There is no change to map through, keep the same bytes as close as the text allows
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
+    }
+
+    /// The text, without making it the clean state.
+    #[must_use]
+    pub fn text(&self) -> Rope {
+        self.buffer.rope().clone()
     }
 
     /// Makes the text the new clean state, and returns it to write.

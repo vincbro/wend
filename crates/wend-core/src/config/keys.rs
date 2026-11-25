@@ -6,7 +6,7 @@ use crate::{
     config::{Actions, Chord, Error, Result, notation},
     input::{
         Mode,
-        action::{Action, EditorAction, OverlayKind, Scope},
+        action::{Action, EditorAction, FindAction, OverlayAction, OverlayKind, Scope},
         key::{Key, KeyTree},
     },
 };
@@ -66,6 +66,11 @@ pub struct Keys {
     pub test: Overrides,
     /// What the command line binds, which is its own actions and the editor's.
     pub command: Overrides,
+    /// What the search binds, which is its own actions and the editor's. Both of its boxes
+    /// answer to it.
+    pub search: Overrides,
+    /// What the prompt that searches a text binds, which is its own actions and the editor's.
+    pub find: Overrides,
 }
 
 /// What a target binds over the shared keys, for each mode. A combo bound to no actions is one
@@ -142,6 +147,8 @@ impl Keys {
             Target::Scratch => Some(&self.scratch),
             Target::Overlay(OverlayKind::Test) => Some(&self.test),
             Target::Overlay(OverlayKind::Command) => Some(&self.command),
+            Target::Overlay(OverlayKind::Search) => Some(&self.search),
+            Target::Overlay(OverlayKind::Find) => Some(&self.find),
         }
     }
 }
@@ -184,6 +191,8 @@ struct Merged {
     scratch: ModeNames,
     test: ModeNames,
     command: ModeNames,
+    search: ModeNames,
+    find: ModeNames,
 }
 
 /// What a file binds in a target's table of each mode.
@@ -271,6 +280,8 @@ impl TryFrom<Merged> for Keys {
             scratch: overrides(Scope::Scratch, &merged.scratch)?,
             test: overrides(Scope::Overlay(OverlayKind::Test), &merged.test)?,
             command: overrides(Scope::Overlay(OverlayKind::Command), &merged.command)?,
+            search: overrides(Scope::Overlay(OverlayKind::Search), &merged.search)?,
+            find: overrides(Scope::Overlay(OverlayKind::Find), &merged.find)?,
         };
         // A file that collides is refused here, while it can still be reported
         keys.trees(Target::TextBox)?;
@@ -278,11 +289,22 @@ impl TryFrom<Merged> for Keys {
         for (name, kind) in [
             ("test", OverlayKind::Test),
             ("command", OverlayKind::Command),
+            ("search", OverlayKind::Search),
+            ("find", OverlayKind::Find),
         ] {
             keys.check_way_out(name, kind)?;
         }
         Ok(keys)
     }
+}
+
+/// Whether `action` closes the overlay that has the keys, or the prompt of a text box.
+fn closes_overlay(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Editor(EditorAction::CloseOverlay)
+            | Action::Overlay(OverlayAction::Find(FindAction::Close))
+    )
 }
 
 impl Keys {
@@ -292,11 +314,10 @@ impl Keys {
         // Also finds a collision in the merged keys
         self.trees(Target::Overlay(kind))?;
         let closes = self.merged(Target::Overlay(kind)).iter().any(|bindings| {
-            bindings.values().any(|actions| {
-                actions
-                    .0
-                    .contains(&Action::Editor(EditorAction::CloseOverlay))
-            })
+            bindings
+                .values()
+                .flat_map(|actions| &actions.0)
+                .any(closes_overlay)
         });
         if closes {
             Ok(())

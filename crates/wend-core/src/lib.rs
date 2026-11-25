@@ -7,6 +7,7 @@ pub mod config;
 pub mod editor;
 pub mod frame;
 pub mod input;
+mod input_box;
 pub mod layout;
 mod number;
 pub mod output;

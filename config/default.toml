@@ -30,11 +30,14 @@ i = "insert_mode" # insert mode
 j = "down" # one row down
 k = "up" # one row up
 l = "right" # one grapheme right
+n = "next_match" # select the next match of the search
 o = ["open_line", "insert_mode"] # open a line below, then insert mode
+p = "previous_match" # select the previous match of the search
 u = "revert" # revert to the last save
 v = "select_mode" # select mode
 w = "next_word" # select the next word
 x = "select_row" # select the screen row the cursor is on
+"/" = "find" # search the text
 "<esc>" = [
   "collapse_selection",
   "normal_mode",
@@ -55,11 +58,14 @@ i = "insert_mode" # insert mode
 j = "down" # one row down
 k = "up" # one row up
 l = "right" # one grapheme right
+n = "next_match" # select the next match of the search
 o = ["open_line", "insert_mode"] # open a line below, then insert mode
+p = "previous_match" # select the previous match of the search
 u = "revert" # revert to the last save
 v = "normal_mode" # normal mode
 w = "next_word" # select the next word
 x = "select_row" # select the screen row the cursor is on
+"/" = "find" # search the text
 "<esc>" = [
   "collapse_selection",
   "normal_mode",
@@ -79,6 +85,8 @@ x = "select_row" # select the screen row the cursor is on
 [keys.scratch.normal]
 ":" = "open_command_line"         # type a command
 "<leader>e" = "open_test_overlay" # two windows side by side
+"<leader>f" = "open_search"       # search for a file
+"<leader>/" = "open_search text"  # search for text in the files
 
 [keys.scratch.select]
 ":" = "open_command_line" # type a command
@@ -97,6 +105,43 @@ x = "select_row" # select the screen row the cursor is on
 
 [keys.command.insert]
 "<enter>" = "run_command" # run the command typed
+
+# What the search binds over the shared keys, for the box the query is typed in and the one the
+# results are in. It must keep a binding that closes it.
+[keys.search.normal]
+"<esc>" = "close_overlay" # close the search
+"<enter>" = "pick_result" # open the file on the line picked
+
+[keys.search.select]
+"<enter>" = "pick_result" # open the file on the line picked
+
+[keys.search.insert]
+"<enter>" = "pick_result" # open the file on the line picked
+
+# What the prompt that searches a text binds over the shared keys. It must keep a binding that
+# closes it, which puts the selection back where it was.
+[keys.find.normal]
+"<esc>" = "close_find"     # close the search
+"<enter>" = "confirm_find" # keep the match selected
+
+[keys.find.select]
+"<enter>" = "confirm_find" # keep the match selected
+
+[keys.find.insert]
+"<esc>" = "close_find"     # close the search
+"<enter>" = "confirm_find" # keep the match selected
+
+[search]
+# What finds the results the search lists, run by `sh -c` for each query. Each prints one result
+# per line, and gets the query in the environment variable `WEND_QUERY`, which is never written
+# into the command. Both need `rg` installed. To match fuzzily swap the second `rg` of `files`
+# for a matcher, such as `fzf --filter "$WEND_QUERY"`.
+# The files to list, which are matched as plain text, in any case until the query has a capital.
+# A result is the path `Enter` opens.
+files = 'rg --files | rg --fixed-strings --smart-case -e "$WEND_QUERY"'
+# The text in the files, with no results for an empty query. A result is `path:line:text`, and
+# `Enter` opens the file on its line.
+text = '[ -n "$WEND_QUERY" ] && rg --with-filename --line-number --no-heading --color never --smart-case --fixed-strings -e "$WEND_QUERY"'
 
 
 [scroll]

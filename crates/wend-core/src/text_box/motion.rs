@@ -20,6 +20,9 @@ pub enum Motion {
     Page(Direction),
     /// Moves to the start or end of the file.
     File(Direction),
+    /// Selects the next or previous match of the query the box was given, wrapping around the
+    /// text.
+    Match(Direction),
 }
 
 mod word;
@@ -47,7 +50,11 @@ impl TextBox {
             Motion::Vertical(_) | Motion::Page(_) => ColumnPolicy::Keep,
             _ => ColumnPolicy::Sync,
         };
-        self.set_selection(selection, policy);
+        if matches!(motion, Motion::Match(_)) {
+            self.show_match(selection);
+        } else {
+            self.set_selection(selection, policy);
+        }
         self.check_invariants();
     }
 
@@ -60,6 +67,7 @@ impl TextBox {
             Motion::File(direction) => Selection::point(self.file_edge(direction)),
             Motion::Word(Direction::Forward) => self.word_forward()?,
             Motion::Word(Direction::Backward) => self.word_backward()?,
+            Motion::Match(direction) => self.match_motion(direction)?,
             // Scrolls the text box, so it can't be worked out without moving
             Motion::Page(_) => return None,
         })

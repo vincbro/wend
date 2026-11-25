@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc af272ad2a630ac5f0016cf22ecbf6c5faeaa22ba39f504b8ee3709d1143ee6b6 # shrinks to area = Area { cols: 0, rows: 0 }, calls = [Key(Key { code: Char('a'), modifiers: Modifiers { alt: false, control: false, shift: false } })]
 cc 3afc2c499531f3e2de6f330ef81608c9e91020872d1231b31a80399119eb31e2 # shrinks to area = Area { cols: 1, rows: 1 }, calls = []
+cc c006086cc428d22c5f4f09c53be3f87fffa2b92dd8efb484ae283162d791953e # shrinks to area = Area { cols: 0, rows: 0 }, calls = [Action(TextBox(OpenLine)), Action(TextBox(Find)), File { path: 0, bytes: [230, 188, 162], language: None }, Key(Key { code: Tab, modifiers: Modifiers { alt: false, control: false, shift: false } })]

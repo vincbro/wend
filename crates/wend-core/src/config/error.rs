@@ -22,8 +22,13 @@ pub enum Error {
     UnexpectedArguments(Box<str>),
     #[error("`{0}` needs arguments")]
     MissingArguments(Box<str>),
+    #[error("`{name}` takes {expected}")]
+    InvalidArguments {
+        name: &'static str,
+        expected: &'static str,
+    },
     #[error(
-        "`[keys.{overlay}.<mode>]` binds no `close_overlay` in any mode, so there is no way out of it"
+        "`[keys.{overlay}.<mode>]` binds nothing that closes it in any mode, so there is no way out of it"
     )]
     NoWayOut { overlay: &'static str },
     #[error(

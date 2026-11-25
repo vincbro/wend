@@ -1,6 +1,6 @@
 use std::mem;
 
-use super::{CommandLine, Editor, Error, Overlay, Result, TestOverlay};
+use super::{CommandLine, Editor, Error, Overlay, Result, SearchOverlay, TestOverlay};
 use crate::{
     input::{
         action::{Action, EditorAction, ScratchAction},
@@ -18,12 +18,19 @@ impl Editor {
         // An open overlay is first in line for the keys, and takes all of them
         match &mut self.overlay {
             Some(overlay) => {
-                if let Err(error) = overlay.key_press(key, &mut self.requests) {
+                let result = overlay.key_press(key, &mut self.requests);
+                self.outputs.extend(overlay.take_ask());
+                if let Err(error) = result {
                     self.fail(&Error::Command(error));
                 }
             }
             None => self.scratch.key_press(key, &mut self.requests),
         }
+        self.run_requests();
+    }
+
+    /// Runs the actions in `requests`, which a key or an answer from the frontend left there.
+    pub(super) fn run_requests(&mut self) {
         // Taken out so the requests can run on the editor, then given back for their memory
         let mut requests = mem::take(&mut self.requests);
         for action in requests.drain(..) {
@@ -69,22 +76,41 @@ impl Editor {
     fn perform_owned(&mut self, action: &Action) -> Result<()> {
         match action {
             Action::Editor(action) => self.perform_editor(action),
-            Action::Scratch(action) => self.perform_scratch(*action),
+            Action::Scratch(action) => self.perform_scratch(action),
             // Nothing asks the editor to run the others
             Action::TextBox(_) | Action::Overlay(_) => Ok(()),
         }
     }
 
     /// Does an action of the scratch's group, and writes what it gives back.
-    fn perform_scratch(&mut self, action: ScratchAction) -> Result<()> {
+    ///
+    /// A save with a path writes there. For an unnamed document that names it, so it is clean
+    /// and later saves go there. For a named one it is a copy: the document keeps its path and
+    /// stays as dirty as it was.
+    fn perform_scratch(&mut self, action: &ScratchAction) -> Result<()> {
         match action {
-            ScratchAction::Save => {
-                let Some(path) = self.shown_path.clone() else {
+            ScratchAction::Save(target) => {
+                let Some(path) = target.as_ref().or(self.shown_path.as_ref()).cloned() else {
                     return Err(Error::NoPath);
                 };
-                if let Some(rope) = self.scratch.act(action) {
-                    self.outputs.push(Output::Write { path, rope });
+                let own = self.shown_path.as_deref() == Some(&*path);
+                let names = self.shown_path.is_none();
+                // The editor keeps each path in one place
+                if !own
+                    && self
+                        .documents
+                        .iter()
+                        .any(|document| document.path() == Some(&*path))
+                {
+                    return Err(Error::PathOpen(path));
                 }
+                let Some(rope) = self.scratch.act(action, !own && !names) else {
+                    return Ok(());
+                };
+                if names {
+                    self.shown_path = Some(path.clone());
+                }
+                self.outputs.push(Output::Write { path, rope });
             }
         }
         Ok(())
@@ -93,8 +119,17 @@ impl Editor {
     fn perform_editor(&mut self, action: &EditorAction) -> Result<()> {
         match action {
             EditorAction::Open(path) => self.outputs.push(Output::Read { path: path.clone() }),
+            EditorAction::OpenAt { path, line } => {
+                self.show_at = Some((path.clone(), *line));
+                self.outputs.push(Output::Read { path: path.clone() });
+            }
             EditorAction::OpenCommandLine => {
                 self.overlay = Some(Overlay::Command(Box::new(CommandLine::new(&self.config)?)));
+            }
+            EditorAction::OpenSearch(kind) => {
+                let mut search = SearchOverlay::new(&self.config, *kind)?;
+                self.outputs.extend(search.take_ask());
+                self.overlay = Some(Overlay::Search(Box::new(search)));
             }
             EditorAction::CloseOverlay => self.overlay = None,
             EditorAction::OpenTestOverlay => {
@@ -196,7 +231,7 @@ mod tests {
     fn save_without_a_path_is_an_error() {
         let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
 
-        editor.perform(&Action::Scratch(ScratchAction::Save));
+        editor.perform(&Action::Scratch(ScratchAction::Save(None)));
 
         assert_eq!(
             editor.message(),
@@ -220,7 +255,7 @@ mod tests {
             language: None,
         });
 
-        editor.perform(&Action::Scratch(ScratchAction::Save));
+        editor.perform(&Action::Scratch(ScratchAction::Save(None)));
 
         assert!(
             editor.drain_outputs().any(|output| matches!(
@@ -229,5 +264,103 @@ mod tests {
             )),
             "the path of the file and its text"
         );
+    }
+
+    fn written(editor: &mut Editor) -> Vec<(Box<Path>, String)> {
+        editor
+            .drain_outputs()
+            .filter_map(|output| match output {
+                Output::Write { path, rope } => Some((path, rope.to_string())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn save_to(path: &str) -> Action {
+        Action::parse(Scope::Scratch, &format!("write {path}")).unwrap()
+    }
+
+    #[test]
+    fn writing_an_unnamed_document_to_a_path_names_it() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        editor.perform(&Action::TextBox(TextBoxAction::Mode(Mode::Insert)));
+        editor.perform(&Action::TextBox(TextBoxAction::Insert('x')));
+
+        editor.perform(&save_to("new.txt"));
+        editor.perform(&Action::Scratch(ScratchAction::Save(None)));
+
+        let writes = written(&mut editor);
+        assert_eq!(
+            writes,
+            vec![
+                (Path::new("new.txt").into(), "x".to_owned()),
+                (Path::new("new.txt").into(), "x".to_owned())
+            ],
+            "the second save goes to the name it was given"
+        );
+    }
+
+    #[test]
+    fn writing_a_named_document_to_another_path_is_a_copy() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        editor.apply(Input::File {
+            path: Path::new("a.txt").into(),
+            bytes: b"abc".as_slice().into(),
+            language: None,
+        });
+        editor.perform(&Action::TextBox(TextBoxAction::Mode(Mode::Insert)));
+        editor.perform(&Action::TextBox(TextBoxAction::Insert('x')));
+
+        editor.perform(&save_to("b.txt"));
+        editor.perform(&Action::Scratch(ScratchAction::Save(None)));
+
+        let writes = written(&mut editor);
+        assert_eq!(writes[0].0.as_ref(), Path::new("b.txt"));
+        assert_eq!(
+            writes[1].0.as_ref(),
+            Path::new("a.txt"),
+            "the document kept its path"
+        );
+    }
+
+    #[test]
+    fn a_copy_leaves_the_document_dirty() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        editor.apply(Input::File {
+            path: Path::new("a.txt").into(),
+            bytes: b"abc".as_slice().into(),
+            language: None,
+        });
+        editor.perform(&Action::TextBox(TextBoxAction::Mode(Mode::Insert)));
+        editor.perform(&Action::TextBox(TextBoxAction::Insert('x')));
+        editor.perform(&save_to("b.txt"));
+
+        editor.perform(&Action::TextBox(TextBoxAction::Revert));
+
+        assert!(
+            !editor.scratch.buffer().rope().to_string().contains('x'),
+            "a revert goes back to the file's text, not to the copy's"
+        );
+    }
+
+    #[test]
+    fn writing_to_a_path_open_as_another_document_is_refused() {
+        let mut editor = Editor::new(Area::new(80, 24), &Config::default()).unwrap();
+        for name in ["a.txt", "b.txt"] {
+            editor.apply(Input::File {
+                path: Path::new(name).into(),
+                bytes: b"abc".as_slice().into(),
+                language: None,
+            });
+        }
+
+        editor.perform(&save_to("a.txt"));
+
+        assert!(
+            editor
+                .message()
+                .is_some_and(|message| message.contains("already open"))
+        );
+        assert!(written(&mut editor).is_empty(), "nothing written");
     }
 }

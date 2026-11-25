@@ -11,7 +11,7 @@ use crate::{
     frame::{Area, Frame},
     input::{
         Failure, Input,
-        action::{Action, EditorAction, ScratchAction},
+        action::{Action, EditorAction, ScratchAction, SearchKind},
         key::{Key, KeyCode},
     },
     output::Output,
@@ -40,6 +40,11 @@ enum Call {
         kind: usize,
         path: usize,
         reason: String,
+    },
+    /// The lines a search found, for the newest search or an old one.
+    SearchResults {
+        id: u64,
+        text: String,
     },
     Config {
         tab_width: usize,
@@ -72,7 +77,8 @@ fn call() -> impl Strategy<Value = Call> {
         4 => text_box_fuzz::text_box_action().prop_map(Action::TextBox),
         1 => Just(Action::Editor(EditorAction::OpenTestOverlay)),
         1 => Just(Action::Editor(EditorAction::OpenCommandLine)),
-        1 => Just(Action::Scratch(ScratchAction::Save)),
+        1 => Just(Action::Editor(EditorAction::OpenSearch(SearchKind::Files))),
+        1 => Just(Action::Scratch(ScratchAction::Save(None))),
     ];
     let area = text_box_fuzz::area();
     let bytes = prop_oneof![
@@ -88,8 +94,10 @@ fn call() -> impl Strategy<Value = Call> {
             .prop_map(|(path, bytes, language)| Call::File { path, bytes, language }),
         4 => (0..FRAME_COUNT).prop_map(Call::Drawn),
         1 => Just(Call::BadLanguage),
-        2 => (0..3usize, 0..PATHS.len(), text_box_fuzz::text())
+        2 => (0..4usize, 0..PATHS.len(), text_box_fuzz::text())
             .prop_map(|(kind, path, reason)| Call::Failed { kind, path, reason }),
+        2 => (1..=4u64, text_box_fuzz::text())
+            .prop_map(|(id, text)| Call::SearchResults { id, text }),
         1 => (1..=8usize, 0..=5usize, 0..=6usize, 0..=3u16).prop_map(
             |(tab_width, margin, min_digits, padding)| Call::Config { tab_width, margin, min_digits, padding }
         ),
@@ -138,12 +146,17 @@ impl Frontend {
                 Input::Failed(match kind {
                     0 => Failure::Read { path, reason },
                     1 => Failure::Write { path, reason },
+                    2 => Failure::Search { id: 1, reason },
                     _ => Failure::Language {
                         tag: LanguageTag::new(PATHS[0]),
                         reason,
                     },
                 })
             }
+            Call::SearchResults { id, text } => Input::SearchResults {
+                id,
+                text: text.into(),
+            },
             Call::Config {
                 tab_width,
                 margin,

@@ -8,7 +8,7 @@ use crate::{
 /// The blank background is what stops the cells below a floating pane from showing through
 /// it. The element inside is given the space within the border and places itself in that
 /// the way it would anywhere else.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pane<Inner> {
     layout: Layout,
     inner: Inner,

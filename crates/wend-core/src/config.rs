@@ -16,7 +16,7 @@ pub use actions::Actions;
 pub use chord::{Chord, Stroke};
 pub use error::{Error, Result};
 pub use keys::{Bindings, KeyTrees, Keys, Leader, Overrides, Target};
-pub use settings::{LineNumbers, Scroll, Text};
+pub use settings::{LineNumbers, Scroll, Search, Text};
 
 /// The default config as a file, with a comment on every setting. A config file only needs to
 /// hold what it changes.
@@ -32,6 +32,7 @@ pub struct Config {
     pub scroll: Scroll,
     pub text: Text,
     pub line_numbers: LineNumbers,
+    pub search: Search,
 }
 
 impl Default for Config {

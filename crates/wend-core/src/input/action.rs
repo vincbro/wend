@@ -7,7 +7,10 @@ use serde::{
 };
 
 mod overlay;
-pub use overlay::{CommandAction, OverlayAction, OverlayKind, TestOverlayAction};
+pub use overlay::{
+    CommandAction, FindAction, OverlayAction, OverlayKind, SearchAction, SearchKind,
+    TestOverlayAction,
+};
 
 use crate::{
     config::{self, Error},
@@ -32,20 +35,30 @@ pub enum Action {
 pub enum EditorAction {
     /// Asks the frontend for the file at the path, which the editor then shows.
     Open(Box<Path>),
+    /// Asks the frontend for the file at the path, which the editor then shows with the cursor
+    /// on the line, counted from 1.
+    OpenAt {
+        path: Box<Path>,
+        line: usize,
+    },
     /// Opens the overlay that tries out arranging two windows.
     OpenTestOverlay,
     /// Opens the command line, which runs the action its text names.
     OpenCommandLine,
+    /// Opens the search, which lists what the frontend finds and opens the one picked.
+    OpenSearch(SearchKind),
     /// Closes the overlay that has the keys.
     CloseOverlay,
     Quit,
 }
 
 /// What the scratch does about the document it shows, which a text box has no notion of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Not `Copy`, because an action that takes arguments owns them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScratchAction {
-    /// Writes the document to its file.
-    Save,
+    /// Writes the document to the path, or to its own file when there is none.
+    Save(Option<Box<Path>>),
 }
 
 /// What a text box does with its text, its selection and its mode.
@@ -65,6 +78,8 @@ pub enum TextBoxAction {
     /// Selects the screen row the head is on, a wrapped line one row at a time.
     SelectRow,
     Revert,
+    /// Opens the prompt that searches the text, which only a box that can be searched does.
+    Find,
 }
 
 /// The groups of actions a piece of text can name, which is what a place that takes actions as
@@ -113,6 +128,11 @@ impl Action {
         if let Some(action) = EditorAction::with_arguments(name, arguments) {
             return action.map(Self::Editor);
         }
+        if let (Scope::Scratch, Some(action)) =
+            (scope, ScratchAction::with_arguments(name, arguments))
+        {
+            return Ok(Self::Scratch(action));
+        }
         let action = EditorAction::from_name(name)
             .map(Self::Editor)
             .or_else(|| match scope {
@@ -137,16 +157,41 @@ impl EditorAction {
         match name {
             "open" | "o" if arguments.is_empty() => Some(Err(Error::MissingArguments(name.into()))),
             "open" | "o" => Some(Ok(Self::Open(Path::new(arguments).into()))),
+            "open_at" => Some(Self::open_at(arguments)),
+            "open_search" if !arguments.is_empty() => Some(
+                SearchKind::from_name(arguments)
+                    .map(Self::OpenSearch)
+                    .ok_or(Error::InvalidArguments {
+                        name: "open_search",
+                        expected: "`files` or `text`",
+                    }),
+            ),
             _ => None,
         }
+    }
+
+    /// Reads the arguments of `open_at`: a path, a colon and a line, counted from 1.
+    fn open_at(arguments: &str) -> config::Result<Self> {
+        let invalid = || Error::InvalidArguments {
+            name: "open_at",
+            expected: "a path and a line, as `path:line`",
+        };
+        let (path, line) = arguments.rsplit_once(':').ok_or_else(invalid)?;
+        let line = line.parse().map_err(|_| invalid())?;
+        Ok(Self::OpenAt {
+            path: Path::new(path).into(),
+            line,
+        })
     }
 
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Open(_) => "open",
+            Self::OpenAt { .. } => "open_at",
             Self::OpenTestOverlay => "open_test_overlay",
             Self::OpenCommandLine => "open_command_line",
+            Self::OpenSearch(_) => "open_search",
             Self::CloseOverlay => "close_overlay",
             Self::Quit => "quit",
         }
@@ -156,8 +201,11 @@ impl EditorAction {
     pub const fn description(&self) -> &'static str {
         match self {
             Self::Open(_) => "open a file",
+            Self::OpenAt { .. } => "open a file at a line",
             Self::OpenTestOverlay => "two windows side by side",
             Self::OpenCommandLine => "type a command",
+            Self::OpenSearch(SearchKind::Files) => "search for a file",
+            Self::OpenSearch(SearchKind::Text) => "search for text in the files",
             Self::CloseOverlay => "close the overlay",
             Self::Quit => "quit",
         }
@@ -169,6 +217,7 @@ impl EditorAction {
         Some(match name {
             "open_test_overlay" => Self::OpenTestOverlay,
             "open_command_line" => Self::OpenCommandLine,
+            "open_search" => Self::OpenSearch(SearchKind::Files),
             "close_overlay" => Self::CloseOverlay,
             "quit" | "q" => Self::Quit,
             _ => return None,
@@ -178,23 +227,34 @@ impl EditorAction {
 
 impl ScratchAction {
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
-            Self::Save => "save",
+            Self::Save(_) => "save",
         }
     }
 
     #[must_use]
-    pub const fn description(self) -> &'static str {
+    pub const fn description(&self) -> &'static str {
         match self {
-            Self::Save => "save",
+            Self::Save(_) => "save",
         }
     }
 
+    /// The action with arguments that `name` means, none when there are no arguments.
+    fn with_arguments(name: &str, arguments: &str) -> Option<Self> {
+        match name {
+            "save" | "write" | "s" | "w" if !arguments.is_empty() => {
+                Some(Self::Save(Some(Path::new(arguments).into())))
+            }
+            _ => None,
+        }
+    }
+
+    /// The action `name` means when it takes no arguments, the inverse of `name`.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
-            "save" | "s" | "w" => Self::Save,
+            "save" | "write" | "s" | "w" => Self::Save(None),
             _ => return None,
         })
     }
@@ -218,6 +278,8 @@ impl TextBoxAction {
             Self::Motion(Motion::Page(Direction::Backward)) => "page_up",
             Self::Motion(Motion::File(Direction::Backward)) => "file_start",
             Self::Motion(Motion::File(Direction::Forward)) => "file_end",
+            Self::Motion(Motion::Match(Direction::Forward)) => "next_match",
+            Self::Motion(Motion::Match(Direction::Backward)) => "previous_match",
             Self::Mode(Mode::Normal) => "normal_mode",
             Self::Mode(Mode::Select) => "select_mode",
             Self::Mode(Mode::Insert) => "insert_mode",
@@ -231,6 +293,7 @@ impl TextBoxAction {
             Self::CollapseSelection => "collapse_selection",
             Self::SelectRow => "select_row",
             Self::Revert => "revert",
+            Self::Find => "find",
         })
     }
 
@@ -249,6 +312,8 @@ impl TextBoxAction {
             Self::Motion(Motion::Page(Direction::Backward)) => "first row on screen",
             Self::Motion(Motion::File(Direction::Backward)) => "start of the file",
             Self::Motion(Motion::File(Direction::Forward)) => "end of the file",
+            Self::Motion(Motion::Match(Direction::Forward)) => "select the next match",
+            Self::Motion(Motion::Match(Direction::Backward)) => "select the previous match",
             Self::Mode(Mode::Normal) => "normal mode",
             Self::Mode(Mode::Select) => "select mode",
             Self::Mode(Mode::Insert) => "insert mode",
@@ -262,6 +327,7 @@ impl TextBoxAction {
             Self::CollapseSelection => "drop the selection down to the cursor",
             Self::SelectRow => "select the screen row the cursor is on",
             Self::Revert => "revert to the last save",
+            Self::Find => "search the text",
         }
     }
 
@@ -280,6 +346,8 @@ impl TextBoxAction {
             "page_up" => Self::Motion(Motion::Page(Direction::Backward)),
             "file_start" => Self::Motion(Motion::File(Direction::Backward)),
             "file_end" => Self::Motion(Motion::File(Direction::Forward)),
+            "next_match" => Self::Motion(Motion::Match(Direction::Forward)),
+            "previous_match" => Self::Motion(Motion::Match(Direction::Backward)),
             "normal_mode" => Self::Mode(Mode::Normal),
             "select_mode" => Self::Mode(Mode::Select),
             "insert_mode" => Self::Mode(Mode::Insert),
@@ -292,6 +360,7 @@ impl TextBoxAction {
             "collapse_selection" => Self::CollapseSelection,
             "select_row" => Self::SelectRow,
             "revert" => Self::Revert,
+            "find" => Self::Find,
             _ => return None,
         })
     }
@@ -301,6 +370,15 @@ impl Serialize for Action {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if let Self::Editor(EditorAction::Open(path)) = self {
             return serializer.collect_str(&format_args!("open {}", path.display()));
+        }
+        if let Self::Editor(EditorAction::OpenAt { path, line }) = self {
+            return serializer.collect_str(&format_args!("open_at {}:{line}", path.display()));
+        }
+        if let Self::Editor(EditorAction::OpenSearch(SearchKind::Text)) = self {
+            return serializer.serialize_str("open_search text");
+        }
+        if let Self::Scratch(ScratchAction::Save(Some(path))) = self {
+            return serializer.collect_str(&format_args!("save {}", path.display()));
         }
         let name = self
             .name()
@@ -353,9 +431,11 @@ mod tests {
             Action::TextBox(TextBoxAction::CollapseSelection),
             Action::TextBox(TextBoxAction::SelectRow),
             Action::TextBox(TextBoxAction::Revert),
-            Action::Scratch(ScratchAction::Save),
+            Action::Scratch(ScratchAction::Save(None)),
             Action::Editor(EditorAction::OpenTestOverlay),
             Action::Editor(EditorAction::OpenCommandLine),
+            Action::Editor(EditorAction::OpenSearch(SearchKind::Files)),
+            Action::TextBox(TextBoxAction::Find),
             Action::Editor(EditorAction::CloseOverlay),
             Action::Editor(EditorAction::Quit),
         ];
@@ -417,7 +497,7 @@ mod tests {
     fn saving_is_in_the_scratch_scope_and_no_narrower_one() {
         assert_eq!(
             Action::parse(Scope::Scratch, "save").unwrap(),
-            Action::Scratch(ScratchAction::Save)
+            Action::Scratch(ScratchAction::Save(None))
         );
         for scope in [
             Scope::Editor,
@@ -448,6 +528,56 @@ mod tests {
     }
 
     #[test]
+    fn save_takes_the_rest_of_the_text_as_a_path_and_write_is_save() {
+        assert_eq!(
+            Action::parse(Scope::Scratch, "write  my file.txt ").unwrap(),
+            Action::Scratch(ScratchAction::Save(Some(Path::new("my file.txt").into())))
+        );
+        assert_eq!(
+            Action::parse(Scope::Scratch, "w").unwrap(),
+            Action::Scratch(ScratchAction::Save(None)),
+            "without a path it is the document's own"
+        );
+    }
+
+    #[test]
+    fn open_search_takes_what_it_looks_for() {
+        assert_eq!(
+            Action::parse(Scope::Scratch, "open_search").unwrap(),
+            Action::Editor(EditorAction::OpenSearch(SearchKind::Files)),
+            "files without an argument"
+        );
+        assert_eq!(
+            Action::parse(Scope::Scratch, "open_search text").unwrap(),
+            Action::Editor(EditorAction::OpenSearch(SearchKind::Text))
+        );
+        assert!(
+            matches!(
+                Action::parse(Scope::Scratch, "open_search nothing"),
+                Err(Error::InvalidArguments { .. })
+            ),
+            "only the kinds there are"
+        );
+    }
+
+    #[test]
+    fn open_at_takes_a_path_and_a_line_after_its_last_colon() {
+        assert_eq!(
+            Action::parse(Scope::Scratch, "open_at src/a:b.rs:12").unwrap(),
+            Action::Editor(EditorAction::OpenAt {
+                path: Path::new("src/a:b.rs").into(),
+                line: 12
+            })
+        );
+        let error = Action::parse(Scope::Scratch, "open_at src/a.rs").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "`open_at` takes a path and a line, as `path:line`",
+            "it says what it takes, not that it takes nothing"
+        );
+    }
+
+    #[test]
     fn open_without_a_path_is_refused() {
         assert!(
             matches!(
@@ -462,7 +592,7 @@ mod tests {
     fn surrounding_space_is_ignored() {
         assert_eq!(
             Action::parse(Scope::Scratch, "  save  ").unwrap(),
-            Action::Scratch(ScratchAction::Save)
+            Action::Scratch(ScratchAction::Save(None))
         );
     }
 
@@ -470,10 +600,10 @@ mod tests {
     fn arguments_to_an_action_that_takes_none_are_refused() {
         assert!(
             matches!(
-                Action::parse(Scope::Scratch, "save now"),
-                Err(Error::UnexpectedArguments(name)) if &*name == "save"
+                Action::parse(Scope::Scratch, "quit now"),
+                Err(Error::UnexpectedArguments(name)) if &*name == "quit"
             ),
-            "save has no arguments"
+            "quit has no arguments"
         );
     }
 

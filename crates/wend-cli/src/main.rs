@@ -5,7 +5,6 @@ use std::{
     io::{self, BufWriter, Write},
     panic,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::mpsc,
     thread,
 };
@@ -27,6 +26,7 @@ mod config;
 mod draw;
 mod input;
 mod screen;
+mod search;
 mod theme;
 
 fn main() -> Result<()> {
@@ -56,19 +56,18 @@ fn main() -> Result<()> {
     let area = Area::new(window.columns, window.rows);
     let mut editor = Editor::new(area, &config).context("failed to start the editor")?;
 
-    let path = PathBuf::from_str(&file)
-        .context("not a valid path")?
-        .into_boxed_path();
-    let bytes = fs::read(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?
-        .into_boxed_slice();
+    // The editor draws when an input reaches it, so this makes the first frame, which a start
+    // with no file would otherwise wait for a key to get
     input_tx
-        .send(Input::File {
-            path,
-            bytes,
-            language: Some(LanguageTag::new("rust")),
-        })
-        .context("the editor stopped before the file was sent")?;
+        .send(Input::Resize(area))
+        .context("the editor stopped before it was sized")?;
+    // No file is a start with an unnamed buffer. A file that can't be read is said in the status
+    // bar, as any other failure is, and doesn't end the editor.
+    if let Some(file) = file {
+        input_tx
+            .send(read(PathBuf::from(file).into_boxed_path()))
+            .context("the editor stopped before the file was sent")?;
+    }
 
     let editor_thread = thread::spawn(move || -> Result<()> {
         for input in input_rx {
@@ -99,6 +98,8 @@ fn main() -> Result<()> {
     // any before
     let mut buf = Vec::new();
 
+    let mut search = search::Search::new(&config.search, input_tx.clone());
+
     // The frame the terminal shows, so the next one only draws what differs from it
     let mut on_screen: Option<Frame> = None;
 
@@ -120,6 +121,7 @@ fn main() -> Result<()> {
                         .context("the editor stopped")?;
                 }
             }
+            output::Output::Search { id, kind, query } => search.start(id, kind, &query),
             output::Output::Quit => break,
             output::Output::Write { path, rope } => {
                 if let Some(failed) = write(path, rope.chunks()) {
@@ -158,13 +160,19 @@ fn print(text: &str) -> Result<()> {
         .context("failed to write to stdout")
 }
 
-/// Reads the file the editor asked for, as the input that answers it. A file that can't be read
+/// Reads the file the editor asked for, as the input that answers it. A file that doesn't exist
+/// yet is an empty one with that path, which the first save creates. A file that can't be read
 /// is the user's to hear about, so it answers with the failure and the editor goes on.
 fn read(path: Box<Path>) -> Input {
-    match fs::read(&path) {
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => Ok(bytes.into_boxed_slice()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Box::default()),
+        Err(error) => Err(error),
+    };
+    match bytes {
         Ok(bytes) => Input::File {
             path,
-            bytes: bytes.into_boxed_slice(),
+            bytes,
             language: Some(LanguageTag::new("rust")),
         },
         Err(error) => Input::Failed(Failure::Read {

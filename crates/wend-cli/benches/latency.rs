@@ -153,7 +153,10 @@ impl Session {
                     wasm: Box::from(RUST_WASM),
                     highlights: Box::from(RUST_HIGHLIGHTS),
                 }),
-                Output::Write { .. } | Output::Read { .. } | Output::Quit => {}
+                Output::Write { .. }
+                | Output::Read { .. }
+                | Output::Search { .. }
+                | Output::Quit => {}
             }
             self.outputs.extend(self.editor.drain_outputs());
         }

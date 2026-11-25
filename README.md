@@ -78,7 +78,11 @@ What works today. Normal and select mode share a keymap, select only makes motio
 | `v`       | toggle select mode                      |
 | `:`       | type a command, `Enter` runs it         |
 
-Saving and quitting are commands and have no key by default: `:save` or `:w`, `:quit` or `:q`.
+Saving and quitting are commands and have no key by default: `:save` or `:w` (`:write`, and `:w path` to write to another file), `:quit` or `:q`.
+
+`/` opens a prompt along the bottom that searches the text as you type: the match is selected, so `d` deletes it. `Enter` keeps it and `Esc` goes back to where you were. `n` and `p` then select the next and the previous match, wrapping around, and in select mode they extend the selection. A query with no capital ignores case.
+
+`<leader>f` opens the search: type a query, and the files that match are listed under it. `Esc` moves from the query to the list, `j` and `k` move in it, `i` goes back to the query and `Enter` opens the file the cursor is on. `<leader>/` is the same search over the text in the files, and `Enter` opens the file on the line of the result. What finds them are the `files` and `text` commands of `[search]`, which need `rg` installed by default and match the query as plain text. Swap the second `rg` for `fzf --filter "$WEND_QUERY"` to match fuzzily.
 
 ## Config
 

@@ -19,13 +19,24 @@ impl Element for TextBox {
         let cursor = self.cursor_position();
         self.refresh_wrap();
         let selected = self.selection_range();
+        let head_line = self.buffer.rope().line_of_byte(self.selection.head());
+        // The line of the row being drawn is looked up once for the cells of the row
+        let mut row_on_line = (usize::MAX, false);
         let mut open = mem::take(&mut self.open_highlights);
         // The highlights borrow the buffer for as long as the loop runs, so the loop only
         // reads the other fields, and doesn't call methods that take the whole text box
         let spans = self.buffer.highlights(self.visible_bytes());
         let mut highlighter = Highlighter::new(spans, &mut open);
         for (pos, slot) in self.wrap.slots() {
+            if row_on_line.0 != pos.row {
+                let on_line = self
+                    .wrap
+                    .row_metadata(pos.row)
+                    .is_some_and(|metadata| metadata.line == head_line);
+                row_on_line = (pos.row, on_line);
+            }
             let mut cell = Self::cell(&self.wrap, self.selection, slot, pos, &selected);
+            cell.style.line = row_on_line.1;
             // Tails are blanks, only the glyph itself has a color
             if let Slot::Glyph(glyph) = slot
                 && let Some(highlight) = highlighter.at(glyph.start())
@@ -38,7 +49,9 @@ impl Element for TextBox {
             canvas.set_cursor(cursor);
         }
 
+        drop(highlighter);
         self.open_highlights = open;
+        self.render_find(canvas);
     }
 }
 
@@ -97,6 +110,7 @@ impl TextBox {
             // The content is set by render, which walks the cells in order
             style: Style {
                 content: Content::Plain,
+                line: false,
                 selected: selected.contains(&glyph.start()),
                 cursor: glyph.to_range().contains(&selection.head()),
             },

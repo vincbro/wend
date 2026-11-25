@@ -16,7 +16,7 @@ use frame_pool::FramePool;
 mod status_bar;
 use status_bar::StatusBar;
 mod overlay;
-use overlay::{CommandLine, Overlay, TestOverlay};
+use overlay::{CommandLine, Overlay, SearchOverlay, TestOverlay};
 mod document;
 use document::Document;
 mod error;
@@ -60,6 +60,8 @@ pub struct Editor {
     /// The languages whose grammar was asked for and hasn't come yet, so a buffer opened
     /// meanwhile doesn't ask again.
     requested_languages: HashSet<LanguageTag>,
+    /// The file `open_at` asked for and the line to put the cursor on once it is shown.
+    show_at: Option<(Box<Path>, usize)>,
 }
 
 impl Editor {
@@ -85,6 +87,7 @@ impl Editor {
             is_stale: false,
             loader,
             requested_languages: HashSet::new(),
+            show_at: None,
         };
         editor.fit_scratch();
         editor.check_invariants();
@@ -127,8 +130,15 @@ impl Editor {
                 bytes,
                 language,
             } => {
+                let line = self
+                    .show_at
+                    .take_if(|(wanted, _)| *wanted == path)
+                    .map(|(_, line)| line);
                 self.show_file(path, &bytes)?;
                 self.set_language(language);
+                if let Some(line) = line {
+                    self.scratch.go_to_line(line);
+                }
             }
             Input::Drawn(frame) => self.frame_pool.place(frame),
             Input::Language {
@@ -138,6 +148,7 @@ impl Editor {
             } => self.load_language(tag, &wasm, &highlights),
             Input::Config(config) => self.try_set_config(&config)?,
             Input::Failed(failure) => self.fail(&Error::Frontend(failure)),
+            Input::SearchResults { id, text } => self.search_results(id, &text),
         }
         Ok(())
     }
@@ -149,7 +160,31 @@ impl Editor {
         if let Error::Frontend(Failure::Language { tag, .. }) = &error {
             self.requested_languages.remove(tag);
         }
+        // The file isn't coming, so there is no line to go to
+        if let Error::Frontend(Failure::Read { path, .. }) = &error
+            && self
+                .show_at
+                .as_ref()
+                .is_some_and(|(wanted, _)| wanted == path)
+        {
+            self.show_at = None;
+        }
+        if let (Error::Frontend(Failure::Search { id, .. }), Some(Overlay::Search(search))) =
+            (error, &mut self.overlay)
+        {
+            search.failed(*id);
+        }
         self.status_bar.show(&error.describe());
+    }
+
+    /// Shows what the frontend found for search `id` in the search, if it is still open, and
+    /// does what picking asks for when the user already picked.
+    fn search_results(&mut self, id: u64, text: &str) {
+        let Some(Overlay::Search(search)) = &mut self.overlay else {
+            return;
+        };
+        search.found(id, text, &mut self.requests);
+        self.run_requests();
     }
 
     /// What the status bar says about a failure, if it says anything.
