@@ -2,7 +2,7 @@ use std::ops;
 
 use crop::Rope;
 
-use super::{ColumnPolicy, Selection, TextBox, visible_lines};
+use super::{ColumnPolicy, Selection, TextBox, limits::visible_lines};
 
 impl TextBox {
     /// The only way the user changes the text, which a read-only box refuses. The selection
@@ -13,7 +13,7 @@ impl TextBox {
         }
         let text = self.within_line_limit(&range, text);
         let change = self.buffer.edit(range, text);
-        self.wrap_dirty = true;
+        self.viewport.mark_dirty();
         self.set_selection(self.selection.map(change), ColumnPolicy::Sync);
     }
 
@@ -68,7 +68,7 @@ impl TextBox {
     /// Returns the start of `text` that fits the line limit once it replaces `range`: all of it
     /// without a limit, otherwise up to the first line break that would go over.
     fn within_line_limit<'a>(&self, range: &ops::Range<usize>, text: &'a str) -> &'a str {
-        let Some(limit) = self.line_limit else {
+        let Some(limit) = self.limits.line_limit() else {
             return text;
         };
         let rope = self.buffer.rope();
@@ -86,7 +86,7 @@ impl TextBox {
     /// Cuts off the text past the line limit. The buffer's clean text is left as it is, so this
     /// is what a revert or a new file has to do again.
     pub(super) fn clip_to_line_limit(&mut self) {
-        let Some(limit) = self.line_limit else {
+        let Some(limit) = self.limits.line_limit() else {
             return;
         };
         if visible_lines(self.buffer.rope()) <= limit.get() {
@@ -104,7 +104,7 @@ impl TextBox {
         }
         self.buffer.revert();
         self.clip_to_line_limit();
-        self.wrap_dirty = true;
+        self.viewport.mark_dirty();
         // There is no change to map through, keep the same bytes as close as the text allows
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
@@ -181,7 +181,7 @@ mod tests {
         let selection = Selection::new(family.len(), text.len() - 1);
         view.set_selection(selection, ColumnPolicy::Sync);
         assert!(
-            view.wrap.find_byte(family.len()).is_none(),
+            view.viewport.wrap().find_byte(family.len()).is_none(),
             "the anchor is off screen"
         );
         view.delete();

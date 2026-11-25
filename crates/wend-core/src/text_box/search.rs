@@ -4,23 +4,51 @@ use crop::Rope;
 
 use super::{ColumnPolicy, Direction, Selection, TextBox};
 
-impl TextBox {
-    /// Lets the box be searched: `/` asks its owner for a prompt, and the box keeps the query
-    /// it is given for `n` and `p`. A box that isn't searchable ignores both.
-    pub fn set_searchable(&mut self, searchable: bool) {
-        self.searchable = searchable;
-    }
+/// What a box needs to be searched: whether it may be, and the query `Motion::Match` looks for.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Searching {
+    /// Whether `/` asks the owner for a prompt to search the text with, and `Motion::Match`
+    /// looks for the query.
+    searchable: bool,
+    /// What `Motion::Match` looks for, the last query the owner gave.
+    query: Option<Box<str>>,
+    /// Scratch space for searches, kept so that its memory is reused.
+    scratch: String,
+}
 
-    #[must_use]
-    pub fn is_searchable(&self) -> bool {
+impl Searching {
+    pub(super) fn is_searchable(&self) -> bool {
         self.searchable
     }
 
     /// Makes `query` the one `Motion::Match` looks for, an empty one clears it.
-    pub fn set_query(&mut self, query: &str) {
+    fn set_query(&mut self, query: &str) {
         self.query = Some(query)
             .filter(|query| !query.is_empty())
             .map(Into::into);
+    }
+
+    /// The query and the scratch space to look for it with, none without a query.
+    fn query_and_scratch(&mut self) -> Option<(&str, &mut String)> {
+        Some((self.query.as_deref()?, &mut self.scratch))
+    }
+}
+
+impl TextBox {
+    /// Lets the box be searched: `/` asks its owner for a prompt, and the box keeps the query
+    /// it is given for `n` and `p`. A box that isn't searchable ignores both.
+    pub fn set_searchable(&mut self, searchable: bool) {
+        self.searching.searchable = searchable;
+    }
+
+    #[must_use]
+    pub fn is_searchable(&self) -> bool {
+        self.searching.is_searchable()
+    }
+
+    /// Makes `query` the one `Motion::Match` looks for, an empty one clears it.
+    pub fn set_query(&mut self, query: &str) {
+        self.searching.set_query(query);
     }
 
     #[must_use]
@@ -40,7 +68,7 @@ impl TextBox {
     pub fn find_from(&mut self, query: &str, origin: Selection) {
         let found = find_forward(
             self.buffer.rope(),
-            &mut self.search_scratch,
+            &mut self.searching.scratch,
             query,
             origin.start(),
         );
@@ -72,9 +100,8 @@ impl TextBox {
     /// Where `Motion::Match` goes: the next match after the selection, or the previous one
     /// before it, selected whole. None without a query or a match.
     pub(super) fn match_motion(&mut self, direction: Direction) -> Option<Selection> {
-        let query = self.query.as_deref()?;
+        let (query, scratch) = self.searching.query_and_scratch()?;
         let rope = self.buffer.rope();
-        let scratch = &mut self.search_scratch;
         let range = match direction {
             // After the last grapheme of the selection, so a match is never found again
             Direction::Forward => find_forward(rope, scratch, query, self.selection.end() + 1)?,

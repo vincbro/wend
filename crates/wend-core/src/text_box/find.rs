@@ -1,6 +1,4 @@
-use super::{
-    ColumnPolicy, Direction, Selection, TextBox, input_box::InputBox, wrap::ScrollOffset,
-};
+use super::{ColumnPolicy, Direction, Selection, TextBox, input_box::InputBox, wrap::ScrollOffset};
 use crate::{
     config::Target,
     frame::Rect,
@@ -34,7 +32,7 @@ pub(super) struct FindPrompt {
 impl TextBox {
     /// Opens the prompt of a box that can be searched, and does nothing for one that can't.
     pub(super) fn open_find(&mut self) {
-        if !self.searchable || self.find.is_some() {
+        if !self.searching.is_searchable() || self.find.is_some() {
             return;
         }
         // The config was checked when it was set, and that built the keys of this target too
@@ -49,7 +47,7 @@ impl TextBox {
         self.find = Some(Box::new(FindPrompt {
             input,
             origin: self.selection,
-            scroll: self.wrap.scroll_offset(),
+            scroll: self.viewport.wrap().scroll_offset(),
             searched: String::new(),
             confirmed: false,
         }));
@@ -127,7 +125,8 @@ impl TextBox {
     pub(super) fn show_match(&mut self, selection: Selection) {
         self.refresh_wrap();
         let covered = self
-            .wrap
+            .viewport
+            .wrap()
             .find_byte(selection.head())
             .is_none_or(|pos| self.under_prompt(pos.row));
         self.set_selection(selection, ColumnPolicy::Sync);

@@ -24,7 +24,7 @@ proptest! {
         presses in collection::vec((mode(), key()), 0..60),
     ) {
         let config = Config::default();
-        let mut keymap = Keymap::new(config.keys.trees(target).unwrap());
+        let mut keymap = Keymap::new(&config.keys, target).unwrap();
         let mut since_reset: Vec<Key> = vec![];
         let mut last_mode = Mode::Normal;
         for (mode, key) in presses {

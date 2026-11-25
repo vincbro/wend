@@ -1,5 +1,7 @@
+use std::mem;
+
 use crate::{
-    config::KeyTrees,
+    config::{self, KeyTrees, Keys, Target},
     input::{
         Mode,
         action::Action,
@@ -14,19 +16,47 @@ use crate::{
 /// which is the mode the combo started in.
 #[derive(Debug, Clone)]
 pub(super) struct Keymap {
+    /// Who the keys are for, kept to build them again when the config changes.
+    target: Target,
     trees: KeyTrees,
     pending: Vec<Key>,
     pending_mode: Mode,
+    /// Scratch space for `press_copied`, kept so that its memory is reused.
+    copied: Vec<Action>,
 }
 
 impl Keymap {
-    #[must_use]
-    pub(super) fn new(trees: KeyTrees) -> Self {
-        Self {
-            trees,
+    /// Fails when the keys of `keys` for `target` can't make key trees.
+    pub(super) fn new(keys: &Keys, target: Target) -> config::Result<Self> {
+        Ok(Self {
+            target,
+            trees: keys.trees(target)?,
             pending: vec![],
             pending_mode: Mode::Normal,
-        }
+            copied: vec![],
+        })
+    }
+
+    /// Follows `keys` from now on and drops the combo being typed. Keys that fail leave the
+    /// keymap as it was.
+    pub(super) fn set_keys(&mut self, keys: &Keys) -> config::Result<()> {
+        self.trees = keys.trees(self.target)?;
+        self.pending.clear();
+        Ok(())
+    }
+
+    /// Like `press`, but the actions come out in a vector the keymap lends, so they can be
+    /// run while the keymap is free. Give it back with `give_back` for its memory to be reused.
+    #[must_use]
+    pub(super) fn press_copied(&mut self, mode: Mode, key: Key) -> Vec<Action> {
+        let mut copied = mem::take(&mut self.copied);
+        copied.clear();
+        copied.extend_from_slice(self.press(mode, key));
+        copied
+    }
+
+    pub(super) fn give_back(&mut self, copied: Vec<Action>) {
+        self.copied = copied;
     }
 
     /// Adds `key` to the combo and returns the actions to run: a leaf's. Empty while the
@@ -88,7 +118,7 @@ mod tests {
     }
 
     fn default_keymap() -> Keymap {
-        Keymap::new(Config::default().keys.trees(Target::TextBox).unwrap())
+        Keymap::new(&Config::default().keys, Target::TextBox).unwrap()
     }
 
     fn actions<'a>(keymap: &'a Keymap, mode: Mode, keys: &[Key]) -> &'a [Action] {

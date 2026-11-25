@@ -27,15 +27,16 @@ impl Element for TextBox {
         // reads the other fields, and doesn't call methods that take the whole text box
         let spans = self.buffer.highlights(self.visible_bytes());
         let mut highlighter = Highlighter::new(spans, &mut open);
-        for (pos, slot) in self.wrap.slots() {
+        for (pos, slot) in self.viewport.wrap().slots() {
             if row_on_line.0 != pos.row {
                 let on_line = self
-                    .wrap
+                    .viewport
+                    .wrap()
                     .row_metadata(pos.row)
                     .is_some_and(|metadata| metadata.line == head_line);
                 row_on_line = (pos.row, on_line);
             }
-            let mut cell = Self::cell(&self.wrap, self.selection, slot, pos, &selected);
+            let mut cell = Self::cell(self.viewport.wrap(), self.selection, slot, pos, &selected);
             cell.style.line = row_on_line.1;
             // Tails are blanks, only the glyph itself has a color
             if let Slot::Glyph(glyph) = slot
@@ -58,7 +59,7 @@ impl Element for TextBox {
 impl TextBox {
     /// The bytes of the text the wrap shows, from the first row's start to the last row's end.
     fn visible_bytes(&self) -> ops::Range<usize> {
-        let mut rows = self.wrap.rows();
+        let mut rows = self.viewport.wrap().rows();
         let Some(first) = rows.next() else {
             return 0..0;
         };

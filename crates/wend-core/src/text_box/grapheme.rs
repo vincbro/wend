@@ -5,10 +5,12 @@ use super::{Glyph, TextBox};
 impl TextBox {
     /// Returns the glyph holding `byte`, none if it is off screen or the wrap is out of date.
     fn glyph_on_screen(&self, byte: usize) -> Option<Glyph> {
-        if self.wrap_dirty {
+        if self.viewport.is_dirty() {
             return None;
         }
-        self.wrap.glyph_at(self.wrap.find_byte(byte)?)
+        self.viewport
+            .wrap()
+            .glyph_at(self.viewport.wrap().find_byte(byte)?)
     }
 
     /// Returns where the grapheme holding `byte` starts, the buffer's end for anything past it.

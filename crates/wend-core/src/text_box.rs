@@ -1,11 +1,9 @@
 use std::{mem, num::NonZeroUsize, sync::Arc};
 
-use crop::Rope;
-
 use crate::{
     buffer::Buffer,
     config::{Config, Target},
-    frame::{Area, CellPosition, Rect},
+    frame::{CellPosition, Rect},
     input::{
         Mode,
         action::{Action, TextBoxAction},
@@ -30,27 +28,18 @@ mod motion;
 use motion::WordClass;
 pub use motion::{Direction, Motion};
 mod render;
-mod scroll;
 mod search;
+use search::Searching;
 mod selection;
 pub use selection::Selection;
+mod limits;
+use limits::Limits;
+mod viewport;
+use viewport::Viewport;
 mod keymap;
 use keymap::Keymap;
 #[cfg(test)]
 pub(crate) mod fuzz;
-
-/// The most bytes of text a read-only box's text is compared against its owner's in
-/// `check_invariants`.
-const READ_ONLY_CHECK_LIMIT: usize = 1 << 20;
-
-/// Returns how many lines `rope` shows, which is one more than its line breaks.
-fn visible_lines(rope: &Rope) -> usize {
-    let ends_in_break = rope
-        .byte_len()
-        .checked_sub(1)
-        .is_some_and(|last| rope.byte(last) == b'\n');
-    rope.line_len().max(1) + usize::from(ends_in_break)
-}
 
 /// Decides what a selection change does to the column up and down aim for.
 #[derive(Debug, Clone, Copy)]
@@ -75,40 +64,24 @@ pub struct TextBox {
     config: Config,
     /// The prompt that searches the text, while it is open.
     find: Option<Box<FindPrompt>>,
-    wrap: Wrap,
-    wrap_dirty: bool,
-    /// Scratch space for `Wrap::last_row_of_line`, kept so that its memory is reused.
-    line_probe: Wrap,
+    viewport: Viewport,
     selection: Selection,
     /// Scratch space for `render`, kept so that its memory is reused.
     open_highlights: Vec<(usize, Highlight)>,
     /// Scratch space for `word_backward`, kept so that its memory is reused.
     word_scratch: Vec<(usize, WordClass)>,
 
-    scroll_margin: usize,
     desired_col: usize,
 
-    /// The most lines the text has, none for a text box that holds a whole buffer.
-    line_limit: Option<NonZeroUsize>,
-    /// The text the owner last gave a read-only box, none for one that can be changed. Keys and
-    /// actions are refused when they would change the text, so only the owner changes it, with
-    /// `open_buffer`, `update` and `limit_lines`.
-    read_only: Option<Rope>,
-    /// Scratch space for searches, kept so that its memory is reused.
-    search_scratch: String,
-    /// Whether `/` asks the owner for a prompt to search the text with, and `Motion::Match`
-    /// looks for the query.
-    searchable: bool,
-    /// What `Motion::Match` looks for, the last query the owner gave.
-    query: Option<Box<str>>,
+    /// How many lines the text may have, and whether the user may change it. Only the owner
+    /// changes a read-only box's text, with `open_buffer`, `update` and `limit_lines`.
+    limits: Limits,
+    searching: Searching,
 
     mode: Mode,
-    /// Who the keys are for, kept to build them again when the config changes.
-    target: Target,
-    /// The key trees and the combo being typed, so each text box answers to its own keys.
+    /// The keys of who the box is for and the combo being typed, so each text box answers to
+    /// its own keys.
     keymap: Keymap,
-    /// Scratch space for `key_press`, kept so that its memory is reused.
-    pressed: Vec<Action>,
 }
 
 impl TextBox {
@@ -120,30 +93,18 @@ impl TextBox {
             rect,
             config: config.clone(),
             find: None,
-            wrap: Wrap::new(rect.area, ScrollOffset::default(), config.text.tab_width),
-            wrap_dirty: true,
-            line_probe: Wrap::new(
-                Area::new(0, 0),
-                ScrollOffset::default(),
-                config.text.tab_width,
-            ),
+            viewport: Viewport::new(rect.area, config.text.tab_width, config.scroll.margin),
             selection: Selection::point(0),
             open_highlights: vec![],
             word_scratch: vec![],
 
-            scroll_margin: config.scroll.margin,
             desired_col: 0,
 
-            line_limit: None,
-            read_only: None,
-            search_scratch: String::new(),
-            searchable: false,
-            query: None,
+            limits: Limits::default(),
+            searching: Searching::default(),
 
             mode: Mode::Normal,
-            target,
-            keymap: Keymap::new(config.keys.trees(target)?),
-            pressed: vec![],
+            keymap: Keymap::new(&config.keys, target)?,
         };
         // `resize` does nothing for the rect the text box already has
         text_box.refresh_wrap();
@@ -167,12 +128,9 @@ impl TextBox {
             self.find_key_press(key, requests);
             return;
         }
-        // The keymap stays borrowed while it is read, so the actions are copied out first, and
-        // taken out of the text box so it can run them
-        self.pressed.clear();
-        self.pressed
-            .extend_from_slice(self.keymap.press(self.mode, key));
-        let pressed = mem::take(&mut self.pressed);
+        // The keymap stays borrowed while it is read, so the actions are copied out first, so
+        // the text box can run them
+        let pressed = self.keymap.press_copied(self.mode, key);
         for action in &pressed {
             match action {
                 Action::TextBox(TextBoxAction::InsertTyped) => self.insert_typed(key),
@@ -182,7 +140,7 @@ impl TextBox {
                 }
             }
         }
-        self.pressed = pressed;
+        self.keymap.give_back(pressed);
     }
 
     /// Inserts the character `key` types, nothing for a key that types none.
@@ -241,27 +199,25 @@ impl TextBox {
     /// text is refused: the mode, the selection and every motion work as in any box, and what
     /// the owner puts in with `open_buffer` and `update` is not refused either.
     pub fn set_read_only(&mut self, read_only: bool) {
-        self.read_only = read_only.then(|| self.buffer.rope().clone());
+        self.limits.set_read_only(read_only, self.buffer.rope());
     }
 
     #[must_use]
     pub fn is_read_only(&self) -> bool {
-        self.read_only.is_some()
+        self.limits.is_read_only()
     }
 
     /// Takes what the owner put in as the text of a read-only box.
     fn owner_changed_text(&mut self) {
-        if self.read_only.is_some() {
-            self.read_only = Some(self.buffer.rope().clone());
-        }
+        self.limits.owner_changed_text(self.buffer.rope());
     }
 
     /// Limits the text to `limit` lines, from now on. What is there past it is cut off.
     pub fn limit_lines(&mut self, limit: NonZeroUsize) {
-        self.line_limit = Some(limit);
+        self.limits.set_line_limit(limit);
         self.clip_to_line_limit();
         self.owner_changed_text();
-        self.wrap_dirty = true;
+        self.viewport.mark_dirty();
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
     }
@@ -272,7 +228,7 @@ impl TextBox {
         self.buffer.update(bytes)?;
         self.clip_to_line_limit();
         self.owner_changed_text();
-        self.wrap_dirty = true;
+        self.viewport.mark_dirty();
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
         Ok(())
@@ -290,8 +246,10 @@ impl TextBox {
             return;
         };
         let (Some(first), Some(last)) = (
-            self.wrap.edge_glyph(pos.row, Direction::Forward),
-            self.wrap.edge_glyph(pos.row, Direction::Backward),
+            self.viewport.wrap().edge_glyph(pos.row, Direction::Forward),
+            self.viewport
+                .wrap()
+                .edge_glyph(pos.row, Direction::Backward),
         ) else {
             return;
         };
@@ -326,7 +284,7 @@ impl TextBox {
 
     /// Returns the slot the head is in, none if it is off screen.
     fn head_position(&self) -> Option<SlotPosition> {
-        self.wrap.find_byte(self.selection.head())
+        self.viewport.wrap().find_byte(self.selection.head())
     }
 
     /// Returns where a slot of the wrap ends up in the frame.
@@ -360,12 +318,10 @@ impl TextBox {
     /// Follows the scroll, text and line number settings and the keys of `config` from the
     /// next frame on. A config that fails leaves the text box as it was.
     pub fn set_config(&mut self, config: &Config) -> Result<()> {
-        self.keymap = Keymap::new(config.keys.trees(self.target)?);
+        self.keymap.set_keys(&config.keys)?;
         self.config.clone_from(config);
-        self.scroll_margin = config.scroll.margin;
-        self.wrap.set_tab_width(config.text.tab_width);
-        self.line_probe.set_tab_width(config.text.tab_width);
-        self.wrap_dirty = true;
+        self.viewport
+            .set_config(config.scroll.margin, config.text.tab_width);
         self.set_selection(self.selection, ColumnPolicy::Sync);
         self.check_invariants();
         Ok(())
@@ -380,7 +336,7 @@ impl TextBox {
         self.desired_col = self
             .desired_col
             .min(self.rect.area.width().saturating_sub(1));
-        self.wrap_dirty = true;
+        self.viewport.mark_dirty();
         self.set_selection(self.selection, ColumnPolicy::Keep);
         self.check_invariants();
     }
@@ -388,14 +344,14 @@ impl TextBox {
     /// Returns how many rows from the top hold text, the rest are below the end of the buffer.
     #[must_use]
     pub(crate) fn rows_with_text(&self) -> usize {
-        self.wrap.last_row().map_or(0, |row| row + 1)
+        self.viewport.wrap().last_row().map_or(0, |row| row + 1)
     }
 
     /// Returns the screen row the head is on and the line it is in, none if it is off screen.
     #[must_use]
     pub(crate) fn head_row_and_line(&self) -> Option<(usize, usize)> {
         let slot = self.head_position()?;
-        let metadata = self.wrap.row_metadata(slot.row)?;
+        let metadata = self.viewport.wrap().row_metadata(slot.row)?;
         Some((slot.row, metadata.line))
     }
 
@@ -428,23 +384,9 @@ impl TextBox {
         if let Some(find) = &self.find {
             find.check_invariants();
         }
-        // Past a size the comparison costs as much as the text is long
-        if let Some(owned) = &self.read_only
-            && self.buffer.rope().byte_len() <= READ_ONLY_CHECK_LIMIT
-        {
-            assert!(
-                owned == self.buffer.rope(),
-                "a read-only box refuses every edit, so only its owner changes its text"
-            );
-        }
-        assert!(
-            self.line_limit
-                .is_none_or(|limit| visible_lines(self.buffer.rope()) <= limit.get()),
-            "edits, new buffers and reverts are cut to the line limit"
-        );
+        self.limits.check_invariants(self.buffer.rope());
         self.keymap.check_invariants();
-        self.wrap.check_invariants();
-        self.line_probe.check_invariants();
+        self.viewport.check_invariants();
 
         let rope = self.buffer.rope();
         for byte in [self.selection.anchor(), self.selection.head()] {
@@ -458,7 +400,7 @@ impl TextBox {
             return;
         }
         assert!(
-            !self.wrap_dirty && self.head_position().is_some(),
+            !self.viewport.is_dirty() && self.head_position().is_some(),
             "ensure_cursor_visible rebuilds the wrap and scrolls the head on screen"
         );
         assert!(
@@ -717,7 +659,7 @@ pub(crate) mod tests {
         let mut text_box = text_box("ab", 20, 5);
         // The mark joins a, the wrap still has b on byte 1
         text_box.buffer.edit(1..1, "\u{301}");
-        text_box.wrap_dirty = true;
+        text_box.viewport.mark_dirty();
         assert_eq!(text_box.grapheme_start(1), 0, "reads the edited text");
     }
 

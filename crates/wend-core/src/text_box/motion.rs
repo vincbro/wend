@@ -90,7 +90,7 @@ impl TextBox {
     fn page_forward(&mut self) -> Option<usize> {
         let bottom = self.bottom_row();
         let scrolled = self.scroll(Direction::Forward, bottom);
-        let last = self.wrap.last_row()?;
+        let last = self.viewport.wrap().last_row()?;
         if bottom - scrolled <= last {
             return Some(bottom - scrolled);
         }
@@ -98,7 +98,7 @@ impl TextBox {
         // The buffer ends first, its last row is the last one on screen. Undo the scroll so
         // the text box only moves as far as the margin pulls it.
         self.scroll(Direction::Backward, (bottom - last).min(scrolled));
-        self.wrap.last_row()
+        self.viewport.wrap().last_row()
     }
 
     /// Scrolls up a page and returns the row the head lands on.
@@ -111,17 +111,22 @@ impl TextBox {
 
     fn horizontal(&self, direction: Direction) -> Option<usize> {
         let pos = self.head_position()?;
-        if let Some(glyph) = self.wrap.step(pos, direction) {
+        if let Some(glyph) = self.viewport.wrap().step(pos, direction) {
             return Some(glyph.start());
         }
 
         // At the edge of the row, only continue if the line wrapped onto the next row
         let neighbor = neighbor_row(pos.row, direction)?;
-        if self.wrap.row(neighbor)?.metadata.line != self.wrap.row(pos.row)?.metadata.line {
+        if self.viewport.wrap().row(neighbor)?.metadata.line
+            != self.viewport.wrap().row(pos.row)?.metadata.line
+        {
             return None;
         }
         // Forward lands on the neighbor's first glyph, backward on its last
-        self.wrap.edge_glyph(neighbor, direction).map(Glyph::start)
+        self.viewport
+            .wrap()
+            .edge_glyph(neighbor, direction)
+            .map(Glyph::start)
     }
 
     fn vertical(&self, direction: Direction) -> Option<usize> {
@@ -134,10 +139,11 @@ impl TextBox {
     fn closest_glyph_start(&self, row: usize) -> Option<usize> {
         let target = SlotPosition::new(self.desired_col, row);
         let glyph = self
-            .wrap
+            .viewport
+            .wrap()
             .glyph_at(target)
-            .or_else(|| self.wrap.step(target, Direction::Backward))
-            .or_else(|| self.wrap.step(target, Direction::Forward))?;
+            .or_else(|| self.viewport.wrap().step(target, Direction::Backward))
+            .or_else(|| self.viewport.wrap().step(target, Direction::Forward))?;
         Some(glyph.start())
     }
 
@@ -201,10 +207,10 @@ mod tests {
         // Far enough to run into the other end of the buffer
         for page in 0..30 {
             let edge_row = match direction {
-                Direction::Forward => view.wrap.last_row().unwrap(),
+                Direction::Forward => view.viewport.wrap().last_row().unwrap(),
                 Direction::Backward => 0,
             };
-            let edge = view.wrap.row(edge_row).unwrap().metadata;
+            let edge = view.viewport.wrap().row(edge_row).unwrap().metadata;
             view.move_selection(Motion::Page(direction), false);
             assert!(
                 (edge.from_byte..edge.to_byte).contains(&view.selection.head()),
