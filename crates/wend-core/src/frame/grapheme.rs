@@ -56,7 +56,12 @@ impl Grapheme {
     }
 
     #[must_use]
-    #[allow(unsafe_code, reason = "called on every cell of every frame")]
+    // Measured on 2026-11-25 with `just bench-latency`, against the checked `str::from_utf8`:
+    // the key press to written frame is 2 to 4% faster at 100 KB, and the rest is noise.
+    #[allow(
+        unsafe_code,
+        reason = "called on every cell of every frame, and 2 to 4% faster than checking"
+    )]
     pub fn as_str(&self) -> &str {
         // SAFETY: `from_bytes_iter` is the only constructor that sets the bytes and it
         // only keeps them if they are valid UTF-8, `Default` is the empty string.
