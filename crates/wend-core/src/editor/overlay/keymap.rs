@@ -26,19 +26,35 @@ impl Keymap {
     #[must_use]
     pub(super) fn press(&mut self, key: Key) -> &[Action] {
         self.pending.push(key);
-        match self.tree.get(&self.pending) {
-            Some(KeyTree::Leaf(actions)) => {
-                self.pending.clear();
-                actions
-            }
-            Some(KeyTree::Node { .. }) => &[],
-            None => {
-                self.pending.clear();
-                &[]
-            }
+        let found = self.tree.get(&self.pending);
+        if !matches!(found, Some(KeyTree::Node { .. })) {
+            self.pending.clear();
+        }
+        self.check_invariants();
+        match found {
+            Some(KeyTree::Leaf(actions)) => actions,
+            _ => &[],
         }
     }
+
+    /// Checks the rules every call has to leave the keymap in. Debug builds only.
+    pub(super) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        if self.pending.is_empty() {
+            return;
+        }
+        assert!(
+            matches!(self.tree.get(&self.pending), Some(KeyTree::Node { .. })),
+            "press drops a combo that is not the start of a longer one, so `pending` leads to a node"
+        );
+    }
 }
+
+#[cfg(test)]
+mod fuzz;
 
 #[cfg(test)]
 mod tests {

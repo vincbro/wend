@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c7dd7d4c1b0f6e73f4a4f4f737887f66bc5299cec5181ae3c180bcd16e90ebd8 # shrinks to start = Area { cols: 0, rows: 0 }, calls = [Resize(Area { cols: 1, rows: 1 })]

@@ -41,17 +41,33 @@ impl Keymap {
             self.pending_mode = mode;
         }
         self.pending.push(key);
-        match self.trees.get(mode).get(&self.pending) {
-            Some(KeyTree::Node { .. }) => &[],
-            Some(KeyTree::Leaf(actions)) => {
-                self.pending.clear();
-                actions
-            }
-            None => {
-                self.pending.clear();
-                &[]
-            }
+        let found = self.trees.get(mode).get(&self.pending);
+        if !matches!(found, Some(KeyTree::Node { .. })) {
+            self.pending.clear();
         }
+        self.check_invariants();
+        match found {
+            Some(KeyTree::Leaf(actions)) => actions,
+            _ => &[],
+        }
+    }
+
+    /// Checks the rules every call has to leave the keymap in. Debug builds only.
+    pub(super) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        if self.pending.is_empty() {
+            return;
+        }
+        assert!(
+            matches!(
+                self.trees.get(self.pending_mode).get(&self.pending),
+                Some(KeyTree::Node { .. })
+            ),
+            "press drops a combo that is not the start of a longer one, so `pending` leads to a node"
+        );
     }
 }
 
@@ -216,3 +232,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod fuzz;

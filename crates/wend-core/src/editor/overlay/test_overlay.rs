@@ -71,6 +71,7 @@ impl TestOverlay {
             return;
         }
 
+        self.keymap.check_invariants();
         self.left.inner().check_invariants();
         self.right.inner().check_invariants();
     }

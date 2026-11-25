@@ -93,12 +93,26 @@ impl Syntax {
             tree.edit(&rope::input_edit(rope, range, text));
         }
         self.is_stale = true;
+        self.check_invariants();
     }
 
     /// Throws the tree away, for text that was replaced as a whole and has no edit to follow.
     pub(crate) fn reset(&mut self) {
         self.tree = None;
         self.is_stale = true;
+        self.check_invariants();
+    }
+
+    /// Checks the rules every function has to leave the syntax in. Debug builds only.
+    pub(crate) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        assert!(
+            self.is_stale || self.tree.is_some(),
+            "a syntax is only up to date after a parse made a tree, and edit and reset mark it stale"
+        );
     }
 
     /// Parses `rope` if the tree is stale, reading it chunk by chunk so the text is never
@@ -117,6 +131,7 @@ impl Syntax {
             .ok_or_else(|| Error::ParseStopped(self.grammar.tag.clone()))?;
         self.tree = Some(tree);
         self.is_stale = false;
+        self.check_invariants();
         Ok(())
     }
 

@@ -68,6 +68,9 @@ impl FramePool {
             self.spares.len() <= self.count,
             "place only takes a frame while there are fewer spares than the pool made"
         );
+        for frame in &self.spares {
+            frame.check_invariants();
+        }
         assert!(
             self.spares.iter().all(|frame| frame.area() == self.area),
             "place and resize bring every spare to the pool's area"

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 17af5fba4b0bcfc1c4a556503559114f58f536b998b4b7b6857c3514181ddf27 # shrinks to target = TextBox, presses = [(Normal, Key { code: Char('g'), modifiers: Modifiers { alt: false, control: true, shift: false } })]

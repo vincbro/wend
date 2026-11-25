@@ -38,7 +38,7 @@ impl Editor {
         };
         self.scratch.attach(&grammar);
         for document in &mut self.documents {
-            document.buffer_mut().attach(&grammar);
+            document.attach(&grammar);
         }
     }
 }

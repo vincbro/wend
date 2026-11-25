@@ -441,6 +441,7 @@ impl TextBox {
                 .is_none_or(|limit| visible_lines(self.buffer.rope()) <= limit.get()),
             "edits, new buffers and reverts are cut to the line limit"
         );
+        self.keymap.check_invariants();
         self.wrap.check_invariants();
         self.line_probe.check_invariants();
 

@@ -9,7 +9,11 @@ use crate::{
     buffer::Buffer,
     config::{Config, Target},
     frame::{Area, Rect},
-    input::{Mode, action::TextBoxAction},
+    input::{
+        Mode,
+        action::TextBoxAction,
+        key::{Key, KeyCode, Modifiers},
+    },
 };
 
 /// One public call on a text box, with its arguments.
@@ -53,6 +57,26 @@ impl Call {
             }
         }
     }
+}
+
+/// Keys the default bindings start combos with, others they leave unbound, and the named keys.
+pub(crate) fn key() -> impl Strategy<Value = Key> {
+    let code = prop_oneof![
+        4 => prop::sample::select(vec!['g', 'h', 'j', 'k', 'l', 'x', ' ', 'z']).prop_map(KeyCode::Char),
+        1 => any::<char>().prop_map(KeyCode::Char),
+        1 => Just(KeyCode::Enter),
+        1 => Just(KeyCode::Esc),
+        1 => Just(KeyCode::Backspace),
+        1 => Just(KeyCode::Tab),
+    ];
+    (code, any::<bool>(), any::<bool>()).prop_map(|(code, control, alt)| Key {
+        code,
+        modifiers: Modifiers {
+            alt,
+            control,
+            shift: false,
+        },
+    })
 }
 
 /// Text made of the pieces that break naive code: wide, zero-width and combining glyphs,

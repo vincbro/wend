@@ -71,6 +71,20 @@ impl Frame {
             self.cursor = Some(pos);
             self.cursor_layer = layer;
         }
+        self.check_invariants();
+    }
+
+    /// Checks the rules every function has to leave the frame in. Debug builds only.
+    pub(crate) fn check_invariants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        assert_eq!(
+            self.cells.len(),
+            self.area.len(),
+            "new and resize size the cells to the area, and nothing else changes their number"
+        );
     }
 
     /// Blanks every cell and takes the cursor away, so a frame that is drawn again starts with
@@ -79,6 +93,7 @@ impl Frame {
         self.cells.fill(Cell::default());
         self.cursor = None;
         self.cursor_layer = Layer::BOTTOM;
+        self.check_invariants();
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (CellPosition, &Cell)> {
@@ -94,6 +109,7 @@ impl Frame {
         self.area = area;
         self.cells.clear();
         self.cells.resize(area.len(), Cell::default());
+        self.check_invariants();
     }
 
     #[must_use]
@@ -146,6 +162,7 @@ impl Frame {
             };
         }
         self.cells[index] = cell;
+        self.check_invariants();
     }
 
     /// # Panics
@@ -157,6 +174,9 @@ impl Frame {
         &self.cells[start..start + self.area.width()]
     }
 }
+
+#[cfg(test)]
+mod fuzz;
 
 #[cfg(test)]
 mod tests {

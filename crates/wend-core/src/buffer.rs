@@ -223,6 +223,7 @@ impl Buffer {
             );
         }
         if let Some(syntax) = &self.syntax {
+            syntax.check_invariants();
             assert!(
                 self.language.as_ref() == Some(syntax.tag()),
                 "set_language drops the syntax of another language and attach only takes the \
